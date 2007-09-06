@@ -1,0 +1,255 @@
+//---------------------------------------------------------- -*- Mode: C++ -*-
+// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsIO/IOBuffer.h#3 $
+//
+// Created 2006/03/14
+// Author: Sriram Rao (Kosmix Corp.) 
+//
+// Copyright (C) 2006 Kosmix Corp.
+//
+// This file is part of Kosmos File System (KFS).
+//
+// KFS is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by
+// the Free Software Foundation under version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see
+// <http://www.gnu.org/licenses/>.
+//
+// 
+//----------------------------------------------------------------------------
+
+#ifndef _LIBIO_IOBUFFER_H
+#define _LIBIO_IOBUFFER_H
+
+#include <cassert>
+#include <list>
+#include <exception>
+using std::list;
+
+#include <boost/shared_ptr.hpp>
+
+///
+/// \file IOBuffer.h
+/// \brief Buffers used for I/O in KFS.
+///
+/// An IOBuffer in KFS is a stream of IOBufferData.  Each IOBufferData
+/// is an immutable buffer---that is, there is a single producer for
+/// data in the buffer and that data maybe consumed by multiple
+/// consumers.
+///
+/// In the current implementation, IOBufferData objects are single
+/// producer, single consumer.
+///
+
+///
+/// \class IOBufferData
+/// \brief An IOBufferData contains a buffer and associated
+/// producer/consumer points.
+
+// For some reason, I can't put this constant inside IOBufferData
+// class and refer to it in IOBuffer class code.  Sigh...
+static const int IOBUFSIZE = 4096;
+
+class IOBufferData {
+public:
+    IOBufferData();
+    ~IOBufferData();
+
+    ///
+    /// Read data from file descriptor into the buffer.
+    /// @param[in] fd file descriptor to be used for reading.
+    /// @result Returns the # of bytes read
+    ///
+    int Read(int fd);
+
+    ///
+    /// Write data from the buffer to the file descriptor.
+    /// @param[in] fd file descriptor to be used for writing.
+    /// @result Returns the # of bytes written
+    ///
+    int Write(int fd);
+
+    ///
+    /// Copy data into the buffer.  For doing a copy, data is appended
+    /// to the buffer starting at the offset corresponding to
+    /// mProducer.  # of bytes copied is min (# of bytes, space
+    /// avail), where space avail = mEnd - mProducer.
+    ///
+    /// NOTE: As a result of copy, the "producer" pointer is not
+    /// advanced. 
+    ///
+    /// @param[out] buf A containing the data to be copied in.
+    /// @param[in] numBytes # of bytes to be copied.
+    /// @retval Returns the # of bytes copied.
+    ///
+    int CopyIn(const char *buf, int numBytes);
+    int CopyIn(const IOBufferData *other, int numBytes);
+    ///
+    /// Copy data out the buffer.  For doing a copy, data is copied
+    /// out of the buffer starting at the offset corresponding to
+    /// mConsumer.  # of bytes copied is min (# of bytes, bytes
+    /// avail), where bytes avail = mProducer - mConsumer.
+    ///
+    /// NOTE: As a result of copy, the "consumer" pointer is not
+    /// advanced. 
+    ///
+    /// @param[out] buf A containing the data to be copied in.
+    /// @param[in] numBytes # of bytes to be copied.
+    /// @retval Returns the # of bytes copied.
+    ///
+    int CopyOut(char *buf, int numBytes);
+
+    char *Start() { return mStart; }
+    char *Producer() { return mProducer; }
+    char *Consumer() { return mConsumer; }
+
+    ///
+    /// Some data has been filled in the buffer.  So, advance
+    /// mProducer.
+    /// @param[in] nbytes # of bytes of data filled
+    /// @retval # of bytes filled in this buffer.
+    ///
+    int Fill(int nbytes); 
+    int ZeroFill(int nbytes);
+
+    ///
+    /// Some data has been consumed from the buffer.  So, advance
+    /// mConsumer.
+    /// @param[in] nbytes # of bytes of data consumed
+    /// @retval # of bytes consumed from this buffer.
+    ///
+    int Consume(int nbytes);
+
+    ///
+    /// Remove some data from the end of the buffer.  So, pull back
+    /// mProducer
+    /// @param[in] nbytes # of bytes of data to be trimmed
+    /// @retval # of bytes in this buffer.
+    ///
+    int Trim(int nbytes);
+
+    /// Returns the # of bytes available for consumption.
+    int BytesConsumable() { return mProducer - mConsumer; }
+
+    int IsFull() { return mProducer == mEnd; }
+    int IsEmpty() { return mProducer == mConsumer; }
+
+private:
+    /// Data buffer
+    char		*mData;
+    /// Pointers that correspond to the start/end of the buffer
+    char		*mStart, *mEnd;
+    /// Pointers into mData that correspond to producer/consumer
+    char		*mProducer, *mConsumer;
+};
+
+///
+/// \typedef IOBufferDataPtr
+/// Since an IOBufferData can be shared, encapsulate it in a smart
+/// pointer so that the cleanup occurs when all references are
+/// released.
+///
+typedef boost::shared_ptr<IOBufferData> IOBufferDataPtr;
+
+///
+/// \struct IOBuffer
+/// An IOBuffer consists of a list of IOBufferDataPtr.  It provides
+/// API's for reading/writing data to/from the buffer.  Operations on
+/// IOBuffer translates to operations on appropriate IOBufferDataPtr.
+///
+struct IOBuffer {
+    IOBuffer();
+    ~IOBuffer();
+
+    /// Append the IOBufferData block to the list stored in this buffer.
+    void Append(IOBufferDataPtr &buf);
+
+    /// Append the contents of ioBuf to this buffer.
+    void Append(IOBuffer *ioBuf);
+
+    int Read(int fd);
+    int Write(int fd);
+
+    /// Move data from one buffer to another.  This involves (mostly)
+    /// shuffling pointers without incurring data copying.
+    /// The requirement is that "other" better have as much bytes as
+    /// we are trying to move.
+    /// @param[in] other  Buffer from which data has to be moved
+    /// @param[in] numBytes  # of bytes of data to be moved over
+    ///
+    void Move(IOBuffer *other, int numBytes);
+
+    /// Splice data from other to "this".  The key here is that, data
+    /// from other is inserted starting at the specified offset.  The
+    /// requirements are that: (1) data in "this" should be at least
+    /// of length offset bytes, and (2) other better have as much
+    /// bytes as we are trying to move.
+    /// @param[in] other  Buffer from which data has to be spliced
+    /// @param[in] offset  The offset at which data has to be spliced in
+    /// @param[in] numBytes  # of bytes of data to be moved over
+    ///
+    void Splice(IOBuffer *other, int offset, int numBytes);
+
+    /// Zero fill the buffer for length numBytes.
+    /// @param[in] numBytes  # of bytes to be zero-filled.
+    void ZeroFill(int numBytes);
+
+    ///
+    /// Copy data into the buffer.  For doing a copy, data is appended
+    /// to the last buffer in mBuf.  If the amount of data to be
+    /// copied exceeds space in the last buffer, additional buffers
+    /// are allocated and copy operation runs to finish.
+    ///
+    /// NOTE: As a result of copy, the "producer" portion of an
+    /// IOBufferData is not advanced. 
+    ///
+    /// @param[in] buf A containing the data to be copied in.
+    /// @param[in] numBytes # of bytes to be copied in.
+    /// @retval Returns the # of bytes copied.
+    ///
+    int CopyIn(const char *buf, int numBytes);
+
+    ///
+    /// Copy data out of the buffer.  For doing a copy, data is copied
+    /// from the first buffer in mBuf.  If the amount of data to be
+    /// copied exceeds what is available in the first buffer, the list
+    /// of buffers is walked to copy out data.
+    ///
+    /// NOTE: As a result of copy, the "consumer" portion of an
+    /// IOBufferData is not advanced. 
+    ///
+    /// @param[out] buf A null-terminated buffer containing the data
+    /// copied out.
+    /// @param[in] bufLen Length of buf passed in.  At most bufLen
+    /// bytes are copied out.
+    /// @retval Returns the # of bytes copied.
+    ///
+    int CopyOut(char *buf, int bufLen);
+    
+    ///
+    /// Consuming data in the IOBuffer translates to advancing the
+    /// "consumer" point on underlying IOBufferDataPtr.  From the head
+    /// of the list, the consumer point will be advanced on sufficient
+    /// # of buffers.
+    ///
+    void Consume(int nbytes);
+
+    /// Returns the # of bytes that are available for consumption.
+    int BytesConsumable();
+
+    /// Trim data from the end of the buffer to nbytes.  This is the
+    /// converse of consume, where data is removed from the front of
+    /// the buffer.
+    void Trim(int nbytes);
+
+    /// List of IOBufferData blocks that comprise this buffer.
+    list<IOBufferDataPtr> mBuf;
+};
+
+#endif // _LIBIO_IOBUFFER_H
