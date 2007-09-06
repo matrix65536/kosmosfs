@@ -1,0 +1,92 @@
+//---------------------------------------------------------- -*- Mode: C++ -*-
+// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsIO/NetManager.h#3 $
+//
+// Created 2006/03/14
+// Author: Sriram Rao (Kosmix Corp.) 
+//
+// Copyright (C) 2006 Kosmix Corp.
+//
+// This file is part of Kosmos File System (KFS).
+//
+// KFS is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by
+// the Free Software Foundation under version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see
+// <http://www.gnu.org/licenses/>.
+//
+// 
+//----------------------------------------------------------------------------
+
+#ifndef _LIBIO_NETMANAGER_H
+#define _LIBIO_NETMANAGER_H
+
+#include <sys/time.h>
+
+#include <list>
+using std::list;
+
+#include "ITimeout.h"
+#include "NetConnection.h"
+
+///
+/// \file NetManager.h
+/// The net manager provides facilities for multiplexing I/O on network
+/// connections.  It keeps a list of connections on which it has to
+/// call select.  Whenever an "event" occurs on a connection (viz.,
+/// read/write/error), it calls back the connection to handle the
+/// event.  
+/// 
+/// The net manager also provides support for timeout notification.
+/// Whenever a call to select returns, that is an occurence of a
+/// timeout.  Interested handlers can register with the net manager to
+/// be notified of timeout.  In the current implementation, the
+/// timeout interval is mSelectTimeout.
+//
+
+typedef list<NetConnectionPtr> NetConnectionList_t;
+typedef list<NetConnectionPtr>::iterator NetConnectionListIter_t;
+
+class NetManager {
+public:
+    NetManager();
+    NetManager(const struct timeval &selectTimeout);
+    ~NetManager();
+    /// Add a connection to the net manager's list of connections that
+    /// are used for building poll vector.
+    /// @param[in] conn The connection that should be added.
+    void AddConnection(NetConnectionPtr &conn);
+    void RegisterTimeoutHandler(ITimeout *handler);
+    void UnRegisterTimeoutHandler(ITimeout *handler);
+    
+    ///
+    /// This function never returns.  It builds a poll vector, calls
+    /// select(), and then evaluates the result of select():  for
+    /// connections on which data is I/O is possible---either for
+    /// reading or writing are called back.  In the callback, the
+    /// connections should take appropriate action.  
+    ///
+    /// NOTE: When a connection is closed (such as, via a call to
+    /// NetConnection::Close()), then it automatically falls out of
+    /// the net manager's list of connections that are polled.
+    ///  
+    void MainLoop();
+    
+private:
+
+    /// List of connections that are used for building the poll vector.
+    NetConnectionList_t	mConnections;
+    /// timeout interval specified in the call to select().
+    struct timeval 	mSelectTimeout;
+    /// Handlers that are notified whenever a call to select()
+    /// returns.  To the handlers, the notification is a timeout signal.
+    list<ITimeout *>	mTimeoutHandlers;
+};
+
+#endif // _LIBIO_NETMANAGER_H

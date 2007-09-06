@@ -1,0 +1,73 @@
+
+Kosmos File System (KFS).
+
+Created on 2007/08/23
+
+Copyright (C) 2007 Kosmix Corp.
+
+This file is part of Kosmix File System (KFS).
+
+KFS is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation under version 3 of the License.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+Sriram Rao
+Kosmix Corp.
+sriram@kosmix.com (sriram at kosmix dot com)
+
+TABLE OF CONTENTS
+=================
+ * INTRODUCTION
+ * CLIENT-SIDE API
+ * LINKING 
+ * HOW DOES IT WORK?
+
+INTRODUCTION
+============
+
+This document describes how to integrate the KFS client library with your applications.
+
+CLIENT-SIDE API
+===============
+
+To use KFS with your applications, the application will need to be
+modified.  Two sample programs are included in the package.  
+ - ~/code/kfs/examples/KfsTest_main.cc
+ - ~/code/kfs/examples/KfsTest.java
+
+Each program shows how to use the client-side API.  The KFS client
+library API is defined in:
+ - C++: ~/code/kfs/src/cc/libkfsClient/KfsClient.h
+ - Java: ~/code/kfs/src/java/org/kosmos/access/KfsAccess.java
+
+NOTE: For Java applications, we use the JNI interface to get at the
+C++ KFS client library code from Java applications.
+
+LINKING
+========
+
+After KFS client library are integrated with your applications, you
+will need to perform the following steps to link the application:
+ - C++: link with ~/code/kfs/build/lib-static/libkfsClient.a
+ - Java: Add ~/code/kfs/build/KosmosFS.jar to your CLASSPATH; also
+ ~/code/kfs/build/lib-static/o should be in your LD_LIBRARY_PATH
+
+HOW DOES IT WORK
+================
+
+In either case,the mode of execution is as follows:
+ - the application interacts with the KFS client library
+ - the KFS client library interfaces with the
+ metaserver/chunkserver(s)
+ - If data is replicated, whenever there is a failure in a
+ chunkserver, the client library will fail-over to another chunkserver
+ that has the data; this fail-over is transparent to the application.

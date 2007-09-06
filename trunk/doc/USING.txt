@@ -1,0 +1,85 @@
+
+Kosmos File System (KFS).
+
+Created on 2007/08/23
+
+Copyright (C) 2007 Kosmix Corp.
+
+This file is part of Kosmix File System (KFS).
+
+KFS is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation under version 3 of the License.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+Sriram Rao
+Kosmix Corp.
+sriram@kosmix.com (sriram at kosmix dot com)
+
+TABLE OF CONTENTS
+=================
+ * INTRODUCTION
+ * TOOLS SOURCE/BINARIES
+ * LOADING/UNLOADING DATA
+ * FILE SYSTEM TOOLS
+
+INTRODUCTION
+============
+
+This document describes how to use KFS.  In particular, how to
+load/unload data from KFS servers; the set of tools that are available
+to view the filesystem tree.
+
+TOOLS SOURCE/BINARIES
+=====================
+
+The source code for all the tools included in the package is at:
+~/code/kfs/src/cc/tools
+
+When the package is compiled and installed, the tools are installed
+in: ~/code/kfs/build/bin/tools
+
+LOADING/UNLOADING DATA
+======================
+
+To load pre-existing data files into KFS, the data needs to be copied
+in to a KFS deployment.   
+ - cpFs2Kfs is a tool that copies a directory hierarchy from a local
+ filesystem to a KFS; this tool creates a corresponding directory
+ hierarchy in KFS
+
+When loading data into KFS, you can run multiple instances of cpFs2Kfs
+to speed up the copy; each instance copies in a portion of the
+directory tree.
+
+For debugging purposes, data can also copied out from KFS to a local
+filesystem:
+ - cpKfs2Fs is a tool that copies a directory hierarchy from KFS
+ to a local filesystem; this tool creates a corresponding directory
+ hierarchy in the local filesystem
+
+These tools take arguments from the command line.  
+Type: <tool name> -h to see the list of options for that tool.
+
+FILE SYSTEM TOOLS
+=================
+
+A basic suite of tools for manipulating the KFS directory tree are
+included in the package:
+ - KfsMkdir, KfsRmdir, KfsRm
+ - KfsCp, KfsMv
+ - KfsLs
+
+These tools take arguments from the command line.  
+Type: <tool name> -h to see the list of options for that tool.
+
+ -- FUSE ---
+

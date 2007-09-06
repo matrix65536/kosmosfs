@@ -1,0 +1,150 @@
+//---------------------------------------------------------- -*- Mode: C++ -*-
+// $Id: log.h $
+//
+// \brief Log library wrapper.
+//
+// Created 2005/03/01
+//
+// Copyright (C) 2006 Kosmix Corp.
+//
+// This file is part of Kosmos File System (KFS).
+//
+// KFS is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by
+// the Free Software Foundation under version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see
+// <http://www.gnu.org/licenses/>.
+// 
+//----------------------------------------------------------------------------
+
+#ifndef COMMON_LOG_H
+#define COMMON_LOG_H
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE // for asprintf; this #define must precede <stdio.h>
+#endif
+
+#ifdef __cplusplus
+#include <cstdio>
+#include <ctime>
+#else
+#include <stdio.h>
+#include <time.h>
+#endif
+#include <pthread.h>
+
+#ifndef _COSMIX_LOG_USE_NAMESPACE_STD
+#ifdef __cplusplus
+#define _COSMIX_LOG_USE_NAMESPACE_STD	using namespace std
+#else
+#define _COSMIX_LOG_USE_NAMESPACE_STD
+#endif
+#endif
+
+/*
+ * This file uses C99 variadic macros, which are not part of ISO C++ (1998)
+ * but are supported in gcc as an extension.
+ * To avoid a gcc warning to this effect, use -Wno-variadic-macros
+ * when compiling code using this header file.
+ */
+#pragma GCC system_header
+
+extern pthread_mutex_t _cosmix_log_internal_stdio_lock;
+
+typedef int CosmixLogLevel;
+extern const CosmixLogLevel COSMIX_LOG_ERROR_LEVEL;
+extern const CosmixLogLevel COSMIX_LOG_WARN_LEVEL;
+extern const CosmixLogLevel COSMIX_LOG_INFO_LEVEL;
+extern const CosmixLogLevel COSMIX_LOG_DEBUG_LEVEL;
+extern const CosmixLogLevel COSMIX_LOG_INSANE_LEVEL;
+extern CosmixLogLevel cosmix_log_level;
+
+/*
+ * How logging systems handle log levels:
+ * log4j's levels: TRACE DEBUG INFO WARN ERROR FATAL
+ * RLog's levels: DEBUG INFO WARNING ERROR
+ * ACE's levels: DEBUG INFO NOTICE WARNING ERROR CRITICAL ALERT EMERGENCY
+ * syslog's levels: DEBUG INFO NOTICE WARNING ERR CRIT ALERT EMERG
+*/
+
+/** Internal placeholder log-to-stderr function. */
+#ifndef _COSMIX_LOG_INTERNAL
+#define _COSMIX_LOG_INTERNAL(level, ...) \
+  { \
+    _COSMIX_LOG_USE_NAMESPACE_STD; \
+    time_t now = std::time(NULL); \
+    char nowString[26]; \
+    ctime_r(&now, &nowString[0]); \
+    nowString[strlen(nowString)-1] = '\0'; \
+    pthread_mutex_lock(&_cosmix_log_internal_stdio_lock); \
+    fprintf(stderr, "%s (%lu) %s: %s:%d:%s: ", nowString, pthread_self(), level, \
+      __FILE__, __LINE__, __func__); \
+    fprintf(stderr, __VA_ARGS__); \
+    fputc('\n', stderr); \
+    pthread_mutex_unlock(&_cosmix_log_internal_stdio_lock); \
+  }
+#endif
+
+// A logging library will have a macro wrapper, so
+// these are macro wrappers too.
+#ifndef COSMIX_LOG_INSANE
+/** Print a insane message, using printf-style varargs. */
+#define COSMIX_LOG_INSANE(...) \
+	do { \
+         if (cosmix_log_level >= COSMIX_LOG_INSANE_LEVEL) \
+            _COSMIX_LOG_INTERNAL("INSANE", __VA_ARGS__) \
+        } while(0)
+#endif
+
+#ifndef COSMIX_LOG_DEBUG
+/** Print a debug message, using printf-style varargs. */
+#define COSMIX_LOG_DEBUG(...) \
+	do { \
+         if (cosmix_log_level >= COSMIX_LOG_DEBUG_LEVEL) \
+            _COSMIX_LOG_INTERNAL("DEBUG", __VA_ARGS__) \
+        } while(0)
+#endif
+
+#ifndef COSMIX_LOG_INFO
+/** Print an info message, using printf-style varargs. */
+#define COSMIX_LOG_INFO(...) \
+	do { \
+         if (cosmix_log_level >= COSMIX_LOG_INFO_LEVEL) \
+            _COSMIX_LOG_INTERNAL("INFO", __VA_ARGS__) \
+        } while(0)
+#endif
+
+#ifndef COSMIX_LOG_WARN
+/** Print a warn message, using printf-style varargs. */
+#define COSMIX_LOG_WARN(...) \
+	do { \
+         if (cosmix_log_level >= COSMIX_LOG_WARN_LEVEL) \
+            _COSMIX_LOG_INTERNAL("WARN", __VA_ARGS__) \
+        } while(0)
+#endif
+
+#ifndef COSMIX_LOG_ERROR
+/** Print an error message, using printf-style varargs. */
+#define COSMIX_LOG_ERROR(...) \
+	do { \
+         if (cosmix_log_level >= COSMIX_LOG_ERROR_LEVEL) \
+            _COSMIX_LOG_INTERNAL("ERROR", __VA_ARGS__) \
+        } while(0)
+#endif
+
+#ifndef COSMIX_LOG_PERF
+/** Print an perf log entry, using printf-style varargs. */
+#define COSMIX_LOG_PERF(...) \
+  { \
+    _COSMIX_LOG_INTERNAL("PERF", __VA_ARGS__) \
+  }
+#endif
+
+#endif // COMMON_LOG_H

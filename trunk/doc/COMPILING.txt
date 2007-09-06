@@ -1,0 +1,141 @@
+
+Kosmos File System (KFS).
+
+Created on 2007/08/23
+
+Copyright (C) 2007 Kosmix Corp.
+
+This file is part of Kosmix File System (KFS).
+
+KFS is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation under version 3 of the License.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+Sriram Rao
+Kosmix Corp.
+sriram@kosmix.com (sriram at kosmix dot com)
+
+TABLE OF CONTENTS
+=================
+ * COMPILING THE SOURCE
+ * BUILDING C++ SIDE
+ * BUILDING DEBUG/RELEASE BINARIES
+ * BUILDING JAVA SIDE
+ * BUILDING FUSE
+
+COMPILING THE SOURCE
+====================
+
+KFS has been tested on Linux machines running FC5 on 64-bit architectures.  
+To compile and run KFS, you need to have the following software
+packages installed on your machine:
+ - Boost (preferably, version 1.34 or higher)
+ - cmake (preferable, version 2.4.7 or higher)
+ - log4cpp
+
+This document assumes that you have downloaded the source to
+directory: ~/code/kfs.  We assume that you want to build the source in
+~/code/kfs/build.   If you want to change the top-level directory from
+~/code to something else, please keep the same hierarchy starting from kfs.
+
+~/code/kfs should contain the following directories:
+  src
+  scripts
+  doc
+
+There are two parts to compiling the source:
+ - Build the C++ side to get the metaserver/chunkserver binaries, tools, and
+ the C++ client library.
+ - Build the Java side to get a kfs.jar file which contains the
+ wrapper calls to native C++ via JNI; this allows Java apps to access
+ files stored in KFS.
+
+BUILDING C++ SIDE:
+==================
+
+In ~/code/kfs/CMakeLists.txt, few variables are defined:
+ - Build type: The system is built with debug flags enabled; to build
+ release binaries, change the value for CMAKE_BUILD_TYPE 
+ from RelWithDebInfo to Release.
+
+To build KFS, perform the following steps:
+
+1. cd ~/code/kfs
+2. mkdir build
+3. cd build
+4. Generate the Makefiles: cmake ~/code/kfs/
+5. Compile the source: gmake
+6. After the source, install the binaries: gmake install
+
+At the end of the last step, you will have the following hierarchy:
+
+ *  ~/code/kfs/build/bin -- This will contain the binaries
+     *  ~/code/kfs/build/bin/tools -- This will contain the various KFS
+      utilities that are equivalent to the *nix commands such as,  cp, mv, rename etc.
+     *  ~/code/kfs/build/bin/tests -- This contains simple unit-test programs 
+      to make/remove directories, read/write files, etc.
+
+ * ~/code/kfs/build/lib/ --- This will contain the libraries with the
+    .so extension.
+
+ * ~/code/kfs/build/lib-static --- This will contain the libraries with
+    .a extension
+
+BUILDING DEBUG AND RELEASE BINARIES
+===================================
+
+It is advisable to build both debug/release binaries.  For the
+purposes of deployment,
+ - use DEBUG binaries for metaserver/chunkserver
+ - use RELEASE binaries for the tools.  This makes the tools less chatty
+
+Having binaries with DEBUG info simplifies debugging core-dumps :)
+
+To build DEBUG/RELEASE binaries, here is a suggested directory
+hierarchy:
+ ~/code/kfs/build --- is the build root
+                 /debug -- is the debug build area
+                 /release -- is the release build area
+
+Next,
+ - cd ~/code/kfs/build/debug
+ - Run the steps from the previous section; binaries with debugging
+   info. are built by default.
+ 
+ - cd ~/code/kfs/build/release
+ - Edit ~/code/kfs/CMakeLists.txt and change the value for
+   CMAKE_BUILD_TYPE
+        -- Comment out the line "RelWithDebInfo"
+        -- Uncomment the line "Release"
+ - Follow the steps from #5 from the previous section to compile the
+ tree
+
+
+BUILDING JAVA SIDE:
+===================
+
+To build Java support setup:
+
+1. cd ~/code/kfs
+2. ant jar
+
+At the end of the last step, you will have the following files:
+ * ~/code/kfs/build/classes --- This will contain the Java class files
+ * ~/code/kfs/build/kfs.jar --- The jar file containing the Java
+ classes
+
+BUILDING FUSE
+=============
+
+Currently, building FUSE is not supported.  This will be added in a
+subsequent update.
+

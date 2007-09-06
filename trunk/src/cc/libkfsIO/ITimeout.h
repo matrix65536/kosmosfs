@@ -1,0 +1,108 @@
+//---------------------------------------------------------- -*- Mode: C++ -*-
+// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsIO/ITimeout.h#3 $
+//
+// Created 2006/03/25
+// Author: Sriram Rao (Kosmix Corp.) 
+//
+// Copyright (C) 2006 Kosmix Corp.
+//
+// This file is part of Kosmos File System (KFS).
+//
+// KFS is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by
+// the Free Software Foundation under version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see
+// <http://www.gnu.org/licenses/>.
+//
+// 
+//----------------------------------------------------------------------------
+
+#ifndef LIBIO_I_TIMEOUT_H
+#define LIBIO_I_TIMEOUT_H
+
+extern "C" {
+#include <sys/types.h>
+#include <sys/time.h>
+}
+
+///
+/// \file ITimeout.h
+/// \brief Define the ITimeout interface.
+///
+ 
+/// 
+/// \class ITimeout
+/// Abstract class that defines a Timeout interface.  Whenever a
+/// timeout occurs, the Timeout() method will be invoked.  An optional
+/// setting, interval can be specified, which signifies the time
+/// interval between successive invocations of Timeout().
+/// 
+/// NOTE: Timeout interface supports only a pseudo-real-time timers.
+/// There is no guarantee that the desired interval will hold between
+/// successive invocations of Timeout().
+///
+class ITimeout {
+public:
+    ITimeout() {
+        mIntervalMs = 0;
+        gettimeofday(&mLastCall, NULL);
+    }
+    virtual ~ITimeout() { }
+    
+    /// Specify the interval in milli-seconds at which the timeout
+    /// should occur. 
+    void SetTimeoutInterval(int intervalMs) {
+        mIntervalMs = intervalMs;
+    }
+
+    int GetTimeElapsed() {
+        struct timeval timeNow;
+
+        gettimeofday(&timeNow, NULL);
+        return ((timeNow.tv_sec - mLastCall.tv_sec) * 1000 * 1000 +
+                (timeNow.tv_usec - mLastCall.tv_usec)) / 1000;
+
+    }
+
+    /// Whenever a timer expires (viz., a call to select returns),
+    /// this method gets invoked.  Depending on the time-interval
+    /// specified, the timeout is appropriately invoked.
+    void TimerExpired() {
+        int timeMs;
+        struct timeval timeNow;
+
+        if (mIntervalMs == 0) {
+            // aperiodic timeout.
+            Timeout();
+            return;
+        }
+
+        // Periodic timeout.
+        gettimeofday(&timeNow, NULL);
+        timeMs = ((timeNow.tv_sec - mLastCall.tv_sec) * 1000 * 1000 +
+                  (timeNow.tv_usec - mLastCall.tv_usec)) / 1000;
+
+        if (timeMs >= mIntervalMs) {
+            Timeout();
+            // remember the last call time
+            mLastCall.tv_sec = timeNow.tv_sec;
+            mLastCall.tv_usec = timeNow.tv_usec;
+        }
+    }
+    
+    /// This method will be invoked when a timeout occurs.
+    virtual void Timeout() = 0;
+protected:
+    int		mIntervalMs;
+private:
+    struct timeval 	mLastCall;
+};
+
+#endif // LIBIO_I_TIMEOUT_H
