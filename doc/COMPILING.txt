@@ -22,7 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 Sriram Rao
 Kosmix Corp.
-sriram@kosmix.com (sriram at kosmix dot com)
+(sriram at kosmix dot com)
 
 TABLE OF CONTENTS
 =================
@@ -31,6 +31,7 @@ TABLE OF CONTENTS
  * BUILDING DEBUG/RELEASE BINARIES
  * BUILDING JAVA SIDE
  * BUILDING FUSE
+ * BUILDING PYTHON EXTENSION MODULE
 
 COMPILING THE SOURCE
 ====================
@@ -133,9 +134,44 @@ At the end of the last step, you will have the following files:
  * ~/code/kfs/build/kfs.jar --- The jar file containing the Java
  classes
 
-BUILDING FUSE
-=============
+BUILDING FUSE Support
+=====================
 
-Currently, building FUSE is not supported.  This will be added in a
-subsequent update.
+For building FUSE support for KFS, you will need install fuse package
+on the target machines.  To compile KFS/FUSE bindings, 
+ - In ~/code/kfs/CMakeLists.txt, provide the path to libfuse.so
+ - Specifically, uncomment the following line in the CMakeLists.txt
+     # set (Fuse_LIBRARY_DIR <provide path>)
+   and provide a path to the fuse library.
 
+Then follow the normal compilation steps (cmake/gmake/gmake install) and
+kfs_fuse binary will be built and installed in ~/code/kfs/build/bin
+
+BUILDING PYTHON EXTENSION MODULE
+================================
+
+1. Build and install the KFS client library.  Let the path to the shared libraries be:
+~/code/kfs/build/lib
+
+2. cd to ~/code/kfs/src/cc/access and build the python extension
+   module:
+   - Edit kfs_setup.py and setup the include path.  Specifically,
+          kfsext = Extension('kfs',
+   		include_dirs = ['/home/sriram/code/kosmosfs/src/cc/'],
+                                 ^^^^^^^^^^^^
+       change the path appropriately.
+    - python kfs_setup.py ~/code/kosmosfs/build/lib/ build
+      This will build kfs.so in ./build/lib.../kfs.so
+
+3. The kfs.so needs to be installed in the site-packages for python.
+   For instance, if /usr/lib64/python/site-packages is where the site
+   packages, then you will need to install kfs.so there.  You will
+   need write permissions to install the file there.  To install,
+    - python kfs_setup.py ~/code/kosmosfs/build/lib/ install
+
+4. To allow applications to use kfs.so, ~/code/kfs/build/lib should be
+   in the LD_LIBRARY_PATH.
+
+5. For sample applications, see:
+   ~/code/kfs/src/python/flogger/flogger.py or 
+   ~/code/kfs/src/python/rw/rw.py
