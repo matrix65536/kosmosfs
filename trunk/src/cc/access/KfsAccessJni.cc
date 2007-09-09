@@ -52,7 +52,8 @@ extern "C" {
     jint Java_org_kosmos_access_KfsAccess_rmdir(
         JNIEnv *jenv, jclass jcls, jstring jpath);
 
-    jobjectArray Java_org_kosmos_access_KfsAccess_readdir(JNIEnv *jenv, jclass jcls, jstring jpath);
+    jobjectArray Java_org_kosmos_access_KfsAccess_readdir(
+        JNIEnv *jenv, jclass jcls, jstring jpath);
 
     jint Java_org_kosmos_access_KfsAccess_open(
         JNIEnv *jenv, jclass jcls, jstring jpath, jstring jmode, jint jnumReplicas);
@@ -90,6 +91,9 @@ extern "C" {
 
     jlong Java_org_kosmos_access_KfsAccess_filesize(
         JNIEnv *jenv, jclass jcls, jstring jpath);
+
+    jobjectArray Java_org_kosmos_access_KfsAccess_getDataLocation(
+        JNIEnv *jenv, jclass jcls, jstring jpath, jlong jstart, jlong jlen);
 
     jint Java_org_kosmos_access_KfsAccess_read(
         JNIEnv *jenv, jclass jcls, jint jfd, jobject buf, jint begin, jint end);
@@ -327,6 +331,44 @@ jlong Java_org_kosmos_access_KfsAccess_filesize(JNIEnv *jenv, jclass jcls, jstri
         return -1;
     
     return result.st_size;
+}
+
+jobjectArray Java_org_kosmos_access_KfsAccess_getDataLocation(JNIEnv *jenv, jclass jcls, jstring jpath,
+                                                              jlong jstart, jlong jlen)
+{
+    KfsClient *clnt = KfsClient::Instance();
+
+    string path;
+    // for each block, there could be multiple locations due to replication; return them all here
+    vector< vector<string> > entries;
+    int res;
+    jstring s;
+    jobjectArray jentries;
+
+    setStr(path, jenv, jpath);
+
+    res = clnt->GetDataLocation(path.c_str(), jstart, jlen, entries);
+    if ((res < 0) || (entries.size() == 0))
+        return NULL;
+
+    jclass jstrArrClass = jenv->FindClass("[Ljava/lang/String;");
+    jclass jstrClass = jenv->FindClass("Ljava/lang/String;");
+
+    // For each block, return its location(s)
+    jentries = jenv->NewObjectArray(entries.size(), jstrArrClass, NULL);
+
+    for (vector<string>::size_type i = 0; i < entries.size(); i++) {
+        jobjectArray jlocs = jenv->NewObjectArray(entries[i].size(), jstrClass, NULL);
+        for (vector<string>::size_type j = 0; j < entries[i].size(); j++) {
+            s = jenv->NewStringUTF(entries[i][j].c_str());
+            jenv->SetObjectArrayElement(jlocs, j, s);
+            jenv->DeleteLocalRef(s);
+        }
+        jenv->SetObjectArrayElement(jentries, i, jlocs);
+        jenv->DeleteLocalRef(jlocs);
+    }
+
+    return jentries;
 }
 
 jint Java_org_kosmos_access_KfsAccess_read(JNIEnv *jenv, jclass jcls, jint jfd, 
