@@ -57,6 +57,9 @@ public class KfsAccess
     String[] readdir(String path);
 
     private final static native
+    String[][] getDataLocation(String path, long start, long len);
+
+    private final static native
     int create(String path, int numReplicas);
 
     private final static native
@@ -241,15 +244,11 @@ public class KfsAccess
         return filesize(path);
     }
 
-    protected void finalize() throws Throwable
+    // Given a starting byte offset and a length, return the location(s)
+    // of all the chunks that cover the region.
+    public String[][] kfs_getDataLocation(String path, long start, long len)
     {
-        release();
-        super.finalize();
-    }
-
-    public void release()
-    {
-
+        return getDataLocation(path, start, len);
     }
 
     // Read/write from the specified fd.  The basic model is:
@@ -305,6 +304,18 @@ public class KfsAccess
         }
         return nwrote;
     }
+
+    protected void finalize() throws Throwable
+    {
+        release();
+        super.finalize();
+    }
+
+    public void release()
+    {
+
+    }
+
 }
 
 

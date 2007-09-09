@@ -91,7 +91,24 @@ public class KfsTest
             kfsAccess.kfs_sync(fd);
 
             kfsAccess.kfs_close(fd);
+
+            System.out.println("Trying to lookup blocks for file: " + path);
+
+            String [][] locs;
+            if ((locs = kfsAccess.kfs_getDataLocation(path, 10, 512)) == null) {
+                System.out.println("Get locs failed");
+                System.exit(1);
+            }
             
+            System.out.println("Block Locations:");
+            for (int i = 0; i < locs.length; i++) {
+                System.out.print("chunk " + i + " : ");
+                for (int j = 0; j < locs[i].length; j++) {
+                    System.out.print(locs[i][j] + " ");
+                }
+                System.out.println();
+            }
+
             long sz = kfsAccess.kfs_filesize(path);
 
             if (sz != buf.length) {

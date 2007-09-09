@@ -685,6 +685,57 @@ KfsClient::Truncate(int fd, off_t offset)
     return res;
 }
 
+int
+KfsClient::GetDataLocation(const char *pathname, off_t start, size_t len,
+                           vector< vector <string> > &locations)
+{
+    MutexLock l(&mMutex);
+
+    int res, fd;
+    bool didOpen = false;
+
+    // Non-existent
+    if (!IsFile(pathname)) 
+        return -ENOENT;
+
+    // load up the fte
+    fd = LookupFileTableEntry(pathname);
+    if (fd < 0) {
+        // Open the file for reading...this'll get the attributes setup
+        fd = Open(pathname, O_RDONLY);
+        // we got too many open files?
+        if (fd < 0)
+            return fd;
+        didOpen = true;
+    }
+
+    // locate each chunk and get the hosts that are storing the chunk.
+    for (size_t pos = start; pos < start + len; pos += KFS::CHUNKSIZE) {
+        ChunkAttr *chunkAttr;
+        int chunkNum = pos / KFS::CHUNKSIZE;
+
+        if ((res = LocateChunk(fd, chunkNum)) < 0) {
+            if (didOpen)
+                Close(fd);
+            return res;
+        }
+
+        chunkAttr = &(mFileTable[fd]->cattr[chunkNum]);
+        
+        vector<string> hosts;
+        for (vector<string>::size_type i = 0; i < chunkAttr->chunkServerLoc.size(); i++)
+            hosts.push_back(chunkAttr->chunkServerLoc[i].hostname);
+
+        locations.push_back(hosts);
+    }
+
+    if (didOpen)
+        Close(fd);
+
+    return 0;
+}
+
+
 off_t
 KfsClient::Seek(int fd, off_t offset)
 {
@@ -784,7 +835,7 @@ KfsClient::AllocChunk(int fd)
 /// @param[in] fd  The index for an entry in mFileTable[] for which
 /// we are trying find out chunk location info.
 ///
-/// @param[in] chunkNume  The index in
+/// @param[in] chunkNum  The index in
 /// mFileTable[fd]->cattr[] corresponding to the chunk for
 /// which we are trying to get location info.
 ///

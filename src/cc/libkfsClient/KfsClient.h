@@ -383,6 +383,21 @@ public:
     /// @retval status code
     int Truncate(int fd, off_t offset);
 
+    ///
+    /// Given a starting offset/length, return the location of all the
+    /// chunks that cover this region.  By location, we mean the name
+    /// of the chunkserver that is hosting the chunk. This API can be
+    /// used for job scheduling.
+    ///
+    /// @param[in] pathname	The full pathname of the file such as /../foo
+    /// @param[in] start	The starting byte offset
+    /// @param[in] len		The length in bytes that define the region
+    /// @param[out] locations	The location(s) of various chunks
+    /// @retval status: 0 on success; -errno otherwise
+    ///
+    int GetDataLocation(const char *pathname, off_t start, size_t len,
+                        vector< vector <string> > &locations);
+
     /// from the table of sockets find the TcpSocket that is connected
     /// to the specified server/port; if no such socket exists, a new
     /// connection is made, the socket is stashed in the table and a
@@ -395,7 +410,7 @@ public:
 
 private:
      /// Maximum # of files a client can have open.
-    static const int MAX_FILES = 1024;
+    static const int MAX_FILES = 4096;
 
     /// Primitive support for concurrent access in the KFS client: at
     /// each entry point from the public interfaces, grab the mutex
