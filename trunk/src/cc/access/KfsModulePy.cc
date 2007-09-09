@@ -27,7 +27,7 @@
 
 #include "Python.h"
 #include "structmember.h"
-#include "KfsClient.h"
+#include "libkfsClient/KfsClient.h"
 #include <cstring>
 #include <cerrno>
 #include <string>
@@ -47,6 +47,7 @@ extern "C" {
 
 using std::string;
 using std::vector;
+using namespace KFS;
 
 struct kfs_Client {
 	PyObject_HEAD

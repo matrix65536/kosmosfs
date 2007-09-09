@@ -43,13 +43,22 @@ ENDIF(CMAKE_BUILD_TYPE STREQUAL "Release")
 # Locate Boost
 find_package(Boost REQUIRED)
 
+#
+# Find the path to libfuse.so
+#
+
+IF (EXISTS "/lib64/libfuse.so")
+   SET(Fuse_LIBRARY_DIR "/lib64")
+ELSE (EXISTS "/lib64/libfuse.so")
+   SET(Fuse_LIBRARY_DIR "")
+ENDIF (EXISTS "/lib64/libfuse.so")
+
 # include dirs
 include_directories( ${Boost_INCLUDE_DIRS} src/cc)
 
 # get the subdirs we want
 add_subdirectory (src/cc/access)
 add_subdirectory (src/cc/common)
-# add_subdirectory (src/cc/fuse)
 add_subdirectory (src/cc/meta)
 add_subdirectory (src/cc/chunk)
 add_subdirectory (src/cc/libkfsClient)
@@ -57,3 +66,8 @@ add_subdirectory (src/cc/libkfsIO)
 add_subdirectory (src/cc/tools)
 add_subdirectory (src/cc/tests)
 
+# set (Fuse_LIBRARY_DIR <provide path>)
+IF (NOT ${Fuse_LIBRARY_DIR} STREQUAL "")
+   message(STATUS "Found fuse")
+   add_subdirectory (src/cc/fuse)
+ENDIF (NOT ${Fuse_LIBRARY_DIR} STREQUAL "")

@@ -22,7 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 Sriram Rao
 Kosmix Corp.
-sriram@kosmix.com (sriram at kosmix dot com)
+(sriram at kosmix dot com)
 
 TABLE OF CONTENTS
 =================
