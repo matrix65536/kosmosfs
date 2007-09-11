@@ -45,10 +45,6 @@
 
 #include "concurrency.h"
 
-using std::string;
-using std::vector;
-using std::map;
-
 namespace KFS {
 
 ///
@@ -145,11 +141,11 @@ struct FileTableEntry {
     // the fid of the parent dir in which this entry "resides"
     kfsFileId_t parentFid;
     // stores the name of the file/directory.
-    string	name;
+    std::string	name;
     // one of O_RDONLY, O_WRONLY, O_RDWR
     int		openMode;
     FileAttr	fattr;
-    map <int, ChunkAttr> cattr;
+    std::map <int, ChunkAttr> cattr;
     // the position in the file at which the next read/write will occur
     FilePosition currPos;
     /// For the current chunk, do some amount of buffering on the
@@ -259,7 +255,7 @@ public:
     /// @param[in] pathname	The full pathname such as /.../dir
     /// @param[out] result	The contents of the directory
     /// @retval 0 if readdir is successful; -errno otherwise
-    int Readdir(const char *pathname, vector<string> &result);
+    int Readdir(const char *pathname, std::vector<std::string> &result);
 
     ///
     /// Read a directory's contents and retrieve the attributes
@@ -267,15 +263,17 @@ public:
     /// @param[out] result	The files in the directory and their attributes.
     /// @retval 0 if readdirplus is successful; -errno otherwise
     ///
-    int ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result);
+    int ReaddirPlus(const char *pathname, std::vector<KfsFileAttr> &result);
 
     ///
     /// Stat a file and get its attributes.
     /// @param[in] pathname	The full pathname such as /.../foo
     /// @param[out] result	The attributes that we get back from server
+    /// @param[in] computeFilesize  When set, for files, the size of
+    /// file is computed and the value is returned in result.st_size
     /// @retval 0 if stat was successful; -errno otherwise
     ///
-    int Stat(const char *pathname, struct stat &result);
+    int Stat(const char *pathname, struct stat &result, bool computeFilesize = true);
 
     ///
     /// Helper APIs to check for the existence of (1) a path, (2) a
@@ -396,7 +394,7 @@ public:
     /// @retval status: 0 on success; -errno otherwise
     ///
     int GetDataLocation(const char *pathname, off_t start, size_t len,
-                        vector< vector <string> > &locations);
+                        std::vector< std::vector <std::string> > &locations);
 
     /// from the table of sockets find the TcpSocket that is connected
     /// to the specified server/port; if no such socket exists, a new
@@ -430,10 +428,12 @@ private:
     kfsSeq_t	mCmdSeqNum;
 
     /// The current working directory in KFS
-    string	mCwd;
+    std::string	mCwd;
+
+    std::string mHostname;
 
     /// keep a table of open files/directory handles.
-    vector <FileTableEntry *> mFileTable;
+    std::vector <FileTableEntry *> mFileTable;
 
     /// Check that fd is in range
     bool valid_fd(int fd) { return (fd >= 0 && fd < MAX_FILES); }
@@ -450,10 +450,12 @@ private:
     /// @param[in] filename   filename whose attributes are being
     /// asked
     /// @param[out] result   the resultant attributes
+    /// @param[in] computeFilesize  when set, for files, the size of
+    /// the file is computed and returned in result.fileSize
     /// @retval 0 on success; -errno otherwise
     ///
     int LookupAttr(kfsFileId_t parentFid, const char *filename,
-		   KfsFileAttr &result);
+		   KfsFileAttr &result, bool computeFilesize);
 
     /// Helper functions that operate on individual chunks.
 
@@ -610,8 +612,8 @@ private:
     /// Do the work for pipelined read: send a few
     /// requests to plumb the pipe and then whenever an op finishes,
     /// submit a new one.
-    int DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock);
-    int DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops);
+    int DoPipelinedRead(std::vector<ReadOp *> &ops, TcpSocket *sock);
+    int DoPipelinedWrite(int fd, std::vector<WritePrepareOp *> &ops);
 
     /// Helpers for pipelined write
     int PushDataForWrite(int fd, WritePrepareOp *op);
@@ -625,7 +627,7 @@ private:
     /// Given a path, get the parent fileid and the name following the
     /// trailing "/"
     int GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
-			  string &name);
+			  std::string &name);
 
     /// File table management utilities: find a free entry in the
     /// table, find the entry corresponding to a pathname, "mark" an
@@ -659,7 +661,7 @@ private:
 /// Given a error status code, return a string describing the error.
 /// @param[in] status  The status code for an error.
 /// @retval String that describes what the error is.
-extern string ErrorCodeToStr(int status);
+extern std::string ErrorCodeToStr(int status);
 // Helper functions
 extern int DoOpSend(KfsOp *op, TcpSocket *sock);
 extern int DoOpResponse(KfsOp *op, TcpSocket *sock);

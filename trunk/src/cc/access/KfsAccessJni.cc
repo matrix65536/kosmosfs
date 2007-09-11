@@ -275,47 +275,36 @@ jint Java_org_kosmos_access_KfsAccess_exists(JNIEnv *jenv, jclass jcls, jstring 
 {
     KfsClient *clnt = KfsClient::Instance();
 
-    struct stat result;
     string path;
     setStr(path, jenv, jpath);
     
-    if (clnt->Stat(path.c_str(), result) != 0)
-        return 0;
+    if (clnt->Exists(path.c_str()))
+        return 1;
     
-    return 1;
+    return 0;
 }
 
 jint Java_org_kosmos_access_KfsAccess_isFile(JNIEnv *jenv, jclass jcls, jstring jpath)
 {
     KfsClient *clnt = KfsClient::Instance();
 
-    struct stat result;
     string path;
     setStr(path, jenv, jpath);
     
-    if (clnt->Stat(path.c_str(), result) != 0)
-        return -1;
-
-    if (S_ISDIR(result.st_mode))
-        return 0;
-    
-    return 1;
+    if (clnt->IsFile(path.c_str()))
+        return 1;
+    return 0;
 }
 
 jint Java_org_kosmos_access_KfsAccess_isDirectory(JNIEnv *jenv, jclass jcls, jstring jpath)
 {
     KfsClient *clnt = KfsClient::Instance();
 
-    struct stat result;
     string path;
     setStr(path, jenv, jpath);
     
-    if (clnt->Stat(path.c_str(), result) != 0)
-        return -1;
-    
-    if (S_ISDIR(result.st_mode))
+    if (clnt->IsDirectory(path.c_str()))
         return 1;
-    
     return 0;
 }
 

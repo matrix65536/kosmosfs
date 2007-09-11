@@ -47,6 +47,8 @@ using std::ostringstream;
 using std::istringstream;
 using std::min;
 using std::max;
+using std::map;
+using std::vector;
 
 using std::cout;
 using std::endl;
@@ -78,6 +80,15 @@ KfsClient::KfsClient()
 {
     pthread_mutexattr_t mutexAttr;
     int rval;
+    const int hostnamelen = 256;
+    char hostname[hostnamelen];
+
+    if (gethostname(hostname, hostnamelen)) {
+        perror("gethostname: ");
+        exit(-1);
+    }
+
+    mHostname = hostname;
 
     // store the entry for "/"
     int UNUSED_ATTR rootfte = ClaimFileTableEntry(KFS::ROOTFID, "/");
@@ -366,14 +377,15 @@ KfsClient::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result)
 	ist.getline(filename, MAX_FILENAME_LEN);
 	result[i].filename = filename;
         COSMIX_LOG_DEBUG("Entry: %s", filename);
-	LookupAttr(dirFid, result[i].filename.c_str(), result[i]);
+        // get the file size for files
+	LookupAttr(dirFid, result[i].filename.c_str(), result[i], true);
     }
 
     return res;
 }
 
 int
-KfsClient::Stat(const char *pathname, struct stat &result)
+KfsClient::Stat(const char *pathname, struct stat &result, bool computeFilesize)
 {
     MutexLock l(&mMutex);
 
@@ -387,7 +399,7 @@ KfsClient::Stat(const char *pathname, struct stat &result)
 	string filename;
 	int res = GetPathComponents(pathname, &parentFid, filename);
 	if (res == 0)
-	    res = LookupAttr(parentFid, filename.c_str(), kfsattr);
+	    res = LookupAttr(parentFid, filename.c_str(), kfsattr, computeFilesize);
 	if (res < 0)
 	    return res;
     }
@@ -408,7 +420,7 @@ KfsClient::Exists(const char *pathname)
 
     struct stat dummy;
 
-    return Stat(pathname, dummy) == 0;
+    return Stat(pathname, dummy, false) == 0;
 }
 
 bool
@@ -418,7 +430,7 @@ KfsClient::IsFile(const char *pathname)
 
     struct stat statInfo;
 
-    if (Stat(pathname, statInfo) != 0)
+    if (Stat(pathname, statInfo, false) != 0)
 	return false;
     
     return S_ISREG(statInfo.st_mode);
@@ -431,7 +443,7 @@ KfsClient::IsDirectory(const char *pathname)
 
     struct stat statInfo;
 
-    if (Stat(pathname, statInfo) != 0)
+    if (Stat(pathname, statInfo, false) != 0)
 	return false;
     
     return S_ISDIR(statInfo.st_mode);
@@ -439,7 +451,7 @@ KfsClient::IsDirectory(const char *pathname)
 
 int
 KfsClient::LookupAttr(kfsFileId_t parentFid, const char *filename,
-	              KfsFileAttr &result)
+	              KfsFileAttr &result, bool computeFilesize)
 {
     MutexLock l(&mMutex);
 
@@ -452,8 +464,10 @@ KfsClient::LookupAttr(kfsFileId_t parentFid, const char *filename,
 	return op.status;
 
     result = op.fattr;
-    if (!result.isDirectory)
+    if ((!result.isDirectory) && computeFilesize)
 	result.fileSize = ComputeFilesize(result.fileId);
+    else
+        result.fileSize = 0;
 
     return op.status;
 }
@@ -1227,6 +1241,17 @@ KfsClient::ComputeFilesize(kfsFileId_t kfsfid)
     return filesize;
 }
 
+// A simple functor to match chunkserver by hostname
+class ChunkserverMatcher {
+    string myHostname;
+public:
+    ChunkserverMatcher(const string &l) :
+        myHostname(l) { }
+    bool operator()(const ServerLocation &loc) const {
+        return loc.hostname == myHostname;
+    }
+};
+
 int
 KfsClient::OpenChunk(int fd)
 {
@@ -1242,10 +1267,23 @@ KfsClient::OpenChunk(int fd)
 	return -EINVAL;
     }
 
-    // pick one at random
+    TcpSocket **sock = &mFileTable[fd]->currPos.chunkServerSock;
+    // try the local server first
+    vector <ServerLocation>::iterator s =
+        find_if(chunk->chunkServerLoc.begin(), chunk->chunkServerLoc.end(), 
+                ChunkserverMatcher(mHostname));
+    if (s != chunk->chunkServerLoc.end()) {
+        *sock = GetChunkServerSocket(*s);
+        if (*sock != NULL) {
+            COSMIX_LOG_DEBUG("Picking local server: %s", s->ToString().c_str());
+            return SizeChunk(fd);
+        }
+    }
+
+    // else pick one at random
     vector<ServerLocation> loc = chunk->chunkServerLoc;
     vector<ServerLocation>::size_type i = rand() % loc.size();
-    TcpSocket **sock = &mFileTable[fd]->currPos.chunkServerSock;
+
     *sock = GetChunkServerSocket(loc[i]);
 
     COSMIX_LOG_DEBUG("Randomly chose: %s", loc[i].ToString().c_str());
