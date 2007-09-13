@@ -35,6 +35,17 @@ using std::min;
 #include "Globals.h"
 using namespace libkfsio;
 
+// To conserve memory, by default, we allocate IOBufferData in 4K
+// blocks.  However, applications are free to change this default unit
+// to what they like.
+uint32_t IOBUFSIZE = 4096;
+
+// Call this function if you want to change the default allocation unit.
+void libkfsio::SetIOBufferSize(uint32_t bufsz)
+{
+    IOBUFSIZE = bufsz;
+}
+
 IOBufferData::IOBufferData()
 {
     // cout << "Allocating: " << this << endl;
@@ -254,7 +265,7 @@ void IOBuffer::Splice(IOBuffer *other, int offset, int numBytes)
 
     extra = offset - BytesConsumable();
     while (extra > 0) {
-        int zeroed = min(IOBUFSIZE, extra);
+        int zeroed = min(IOBUFSIZE, (uint32_t) extra);
         data.reset(new IOBufferData());
         data->ZeroFill(zeroed);
         extra -= zeroed;
@@ -317,7 +328,7 @@ void IOBuffer::ZeroFill(int numBytes)
     IOBufferDataPtr data;
 
     while (numBytes > 0) {
-        int zeroed = min(IOBUFSIZE, numBytes);
+        int zeroed = min(IOBUFSIZE, (uint32_t) numBytes);
         data.reset(new IOBufferData());
         data->ZeroFill(zeroed);
         numBytes -= zeroed;

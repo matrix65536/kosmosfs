@@ -398,10 +398,9 @@ KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
 	delete op;
     }
 
-    /*
     COSMIX_LOG_DEBUG("Read data from server...%d bytes",
 	             numIO);
-    */
+
     return numIO;
 }
 

@@ -416,15 +416,18 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 
     numAvail = min(numBytes, KFS::CHUNKSIZE - offset);
 
+    // cout << "Pushing to server: " << offset << ' ' << numBytes << endl;
+
     // Split the write into a bunch of smaller ops
     while (numWrote < numAvail) {
 	WritePrepareOp *op = new WritePrepareOp(nextSeq(), chunk->chunkId,
 	                                        chunk->chunkVersion);
 
-	// op->numBytes = min(MIN_BYTES_PIPELINE_IO, numAvail - numWrote);
+	// Try to push out 1MB at a time: is too slow
+	// op->numBytes = min(MAX_BYTES_PER_WRITE, numAvail - numWrote);
 
-	// Try to push out 1MB at a time
-	op->numBytes = min(MAX_BYTES_PER_WRITE, numAvail - numWrote);
+	op->numBytes = min(KFS::CHUNKSIZE, numAvail - numWrote);
+
 	if ((op->numBytes % CHECKSUM_BLOCKSIZE) != 0) {
 	    // if the write isn't aligned to end on a checksum block
 	    // boundary, then break the write into two parts:
@@ -529,6 +532,9 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 	COSMIX_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes, was asked %lu bytes",
 	                 fd, numIO, numBytes);
     }
+
+    COSMIX_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes",
+                     fd, numIO);
 
     return numIO;
 }
