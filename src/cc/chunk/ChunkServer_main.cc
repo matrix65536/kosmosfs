@@ -74,7 +74,12 @@ main(int argc, char **argv)
     }
     // Initialize things...
     libkfsio::InitGlobals();
-
+    
+    // setup the default allocation unit to be large (16MB); clients
+    // are going to be reading/writing 64MB chunks, so allocate as
+    // much as possible.
+    libkfsio::SetIOBufferSize(1 << 24);
+    
     gChunkServer.Init();
     gChunkManager.Init(gChunksDir, gTotalSpace);
     gLogger.Init(gLogDir);

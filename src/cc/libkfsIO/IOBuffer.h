@@ -52,10 +52,6 @@ using std::list;
 /// \brief An IOBufferData contains a buffer and associated
 /// producer/consumer points.
 
-// For some reason, I can't put this constant inside IOBufferData
-// class and refer to it in IOBuffer class code.  Sigh...
-static const int IOBUFSIZE = 4096;
-
 class IOBufferData {
 public:
     IOBufferData();
@@ -251,5 +247,13 @@ struct IOBuffer {
     /// List of IOBufferData blocks that comprise this buffer.
     list<IOBufferDataPtr> mBuf;
 };
+
+namespace libkfsio
+{
+    /// API to set the default allocation when allocating
+    /// IOBufferData().  The default allocation unit is 4K unless
+    /// changed by this API call.
+    void SetIOBufferSize(uint32_t bufsz);
+}
 
 #endif // _LIBIO_IOBUFFER_H
