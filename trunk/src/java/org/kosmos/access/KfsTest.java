@@ -29,6 +29,7 @@ package org.kosmos.access;
 import java.io.*;
 import java.net.*;
 import java.util.Random;
+import java.nio.ByteBuffer;
 
 public class KfsTest
 {
@@ -56,8 +57,8 @@ public class KfsTest
 
             }
             String path = new String(basedir + "/foo.1");
-            int fd;
-            if ((fd = kfsAccess.kfs_create(path)) < 0) {
+            KfsOutputChannel outputChannel;
+            if ((outputChannel = kfsAccess.kfs_create(path)) == null) {
                 System.out.println("Unable to call create");
                 System.exit(1);
             }
@@ -82,15 +83,16 @@ public class KfsTest
             String s = new String(dataBuf);
             byte[] buf = s.getBytes();
 
-            int res = kfsAccess.kfs_write(fd, buf, 0, buf.length);
+            ByteBuffer b = ByteBuffer.wrap(buf, 0, buf.length);
+            int res = outputChannel.write(b);
             if (res != buf.length) {
                 System.out.println("Was able to write only: " + res);
             }
 
             // flush out the changes
-            kfsAccess.kfs_sync(fd);
+            outputChannel.sync();
 
-            kfsAccess.kfs_close(fd);
+            outputChannel.close();
 
             System.out.println("Trying to lookup blocks for file: " + path);
 
@@ -124,8 +126,11 @@ public class KfsTest
                 System.exit(1);
             }
 
-            int fd1 = kfsAccess.kfs_create(path);
-            kfsAccess.kfs_close(fd1);
+            KfsOutputChannel outputChannel1 = kfsAccess.kfs_create(path);
+
+            if (outputChannel1 != null) {
+                outputChannel1.close();
+            }
 
             if (!kfsAccess.kfs_exists(path)) {
                 System.out.println(path + " doesn't exist");
@@ -145,14 +150,15 @@ public class KfsTest
                 System.exit(1);
             }
 
-            if ((fd = kfsAccess.kfs_open(npath, "rw")) < 0) {
+            KfsInputChannel inputChannel = kfsAccess.kfs_open(npath);
+            if (inputChannel == null) {
                 System.out.println("open on " + npath + "failed!");
                 System.exit(1);
             }
             
             // read some bytes
             buf = new byte[128];
-            res = kfsAccess.kfs_read(fd, buf, 0, 128);
+            res = inputChannel.read(ByteBuffer.wrap(buf, 0, 128));
 
             s = new String(buf);
             for (int i = 0; i < 128; i++) {
@@ -162,14 +168,14 @@ public class KfsTest
             }
             
             // seek to offset 40
-            kfsAccess.kfs_seek(fd, 40);
+            inputChannel.seek(40);
 
-            sz = kfsAccess.kfs_tell(fd);
+            sz = inputChannel.tell();
             if (sz != 40) {
                 System.out.println("After seek, we are at: " + sz);
             }
 
-            kfsAccess.kfs_close(fd);
+            inputChannel.close();
 
             // remove the file
             kfsAccess.kfs_remove(npath);

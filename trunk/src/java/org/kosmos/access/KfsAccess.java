@@ -31,13 +31,6 @@ import java.nio.ByteBuffer;
 
 public class KfsAccess
 {
-    // To get to a byte-buffer from the C++ side as a pointer, need
-    // the buffer to be direct memory backed buffer.  So, allocate one
-    // for reading/writing.
-    private static final int DEFAULT_BUF_SIZE = 1 << 20;
-    private ByteBuffer readBuffer;
-    private ByteBuffer writeBuffer;
-
     private final static native
     int initF(String configFn);
 
@@ -72,24 +65,6 @@ public class KfsAccess
     int open(String path, String mode, int numReplicas);
 
     private final static native
-    int close(int fd);
-
-    private final static native
-    int read(int fd, ByteBuffer buf, int begin, int end);
-
-    private final static native
-    int write(int fd, ByteBuffer buf, int begin, int end);
-
-    private final static native
-    int sync(int fd);
-
-    private final static native
-    int seek(int fd, long offset);
-
-    private final static native
-    long tell(int fd);
-
-    private final static native
     int exists(String path);
 
     private final static native
@@ -117,7 +92,6 @@ public class KfsAccess
         if (res != 0) {
             throw new IOException("Unable to initialize KFS Client");
         }
-        allocBuffers();
     }
 
     public KfsAccess(String metaServerHost, int metaServerPort) throws IOException
@@ -126,15 +100,6 @@ public class KfsAccess
         if (res != 0) {
             throw new IOException("Unable to initialize KFS Client");
         }
-        allocBuffers();
-    }
-
-    private void allocBuffers()
-    {
-        readBuffer = ByteBuffer.allocateDirect(DEFAULT_BUF_SIZE);
-        writeBuffer = ByteBuffer.allocateDirect(DEFAULT_BUF_SIZE);
-        readBuffer.flip();
-        writeBuffer.clear();
     }
 
     // most calls wrap to a call on the KfsClient.  For return values,
@@ -162,14 +127,17 @@ public class KfsAccess
         return readdir(path);
     }
 
-    public int kfs_create(String path)
+    public KfsOutputChannel kfs_create(String path)
     {
         return kfs_create(path, 1);
     }
 
-    public int kfs_create(String path, int numReplicas)
+    public KfsOutputChannel kfs_create(String path, int numReplicas)
     {
-        return create(path, numReplicas);
+        int fd = create(path, numReplicas);
+        if (fd < 0)
+            return null;
+        return new KfsOutputChannel(fd);
     }
     
     public int kfs_remove(String path)
@@ -189,39 +157,13 @@ public class KfsAccess
         return rename(oldpath, newpath, overwrite);
     }
 
-    // mode is "r" for reading and "w" for writing, "rw" for read/write.
-    // "a" for writing in append mode;
-
-    public int kfs_open(String path, String mode)
+    // XXX: Since KFS supports append, we need open to take a mode as argument.
+    public KfsInputChannel kfs_open(String path)
     {
-        return open(path, mode, 1);
-    }
-
-    public int kfs_open(String path, String mode, int numReplicas)
-    {
-        return open(path, mode, numReplicas);
-    }
-
-    public int kfs_close(int fd)
-    {
-        return close(fd);
-    }
-
-    public int kfs_sync(int fd)
-    {
-        return sync(fd);
-    }
-
-    // is modeled after the seek of Java's RandomAccessFile; offset is
-    // the offset from the beginning of the file.
-    public int kfs_seek(int fd, long offset)
-    {
-        return seek(fd, offset);
-    }
-
-    public long kfs_tell(int fd)
-    {
-        return tell(fd);
+        int fd = open(path, "r", 1);
+        if (fd < 0)
+            return null;
+        return new KfsInputChannel(fd);
     }
 
     public boolean kfs_exists(String path)
@@ -249,60 +191,6 @@ public class KfsAccess
     public String[][] kfs_getDataLocation(String path, long start, long len)
     {
         return getDataLocation(path, start, len);
-    }
-
-    // Read/write from the specified fd.  The basic model is:
-    // -- fill some data into a direct mapped byte buffer
-    // -- send/receive to the other side (Jave->C++ or vice-versa)
-    //
-    public int kfs_read(int fd, byte[] dst, int off, int len) throws IOException
-    {
-        int nread = 0, todo, res;
-
-        while (nread < len) {
-            readBuffer.clear();
-
-            int pos = readBuffer.position();
-            int limit = readBuffer.limit();
-
-            todo = Math.min(len - nread, limit);
-            res = read(fd, readBuffer, pos, todo);
-            if (res == 0)
-                break;
-
-            if (res < 0)
-                throw new IOException("read failed");
-            readBuffer.position(pos + res);
-            readBuffer.flip();
-
-            readBuffer.get(dst, off + nread, res);
-            nread += res;
-        }
-        return nread;
-    }
-
-    public int kfs_write(int fd, byte[] src, int off, int len) throws IOException
-    {
-        int nwrote = 0, todo, res;
-
-        while (nwrote < len) {
-            writeBuffer.clear();
-
-            int limit = writeBuffer.limit();
-
-            todo = Math.min(len - nwrote, limit);
-            writeBuffer.put(src, off + nwrote, todo);
-            writeBuffer.flip();
-
-            int pos = writeBuffer.position();
-            limit = writeBuffer.limit();
-            
-            res = write(fd, writeBuffer, pos, limit);
-            if (res < 0)
-                throw new IOException("read failed");
-            nwrote += res;
-        }
-        return nwrote;
     }
 
     protected void finalize() throws Throwable
