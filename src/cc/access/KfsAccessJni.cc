@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: KfsAccessJni.cc $
+// $Id$ 
 //
 // Created 2007/08/24
 // Author: Sriram Rao (Kosmix Corp.) 

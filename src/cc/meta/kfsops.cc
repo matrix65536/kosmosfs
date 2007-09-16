@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/kfsops.cc#3 $
+ * $Id$ 
  *
  * \file kfsops.cc
  * \brief KFS file system operations.

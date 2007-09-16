@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/chunk/Replicator.h#3 $
+// $Id$ 
 //
 // Created 2007/01/17
 // Author: Sriram Rao (Kosmix Corp.) 

@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/startup.cc#3 $
+ * $Id$ 
  *
  * Copyright 2006 Kosmix Corp.
  *
@@ -20,6 +20,8 @@
  *
  * \file startup.cc
  * \brief code for starting up the metadata server
+ * \author Blake Lewis (Kosmix Corp.)
+ *
  */
 #include "startup.h"
 #include "thread.h"

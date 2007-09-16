@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/request.cc#3 $
+ * $Id$ 
  *
  * \file request.cc
  * \brief process queue of outstanding metadata requests

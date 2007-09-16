@@ -1,5 +1,6 @@
 
-# Kosmix File System (KFS).
+#
+# $Id$
 #
 # Created on 2007/08/23
 #

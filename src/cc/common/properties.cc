@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: properties.cc $
+// $Id$ 
 //
 // \brief Properties implementation.
 //

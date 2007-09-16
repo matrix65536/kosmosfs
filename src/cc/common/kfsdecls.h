@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/common/kfsdecls.h#3 $
+// $Id$ 
 //
 // \brief Common declarations of KFS structures
 //

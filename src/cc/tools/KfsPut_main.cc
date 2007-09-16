@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/tools/KfsPut_main.cc#5 $
+// $Id$ 
 //
 // Created 2006/10/28
 // Author: Sriram Rao (Kosmix Corp.) 

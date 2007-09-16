@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/fuse/kfs_fuse_main.cc#2 $
+// $Id$ 
 //
 // Created 2006/11/01
 // Author: Blake Lewis (Kosmix Corp.)

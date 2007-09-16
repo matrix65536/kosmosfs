@@ -1,5 +1,5 @@
 /**
- * $Id: KfsSample.java $
+ * $Id$ 
  *
  * Created 2007/08/25
  * Author: Sriram Rao

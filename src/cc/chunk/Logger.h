@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/chunk/Logger.h#2 $
+// $Id$ 
 //
 // Created 2006/06/20
 // Author: Sriram Rao (Kosmix Corp.) 

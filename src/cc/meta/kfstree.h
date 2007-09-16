@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/kfstree.h#3 $
+ * $Id$ 
  *
  * \file kfstree.h
  * \brief Search tree for the KFS metadata server.

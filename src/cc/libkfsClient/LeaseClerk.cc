@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsClient/LeaseClerk.cc#3 $
+// $Id$ 
 //
 // Created 2006/10/12
 // Author: Sriram Rao (Kosmix Corp.) 

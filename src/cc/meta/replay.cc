@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/replay.cc#3 $
+ * $Id$ 
  *
  * \file replay.cc
  * \brief log replay

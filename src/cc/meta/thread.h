@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/thread.h#3 $
+ * $Id$ 
  *
  * Copyright 2006 Kosmix Corp.
  *
@@ -20,6 +20,7 @@
  *
  * \file thread.h
  * \brief thread control for KFS metadata server
+ * \author Blake Lewis (Kosmix Corp.)
  */
 #if !defined(KFS_THREAD_H)
 #define KFS_THREAD_H

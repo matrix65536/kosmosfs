@@ -1,5 +1,5 @@
 /**
- * $Id: Positionable.java $
+ * $Id$ 
  *
  * Created 2007/09/13
  *

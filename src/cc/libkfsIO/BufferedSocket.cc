@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsIO/BufferedSocket.cc#3 $
+// $Id$ 
 //
 // Created 2006/07/03
 // Author: Sriram Rao (Kosmix Corp.) 

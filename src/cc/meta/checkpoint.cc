@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/checkpoint.cc#3 $
+ * $Id$ 
  *
  * Copyright 2006 Kosmix Corp.
  *
@@ -20,6 +20,7 @@
  *
  * \file checkpoint.cc
  * \brief KFS metadata checkpointing
+ * \author Blake Lewis (Kosmix Corp.)
  *
  * Record the contents of the metadata tree on disk.  Outline of
  * the algorithm:

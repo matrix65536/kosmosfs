@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/tools/MonUtils.cc#5 $
+// $Id$ 
 //
 // Created 2006/07/18
 // Author: Sriram Rao (Kosmix Corp.) 

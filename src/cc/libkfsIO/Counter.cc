@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsIO/Counter.cc#3 $
+// $Id$ 
 //
 // Created 2006/07/20
 // Author: Sriram Rao (Kosmix Corp.) 

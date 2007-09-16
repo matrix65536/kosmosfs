@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/kfstree.cc#3 $
+ * $Id$ 
  *
  * \file kfstree.cc
  * \brief Tree-manipulating routines for the KFS metadata server.

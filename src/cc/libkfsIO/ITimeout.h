@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsIO/ITimeout.h#3 $
+// $Id$ 
 //
 // Created 2006/03/25
 // Author: Sriram Rao (Kosmix Corp.) 

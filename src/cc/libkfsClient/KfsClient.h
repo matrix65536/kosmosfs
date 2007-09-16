@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsClient/KfsClient.h#5 $
+// $Id$ 
 //
 // Created 2006/04/18
 // Author: Sriram Rao (Kosmix Corp.) 
@@ -103,17 +103,14 @@ struct ChunkServerConn {
     /// name/port of the chunk server to which this socket is
     /// connected.
     ServerLocation location;
-    /// connected TCP socket: 
+    /// connected TCP socket.  If this object is copy constructed, we
+    /// really can't afford this socket to close when the "original"
+    /// is destructed. To protect such issues, make this a smart pointer.
     TcpSocketPtr   sock;
 
     ChunkServerConn(const ServerLocation &l) :
         location(l) { 
         sock.reset(new TcpSocket());
-    }
-
-    ~ChunkServerConn() {
-        if (sock.use_count() == 1)
-            COSMIX_LOG_DEBUG("Closing %d", sock->GetFd());
     }
     
     void Connect() {
@@ -179,16 +176,15 @@ struct FilePosition {
         iter = std::find(chunkServers.begin(), chunkServers.end(), loc);
         if (iter != chunkServers.end()) {
             iter->Connect();
-
-            COSMIX_LOG_DEBUG("Returning %d", iter->sock->GetFd());
-
             return (iter->sock.get());
         }
 
+        // Bit of an issue here: The object that is being pushed is
+        // copy constructed; when that object is destructed, the
+        // socket it has will go.  To avoid that, we need the socket
+        // to be a smart pointer.
         chunkServers.push_back(ChunkServerConn(loc));
         chunkServers[chunkServers.size()-1].Connect();
-
-        COSMIX_LOG_DEBUG("Returning %d", chunkServers[chunkServers.size()-1].sock->GetFd());
 
         return (chunkServers[chunkServers.size()-1].sock.get());
     }

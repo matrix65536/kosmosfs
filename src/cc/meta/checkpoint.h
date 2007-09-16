@@ -1,5 +1,5 @@
 /*
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/checkpoint.h#3 $
+ * $Id$ 
  *
  * \file checkpoint.h
  * \brief KFS checkpointer

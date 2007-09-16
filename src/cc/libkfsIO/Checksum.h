@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsIO/Checksum.h#3 $
+// $Id$ 
 //
 // Created 2006/09/12
 // Author: Sriram Rao (Kosmix Corp.) 

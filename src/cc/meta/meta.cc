@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/meta.cc#3 $
+ * $Id$ 
  *
  * \file meta.cc
  * \brief Operations on the various metadata types.
