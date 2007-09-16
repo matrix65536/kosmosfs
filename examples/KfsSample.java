@@ -67,12 +67,11 @@ public class KfsSample
 
             // Create a simple file with default replication (at most 3)
             String path = new String(basedir + "/foo.1");
-            int fd;
+            KfsOutputChannel outputChannel;
 
-            // fd is our file-handle to the file we are creating; this
-            // file handle should be used in subsequent I/O calls on
-            // the file.
-            if ((fd = kfsAccess.kfs_create(path)) < 0) {
+            // outputChannel implements a WriteableChannel interface;
+            // it is our handle to subsequent I/O on the file.
+            if ((outputChannel = kfsAccess.kfs_create(path)) == null) {
                 System.out.println("Unable to call create");
                 System.exit(1);
             }
@@ -98,16 +97,16 @@ public class KfsSample
             String s = new String(dataBuf);
             byte[] buf = s.getBytes();
 
-            int res = kfsAccess.kfs_write(fd, buf, 0, buf.length);
+            int res = outputChannel.write(ByteBuffer.wrap(buf, 0, buf.length));
             if (res != buf.length) {
                 System.out.println("Was able to write only: " + res);
             }
 
             // flush out the changes
-            kfsAccess.kfs_sync(fd);
+            outputChannel.sync();
 
             // Close the file-handle
-            kfsAccess.kfs_close(fd);
+            outputChannel.close();
             
             // Determine the file-size
             long sz = kfsAccess.kfs_filesize(path);
@@ -125,8 +124,10 @@ public class KfsSample
                 System.exit(1);
             }
 
-            int fd1 = kfsAccess.kfs_create(path);
-            kfsAccess.kfs_close(fd1);
+            KfsOutputChannel outputChannel1 = kfsAccess.kfs_create(path);
+            if (outputChannel1 != null) {
+                outputChannel1.close();
+            }
 
             if (!kfsAccess.kfs_exists(path)) {
                 System.out.println(path + " doesn't exist");
@@ -148,15 +149,17 @@ public class KfsSample
                 System.exit(1);
             }
 
-            // Re-open the file
-            if ((fd = kfsAccess.kfs_open(npath, "rw")) < 0) {
+            // Re-open the file to read something.  For reads/writes,
+            // Kfs provides a readable/writeable byte channel interface.
+            KfsInputChannel inputChannel = kfsAccess.kfs_open(npath);
+            if (inputChannel == null) {
                 System.out.println("open on " + npath + "failed!");
                 System.exit(1);
             }
             
             // read some bytes
             buf = new byte[128];
-            res = kfsAccess.kfs_read(fd, buf, 0, 128);
+            res = inputChannel.read(ByteBuffer.wrap(buf, 0, 128));
 
             // Verify what we read matches what we wrote
             s = new String(buf);
@@ -166,16 +169,17 @@ public class KfsSample
                 }
             }
             
-            // seek to offset 40
-            kfsAccess.kfs_seek(fd, 40);
+            // seek to offset 40.  The KfsInputChannel allows seeking;
+            // this is an extension to the basic readablebytechannel api.
+            inputChanel.seek(40);
 
             // Seek and verify that we are we think we are
-            sz = kfsAccess.kfs_tell(fd);
+            sz = inputChannel.tell();
             if (sz != 40) {
                 System.out.println("After seek, we are at: " + sz);
             }
 
-            kfsAccess.kfs_close(fd);
+            inputChannel.close();
 
             // remove the file
             kfsAccess.kfs_remove(npath);

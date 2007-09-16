@@ -1343,6 +1343,7 @@ MetaLookup::response(ostringstream &os)
 	os << "File-handle: " << toString(result.id()) << "\r\n";
 	os << "Type: " << fname[result.type] << "\r\n";
 	os << "Chunk-count: " << toString(result.chunkcount) << "\r\n";
+	os << "Replication: " << toString(result.numReplicas) << "\r\n";
 	sendtime(os, "M-Time:", result.mtime, "\r\n");
 	sendtime(os, "C-Time:", result.ctime, "\r\n");
 	sendtime(os, "CR-Time:", result.crtime, "\r\n\r\n");
@@ -1363,6 +1364,7 @@ MetaLookupPath::response(ostringstream &os)
 	os << "File-handle: " << toString(result.id()) << "\r\n";
 	os << "Type: " << fname[result.type] << "\r\n";
 	os << "Chunk-count: " << toString(result.chunkcount) << "\r\n";
+	os << "Replication: " << toString(result.numReplicas) << "\r\n";
 	sendtime(os, "M-Time:", result.mtime, "\r\n");
 	sendtime(os, "C-Time:", result.ctime, "\r\n");
 	sendtime(os, "CR-Time:", result.crtime, "\r\n\r\n");

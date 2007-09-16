@@ -71,10 +71,12 @@ struct KfsServerAttr {
     struct timeval mtime; /// modification time
     struct timeval ctime; /// attribute change time
     struct timeval crtime; /// creation time
-    /// is this a directory?
-    bool	isDirectory;
     /// how many chunks does it have
     long long	chunkCount;
+    /// is this a directory?
+    bool	isDirectory;
+    /// what is the deg. of replication for this file
+    int16_t numReplicas;
 };
 
 
@@ -94,17 +96,22 @@ struct FileAttr {
     
     /// how many chunks does it have
     long long	chunkCount;
+    
+    /// what is the deg. of replication for this file
+    int16_t numReplicas;
 
     FileAttr() {
         fileId = (kfsFileId_t) -1;
         fileSize = 0;
         chunkCount = 0;
+        numReplicas = 0;
         isDirectory = false;
     }
     void Reset() {
         fileId = (kfsFileId_t) -1;
         fileSize = 0;
         chunkCount = 0;
+        numReplicas = 0;
         isDirectory = false;
     }
     void Init(bool isDir) {
@@ -116,6 +123,7 @@ struct FileAttr {
     FileAttr& operator= (const KfsServerAttr &other) {
         fileId = other.fileId;
         chunkCount = other.chunkCount;
+        numReplicas = other.numReplicas;
         fileSize = 0; // need to compute this
         isDirectory = other.isDirectory;
         mtime = other.mtime;

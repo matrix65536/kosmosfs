@@ -37,6 +37,8 @@ extern "C" {
 #include <unistd.h>
 }
 
+#include <boost/shared_ptr.hpp>
+
 #include <string>
 #include <sstream>
 using std::string;
@@ -126,5 +128,7 @@ private:
 
     void SetupSocket();
 };
+
+typedef boost::shared_ptr<TcpSocket> TcpSocketPtr;
 
 #endif // _LIBIO_TCP_SOCKET_H

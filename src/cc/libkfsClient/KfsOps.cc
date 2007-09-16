@@ -355,6 +355,7 @@ LookupOp::ParseResponseHeader(char *buf, int len)
     s = prop.getValue("Type", "");
     fattr.isDirectory = (s == "dir");
     fattr.chunkCount = prop.getValue("Chunk-count", 0);
+    fattr.numReplicas = prop.getValue("Replication", 1);
     s = prop.getValue("M-Time", "");
     GetTimeval(s, fattr.mtime);
 
@@ -379,6 +380,7 @@ LookupPathOp::ParseResponseHeader(char *buf, int len)
     s = prop.getValue("Type", "");
     fattr.isDirectory = (s == "dir");
     fattr.chunkCount = prop.getValue("Chunk-count", 0);
+    fattr.numReplicas = prop.getValue("Replication", 1);
 
     s = prop.getValue("M-Time", "");
     GetTimeval(s, fattr.mtime);

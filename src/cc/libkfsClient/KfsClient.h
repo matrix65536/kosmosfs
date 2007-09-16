@@ -46,16 +46,12 @@
 
 namespace KFS {
 
-///
-/// Maximum # of chunk servers to which we can connect to
-///
-const int MAX_CHUNKSERVERS = 256;
-
 /// Maximum length of a filename
 const size_t MAX_FILENAME_LEN = 256;
 
 const size_t MIN_BYTES_PIPELINE_IO = 65536;
 
+/// Push as much as we can per write...
 const size_t MAX_BYTES_PER_WRITE = 1 << 20;
 
 /// If an op fails because the server crashed, retry the op.  This
@@ -65,6 +61,10 @@ const uint8_t NUM_RETRIES_PER_OP = 3;
 /// Whenever an op fails, we need to give time for the server to
 /// recover.  So, introduce a delay of 5 secs between retries.
 const int RETRY_DELAY_SECS = 5;
+
+/// Directory entries that we may have cached are valid for 30 secs;
+/// after that force a revalidataion.
+const int FILE_CACHE_ENTRY_VALID_TIME = 30;
 
 ///
 /// A KfsClient maintains a file-table that stores information about
@@ -99,6 +99,32 @@ struct ChunkBuffer {
     char buf[BUF_SIZE];	// the data
 };
 
+struct ChunkServerConn {
+    /// name/port of the chunk server to which this socket is
+    /// connected.
+    ServerLocation location;
+    /// connected TCP socket: 
+    TcpSocketPtr   sock;
+
+    ChunkServerConn(const ServerLocation &l) :
+        location(l) { 
+        sock.reset(new TcpSocket());
+    }
+
+    ~ChunkServerConn() {
+        if (sock.use_count() == 1)
+            COSMIX_LOG_DEBUG("Closing %d", sock->GetFd());
+    }
+    
+    void Connect() {
+        if (!sock->IsGood())
+            sock->Connect(location);
+    }
+    bool operator == (const ServerLocation &other) const {
+        return other == location;
+    }
+};
+
 ///
 /// \brief Location of the file pointer in a file consists of two
 /// parts: the offset in the file, which then translates to a chunk #
@@ -110,28 +136,70 @@ struct FilePosition {
     FilePosition() {
 	fileOffset = chunkOffset = 0;
 	chunkNum = 0;
-	chunkServerSock = NULL;
+        preferredServer = NULL;
     }
     ~FilePosition() {
-	chunkServerSock = NULL;
+
     }
     void Reset() {
+
+        COSMIX_LOG_DEBUG("Calling reset servers");
+
 	fileOffset = chunkOffset = 0;
 	chunkNum = 0;
-	chunkServerSock = NULL;
+        chunkServers.clear();
+        preferredServer = NULL;
     }
+
 
     off_t	fileOffset; // offset within the file
     /// which chunk are we at: this is an index into fattr.chunkTable[]
     int32_t	chunkNum;
     /// offset within the chunk
     off_t	chunkOffset;
+    
+    /// For the purpose of write, we may have to connect to multiple servers
+    std::vector<ChunkServerConn> chunkServers;
 
-    // socket that is connected to the chunk server that hosts the
-    // chunk corresponding to the current file position.  This is a
-    // pointer from the table of sockets connected to chunk servers
-    // (see below).
-    TcpSocket	*chunkServerSock;
+    /// For reads as well as meta requests about a chunk, this is the
+    /// preferred server to goto.  This is a pointer to a socket in
+    /// the vector<ChunkServerConn> structure. 
+    TcpSocket *preferredServer;
+
+    void ResetServers() {
+        COSMIX_LOG_DEBUG("Calling reset servers");
+
+        chunkServers.clear();
+        preferredServer = NULL;
+    }
+
+    TcpSocket *GetChunkServerSocket(const ServerLocation &loc) {
+        std::vector<ChunkServerConn>::iterator iter;
+
+        iter = std::find(chunkServers.begin(), chunkServers.end(), loc);
+        if (iter != chunkServers.end()) {
+            iter->Connect();
+
+            COSMIX_LOG_DEBUG("Returning %d", iter->sock->GetFd());
+
+            return (iter->sock.get());
+        }
+
+        chunkServers.push_back(ChunkServerConn(loc));
+        chunkServers[chunkServers.size()-1].Connect();
+
+        COSMIX_LOG_DEBUG("Returning %d", chunkServers[chunkServers.size()-1].sock->GetFd());
+
+        return (chunkServers[chunkServers.size()-1].sock.get());
+    }
+
+    void SetPreferredServer(const ServerLocation &loc) {
+        preferredServer = GetChunkServerSocket(loc);
+    }
+
+    TcpSocket *GetPreferredServer() {
+        return preferredServer;
+    }
 };
 
 ///
@@ -155,41 +223,12 @@ struct FileTableEntry {
     // for LRU reclamation of file table entries, track when this
     // entry was last accessed
     time_t	lastAccessTime;
+    // directory entries are cached; ala NFS, keep the entries cached
+    // for a max of 30 secs; after that revalidate
+    time_t	validatedTime;
 
     FileTableEntry(kfsFileId_t p, const char *n):
-	parentFid(p), name(n), lastAccessTime(0) { }
-};
-
-///
-/// \brief A table of sockets connected to chunk servers.  The
-/// chunk operations from a single client are multiplexed over these sockets.
-///
-struct SocketTableEntry {
-    /// a boolean that tracks whether this entry in the socket-table is
-    /// in use.
-    bool	entryInUse;
-    /// name/port of the chunk server to which this socket is
-    /// connected.
-    ServerLocation chunkServerLoc;
-    /// connected TCP socket: 
-    /// XXX: Make this a TcpSocketPtr() so we can close aggressively
-    TcpSocket	chunkServerSock;
-    SocketTableEntry() {
-	entryInUse = false;
-    }
-    void Claim(const ServerLocation &loc) {
-	entryInUse = true;
-	chunkServerLoc = loc;
-    }
-
-    void Reset() {
-	entryInUse = false;
-	chunkServerLoc.Reset("", -1);
-	chunkServerSock.Close();
-    }
-    bool Matches(const ServerLocation &loc) const {
-	return (entryInUse && chunkServerLoc == loc);
-    }
+	parentFid(p), name(n), lastAccessTime(0), validatedTime(0) { }
 };
 
 ///
@@ -397,11 +436,12 @@ public:
     int GetDataLocation(const char *pathname, off_t start, size_t len,
                         std::vector< std::vector <std::string> > &locations);
 
-    /// from the table of sockets find the TcpSocket that is connected
-    /// to the specified server/port; if no such socket exists, a new
-    /// connection is made, the socket is stashed in the table and a
-    /// pointer is returned.
-    TcpSocket *GetChunkServerSocket(const ServerLocation &loc);
+    ///
+    /// Get the degree of replication for the pathname.
+    /// @param[in] pathname	The full pathname of the file such as /../foo
+    /// @retval count
+    ///
+    int16_t GetReplicationFactor(const char *pathname);
 
     // Next sequence number for operations.
     // This is called in a thread safe manner.
@@ -438,9 +478,6 @@ private:
 
     /// Check that fd is in range
     bool valid_fd(int fd) { return (fd >= 0 && fd < MAX_FILES); }
-
-    /// keep a table of sockets connected to chunk servers
-    SocketTableEntry mChunkServerSockTable[MAX_CHUNKSERVERS];
 
     /// Connect to the meta server and return status.
     /// @retval true if connect succeeds; false otherwise.

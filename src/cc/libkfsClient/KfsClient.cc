@@ -549,6 +549,10 @@ KfsClient::Rename(const char *oldpath, const char *newpath, bool overwrite)
     RenameOp op(nextSeq(), parentFid, oldfilename.c_str(),
 		    absNewpath.c_str(), overwrite);
     (void)DoMetaOpWithRetry(&op);
+
+    COSMIX_LOG_DEBUG("Status of renaming %s -> %s is: %d", 
+                     oldpath, newpath, op.status);
+
     return op.status;
 }
 
@@ -580,6 +584,10 @@ KfsClient::Open(const char *pathname, int openMode, int numReplicas)
 
     // avoid unnecesary lookups
     int fte = LookupFileTableEntry(parentFid, filename.c_str());
+
+    // XXX: Mode compatibility...
+    // XXX: Or should I just give you a new entry???
+
     if (fte >= 0)
 	return fte;
 
@@ -676,7 +684,7 @@ KfsClient::Truncate(int fd, off_t offset)
     // invalidate buffer in case it is past new EOF
     cb->invalidate();
     FilePosition *pos = FdPos(fd);
-    pos->chunkServerSock = NULL;
+    pos->ResetServers();
 
     FileAttr *fa = FdAttr(fd);
     TruncateOp op(nextSeq(), fa->fileId, offset);
@@ -748,6 +756,37 @@ KfsClient::GetDataLocation(const char *pathname, off_t start, size_t len,
     return 0;
 }
 
+int16_t
+KfsClient::GetReplicationFactor(const char *pathname)
+{
+    MutexLock l(&mMutex);
+
+    int res, fd;
+    bool didOpen = false;
+    int16_t numReplicas;
+
+    // Non-existent
+    if (!IsFile(pathname)) 
+        return -ENOENT;
+
+    // load up the fte
+    fd = LookupFileTableEntry(pathname);
+    if (fd < 0) {
+        // Open the file for reading...this'll get the attributes setup
+        fd = Open(pathname, O_RDONLY);
+        // we got too many open files?
+        if (fd < 0)
+            return fd;
+        didOpen = true;
+    }
+    numReplicas = mFileTable[fd]->fattr.numReplicas;
+
+    if (didOpen)
+        Close(fd);
+
+    return numReplicas;
+}
+
 
 off_t
 KfsClient::Seek(int fd, off_t offset)
@@ -788,7 +827,8 @@ KfsClient::Seek(int fd, off_t offset, int whence)
 	    FlushBuffer(fd);
 	}
 	assert(!cb->dirty);
-	pos->chunkServerSock = NULL;
+        // Disconnect from all the servers we were connected for this chunk
+	pos->ResetServers();
     }
 
     pos->fileOffset = newOff;
@@ -832,6 +872,11 @@ KfsClient::AllocChunk(int fd)
     chunk.chunkVersion = op.chunkVersion;
     chunk.chunkServerLoc = op.chunkServers;
     FdInfo(fd)->cattr[pos->chunkNum] = chunk;
+
+    FdPos(fd)->ResetServers();
+    // for writes, [0] is the master; that is the preferred server
+    if (op.chunkServers.size() > 0)
+        FdPos(fd)->SetPreferredServer(op.chunkServers[0]);
 
     COSMIX_LOG_DEBUG("Fileid: %ld, chunk : %ld, version: %ld, hosted on:",
                      fa->fileId, chunk.chunkId, chunk.chunkVersion);
@@ -1181,13 +1226,14 @@ struct RespondingServer {
 	    client(cli), layout(lay), status(st), size(sz) { }
     bool operator() (ServerLocation loc)
     {
-	TcpSocket *sock = client->GetChunkServerSocket(loc);
-	if (sock == NULL)
+	TcpSocket sock;
+
+        if (sock.Connect(loc) < 0)
 	    return false;
 
 	SizeOp sop(client->nextSeq(), layout.chunkId, layout.chunkVersion);
-	int numIO = DoOpCommon(&sop, sock);
-	if (numIO < 0 && !sock->IsGood())
+	int numIO = DoOpCommon(&sop, &sock);
+	if (numIO < 0 && !sock.IsGood())
 	    return false;
 
 	*status = sop.status;
@@ -1266,14 +1312,13 @@ KfsClient::OpenChunk(int fd)
 	return -EINVAL;
     }
 
-    TcpSocket **sock = &mFileTable[fd]->currPos.chunkServerSock;
     // try the local server first
     vector <ServerLocation>::iterator s =
         find_if(chunk->chunkServerLoc.begin(), chunk->chunkServerLoc.end(), 
                 ChunkserverMatcher(mHostname));
     if (s != chunk->chunkServerLoc.end()) {
-        *sock = GetChunkServerSocket(*s);
-        if (*sock != NULL) {
+        FdPos(fd)->SetPreferredServer(*s);
+        if (FdPos(fd)->GetPreferredServer() != NULL) {
             COSMIX_LOG_DEBUG("Picking local server: %s", s->ToString().c_str());
             return SizeChunk(fd);
         }
@@ -1281,19 +1326,18 @@ KfsClient::OpenChunk(int fd)
 
     // else pick one at random
     vector<ServerLocation> loc = chunk->chunkServerLoc;
-    vector<ServerLocation>::size_type i = rand() % loc.size();
 
-    *sock = GetChunkServerSocket(loc[i]);
-
-    COSMIX_LOG_DEBUG("Randomly chose: %s", loc[i].ToString().c_str());
-
-    i = 0;
-    while (*sock == NULL && i != loc.size()) {
-   	*sock = GetChunkServerSocket(loc[i]);
-    	++i;
+    for (vector<ServerLocation>::size_type i = 0;
+         (FdPos(fd)->GetPreferredServer() == NULL && i != loc.size());
+         ++i) {
+        FdPos(fd)->SetPreferredServer(loc[i]);
+#ifdef DEBUG
+        if (FdPos(fd)->GetPreferredServer() != NULL)
+            COSMIX_LOG_DEBUG("Randomly chose: %s", loc[i].ToString().c_str());
+#endif
     }
 
-    return (*sock == NULL) ? -EHOSTUNREACH : SizeChunk(fd);
+    return (FdPos(fd)->GetPreferredServer() == NULL) ? -EHOSTUNREACH : SizeChunk(fd);
 }
 
 int
@@ -1301,8 +1345,10 @@ KfsClient::SizeChunk(int fd)
 {
     ChunkAttr *chunk = GetCurrChunk(fd);
 
+    assert(FdPos(fd)->preferredServer != NULL);
+
     SizeOp op(nextSeq(), chunk->chunkId, chunk->chunkVersion);
-    (void)DoOpCommon(&op, mFileTable[fd]->currPos.chunkServerSock);
+    (void)DoOpCommon(&op, FdPos(fd)->preferredServer);
     chunk->chunkSize = op.size;
 
     COSMIX_LOG_DEBUG("Chunk: %ld, size = %zd",
@@ -1398,7 +1444,29 @@ KfsClient::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
     FTMatcher match(parentFid, name);
     vector <FileTableEntry *>::iterator i;
     i = find_if(mFileTable.begin(), mFileTable.end(), match);
-    return (i == mFileTable.end()) ? -1 : i - mFileTable.begin();
+    if (i == mFileTable.end())
+        return -1;
+    time_t now = time(NULL);
+    int fte = i - mFileTable.begin();
+    
+    // The entries for files are valid.  This is a handle that is
+    // given to the application. The entries for directories need to
+    // be revalidated every N secs.  The one exception for directory
+    // entries is that for "/"; that is always 2 and is valid.  That
+    // entry will never be deleted from the fs.  Any other directory
+    // can be deleted and we don't want to hold on to stale entries. 
+    if ((!FdAttr(fte)->isDirectory) ||
+        (FdAttr(fte)->fileId == KFS::ROOTFID) ||
+        (now - FdInfo(fte)->validatedTime < FILE_CACHE_ENTRY_VALID_TIME))
+        return fte;
+
+    COSMIX_LOG_DEBUG("Entry for <%d, %s> is likely stale; forcing revalidation", 
+                     parentFid, name);
+    // the entry maybe stale; force revalidation
+    ReleaseFileTableEntry(fte);
+
+    return -1;
+
 }
 
 int
@@ -1423,7 +1491,8 @@ KfsClient::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name)
     fte = FindFreeFileTableEntry();
     if (fte >= 0) {
 	mFileTable[fte] = new FileTableEntry(parentFid, name);
-	mFileTable[fte]->lastAccessTime = time(NULL);
+        mFileTable[fte]->validatedTime = mFileTable[fte]->lastAccessTime = 
+            time(NULL);
     }
     return fte;
 }
@@ -1535,41 +1604,6 @@ KfsClient::GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
     COSMIX_LOG_DEBUG("file-id for dir: %s (file = %s) is %ld",
 	             pathstr.c_str(), name.c_str(), *parentFid);
     return 0;
-}
-
-TcpSocket *
-KfsClient::GetChunkServerSocket(const ServerLocation &loc)
-{
-    int i;
-    TcpSocket *sock;
-
-    for (i = 0; i < MAX_CHUNKSERVERS; ++i) {
-	if (mChunkServerSockTable[i].Matches(loc)) {
-	    sock = &mChunkServerSockTable[i].chunkServerSock;
-	    // if the socket isn't good for I/O, reconnect
-	    if (sock->IsGood()) {
-		return sock;
-	    }
-	    mChunkServerSockTable[i].entryInUse = false;
-	}
-    }
-
-    for (i = 0; i < MAX_CHUNKSERVERS; ++i) {
-	if (!mChunkServerSockTable[i].entryInUse) {
-	    mChunkServerSockTable[i].Claim(loc);
-	    sock = &mChunkServerSockTable[i].chunkServerSock;
-
-	    if (sock->Connect(loc) < 0) {
-		COSMIX_LOG_DEBUG("Unable to connect to: %s",
-	                         loc.ToString().c_str());
-		mChunkServerSockTable[i].Reset();
-		return NULL;
-	    }
-	    return sock;
-	}
-    }
-    assert(!"Too many chunk server connections");
-    return NULL;
 }
 
 string

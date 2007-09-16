@@ -1,9 +1,28 @@
 #!/usr/bin/python
-
+#
+# $Id$
+#
+# Copyright 2007 Kosmix Corp.
+#
+# This file is part of Kosmos File System (KFS).
+#
+# Licensed under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied. See the License for the specific language governing
+# permissions and limitations under the License.
+#
 # Script to setup KFS servers on a set of nodes
 # This scripts reads a machines.cfg file that describes the meta/chunk
 # servers configurations and installs the binaries/scripts and creates
 # the necessary directory hierarchy.
+#
 
 import os,sys,os.path,getopt
 from ConfigParser import ConfigParser
@@ -86,7 +105,8 @@ def setupChunk(section, config):
 
 def usage():
     """ Print out the usage for this program. """
-    print "%s [-f, --file <machines.cfg>] [ [-b, --bin <dir with binaries>] | [-u, --uninstall] ]\n" % sys.argv[0]
+    print "%s [-f, --file <machines.cfg>] [ [-b, --bin <dir with binaries>] {-u, --upgrade} | [-U, --uninstall] ]\n" \
+          % sys.argv[0]
     return
 
 def copyDir(srcDir, dstDir):
@@ -139,7 +159,40 @@ def doInstall(config, bindir):
         os.system(cmd)
         os.remove('kfspkg.tgz')
         # Cleanup remote
-        cmd = "ssh %s 'rm -f /tmp/kfsinstall.sh kfspkg.tgz' " % (node)
+        cmd = "ssh %s 'rm -f /tmp/kfsinstall.sh /tmp/kfspkg.tgz' " % (node)
+        os.system(cmd)
+        
+    cleanup()
+
+def doUpgrade(config, bindir):
+    if not config.has_section('metaserver'):
+        raise config.NoSectionError, "No metaserver section"
+
+    if not os.path.exists(bindir):
+        print "%s : directory doesn't exist\n" % bindir
+        sys.exit(-1)
+
+    sections = config.sections()
+    for s in sections:
+        rundir = config.get(s, 'rundir')
+        if (s == 'metaserver'):
+            server = "metaserver"
+            upgradeArgs = "-m"
+        else:
+            if config.has_option(s, 'chunkdir'):
+                chunkDir = config.get(s, 'chunkdir')
+            else:
+                chunkDir = "%s/bin/kfschunk" % (rundir)
+            upgradeArgs = "-c %s" % chunkDir
+            server = "chunkserver"
+            
+        node = config.get(s, 'node')
+        cmd = "scp -q %s/%s %s:/tmp; ssh %s 'sh %s/scripts/kfsinstall.sh -d %s -u %s' " \
+              % (bindir, server, node, node, rundir, rundir, upgradeArgs)
+        print "Upgrade cmd: %s\n" % cmd
+        os.system(cmd)
+        # Cleanup remote
+        cmd = "ssh %s 'rm -f /tmp/%s' " % (node, server)
         os.system(cmd)
         
     cleanup()
@@ -166,11 +219,12 @@ def doUninstall(config):
         os.system(cmd)
     
 if __name__ == '__main__':
-    (opts, args) = getopt.getopt(sys.argv[1:], "b:f:hu",
-                                 ["bin=", "file=", "help", "uninstall"])
+    (opts, args) = getopt.getopt(sys.argv[1:], "b:f:hUu",
+                                 ["bin=", "file=", "help", "uninstall", "upgrade"])
     filename = ""
     bindir = ""
     uninstall = 0
+    upgrade = 0
     for (o, a) in opts:
         if o in ("-h", "--help"):
             usage()
@@ -179,8 +233,10 @@ if __name__ == '__main__':
             filename = a
         elif o in ("-b", "--bin"):
             bindir = a
-        elif o in ("-u", "--uninstall"):
+        elif o in ("-U", "--uninstall"):
             uninstall = 1
+        elif o in ("-u", "--upgrade"):
+            upgrade = 1
 
     if not os.path.exists(filename):
         print "%s : directory doesn't exist\n" % filename
@@ -191,6 +247,8 @@ if __name__ == '__main__':
 
     if uninstall == 1:
         doUninstall(config)
+    elif upgrade == 1:
+        doUpgrade(config, bindir)
     else:
         doInstall(config, bindir)
         
