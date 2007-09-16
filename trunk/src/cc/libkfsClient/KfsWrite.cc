@@ -94,7 +94,7 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 	    break;
 	}
 
-	if (pos->chunkServerSock == NULL) {
+	if (pos->preferredServer == NULL) {
 	    numIO = OpenChunk(fd);
 	    if (numIO < 0) {
 		COSMIX_LOG_DEBUG("OpenChunk(%ld)", numIO);
@@ -325,7 +325,7 @@ KfsClient::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t nu
     WritePrepareOp op(nextSeq(), chunk->chunkId, chunk->chunkVersion);
     // get the socket for the master
     ServerLocation loc = chunk->chunkServerLoc[0];
-    TcpSocket *masterSock = GetChunkServerSocket(loc);
+    TcpSocket *masterSock = pos->GetChunkServerSocket(loc);
 
     op.offset = offset;
     op.numBytes = min(numBytes, KFS::CHUNKSIZE);
@@ -344,7 +344,7 @@ KfsClient::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 
 	for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++) {
 	    ServerLocation l = chunk->chunkServerLoc[i];
-	    TcpSocket *s = GetChunkServerSocket(l);
+	    TcpSocket *s = pos->GetChunkServerSocket(l);
 
 	    assert(op.contentLength == op.numBytes);
 
@@ -548,7 +548,7 @@ KfsClient::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops)
     ChunkAttr *chunk = GetCurrChunk(fd);
     // get the socket for the master
     ServerLocation loc = chunk->chunkServerLoc[0];
-    TcpSocket *masterSock = GetChunkServerSocket(loc);
+    TcpSocket *masterSock = FdPos(fd)->GetChunkServerSocket(loc);
     WriteSyncOp *sop = NULL;
 
     // plumb the pipe...
@@ -664,7 +664,7 @@ KfsClient::PushDataForWrite(int fd, WritePrepareOp *op)
     // push the write out to all the servers
     for (i = 0; i < chunk->chunkServerLoc.size(); i++) {
 	loc = chunk->chunkServerLoc[i];
-	sock = GetChunkServerSocket(loc);
+	sock = FdPos(fd)->GetChunkServerSocket(loc);
 	if (sock == NULL) {
 	    op->status = -EHOSTUNREACH;
 	    return op->status;
@@ -697,7 +697,7 @@ KfsClient::IssueWriteCommit(int fd, WritePrepareOp *op, WriteSyncOp **sop,
     *sop = NULL;
     for (i = 0; i < chunk->chunkServerLoc.size(); i++) {
 	loc = chunk->chunkServerLoc[i];
-	sock = GetChunkServerSocket(loc);
+	sock = FdPos(fd)->GetChunkServerSocket(loc);
 	if (sock == NULL) {
 	    return -EHOSTUNREACH;
 	}

@@ -77,6 +77,15 @@ KfsClient::Read(int fd, char *buf, size_t numBytes)
     // Loop thru chunk after chunk until we either get the desired #
     // of bytes or we hit EOF.
     while (nread < numBytes) {
+        //
+        // Basic invariant: when we enter this loop, the connections
+        // we have to the chunkservers (if any) are correct.  As we
+        // read thru a file, we call seek whenever we have data to
+        // hand out to the client.  As we cross chunk boundaries, seek
+        // will invalidate our current set of connections and force us
+        // to get new ones via a call to OpenChunk().   This same
+        // principle holds for write code path as well.
+        //
 	if (!IsChunkReadable(fd))
 	    break;
 
@@ -116,7 +125,7 @@ KfsClient::IsChunkReadable(int fd)
 
     ChunkAttr *chunk = GetCurrChunk(fd);
 
-    if (pos->chunkServerSock == NULL && chunk->chunkId != (kfsChunkId_t)-1) {
+    if (pos->preferredServer == NULL && chunk->chunkId != (kfsChunkId_t)-1) {
 	int status = OpenChunk(fd);
 	if (status < 0)
 	    return false;
@@ -159,7 +168,7 @@ KfsClient::ReadChunk(int fd, char *buf, size_t numBytes)
     chunk = GetCurrChunk(fd);
 
     while (retryCount < NUM_RETRIES_PER_OP) {
-	if (pos->chunkServerSock == NULL) {
+	if (pos->preferredServer == NULL) {
             int status;
 
             // we come into this function with a connection to some
@@ -215,7 +224,7 @@ KfsClient::ReadChunk(int fd, char *buf, size_t numBytes)
         // Ok...so, we need to retry the read.  so, re-determine where
         // the chunk went and then retry.
         chunk->chunkId = -1;
-        pos->chunkServerSock = NULL;
+        pos->ResetServers();
     }
     return numIO;
 }
@@ -265,7 +274,7 @@ KfsClient::DoSmallReadFromServer(int fd, char *buf, size_t numBytes)
     // make sure we aren't overflowing...
     assert(buf + op.numBytes <= buf + numBytes);
 
-    (void)DoOpCommon(&op, mFileTable[fd]->currPos.chunkServerSock);
+    (void)DoOpCommon(&op, mFileTable[fd]->currPos.preferredServer);
     ssize_t numIO = (op.status >= 0) ? op.contentLength : op.status;
     op.ReleaseContentBuf();
 
@@ -382,7 +391,7 @@ KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     // make sure we aren't overflowing...
     assert(buf + numRead <= buf + numBytes);
 
-    ssize_t numIO = DoPipelinedRead(ops, pos->chunkServerSock);
+    ssize_t numIO = DoPipelinedRead(ops, pos->preferredServer);
     if (numIO < 0) {
 	COSMIX_LOG_DEBUG("Pipelined read from server failed...");
     }

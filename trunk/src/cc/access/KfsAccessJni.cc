@@ -78,6 +78,9 @@ extern "C" {
     jobjectArray Java_org_kosmos_access_KfsAccess_getDataLocation(
         JNIEnv *jenv, jclass jcls, jstring jpath, jlong jstart, jlong jlen);
 
+    jshort Java_org_kosmos_access_KfsAccess_getReplication(
+        JNIEnv *jenv, jclass jcls, jstring jpath);
+
     jint Java_org_kosmos_access_KfsAccess_open(
         JNIEnv *jenv, jclass jcls, jstring jpath, jstring jmode, jint jnumReplicas);
 
@@ -393,6 +396,16 @@ jobjectArray Java_org_kosmos_access_KfsAccess_getDataLocation(JNIEnv *jenv, jcla
     }
 
     return jentries;
+}
+
+jshort Java_org_kosmos_access_KfsAccess_getReplication(JNIEnv *jenv, jclass jcls, jstring jpath)
+{
+    KfsClient *clnt = KfsClient::Instance();
+
+    string path;
+
+    setStr(path, jenv, jpath);
+    return clnt->GetReplicationFactor(path.c_str());
 }
 
 jint Java_org_kosmos_access_KfsInputChannel_read(JNIEnv *jenv, jclass jcls, jint jfd, 

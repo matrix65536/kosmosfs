@@ -88,6 +88,11 @@ FEATURES IMPLEMENTED
    verification is performed; whenever there is a checksum mismatch,
    re-replication is used to recover the corrupted chunk.
 
+ - Client side meta-data caching: The KFS client library caches
+   directory related meta-data.  This to avoid repeated server lookups
+   for pathname translation.  The meta-data entries have a cache
+   validity time of 30 secs.
+
  - File writes: The KFS client library employs a write-back cache.
    Also, whenever the cache is full, the client will flush the data to
    the chunkservers.  Applications can choose to flush data to the

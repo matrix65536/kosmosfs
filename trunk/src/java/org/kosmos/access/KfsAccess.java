@@ -52,6 +52,9 @@ public class KfsAccess
     String[][] getDataLocation(String path, long start, long len);
 
     private final static native
+    short getReplication(String path);
+
+    private final static native
     int create(String path, int numReplicas);
 
     private final static native
@@ -190,6 +193,12 @@ public class KfsAccess
     public String[][] kfs_getDataLocation(String path, long start, long len)
     {
         return getDataLocation(path, start, len);
+    }
+
+    // Return the degree of replication for this file
+    public short kfs_getReplication(String path)
+    {
+        return getReplication(path);
     }
 
     protected void finalize() throws Throwable
