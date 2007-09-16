@@ -1,5 +1,5 @@
 
-# Kosmos File System (KFS).
+# $Id$
 #
 # Created on 2007/08/23
 #
@@ -41,7 +41,6 @@ To compile and run KFS, you need to have the following software
 packages installed on your machine:
  - Boost (preferably, version 1.34 or higher)
  - cmake (preferable, version 2.4.7 or higher)
- - log4cpp
 
 This document assumes that you have downloaded the source to
 directory: ~/code/kfs.  We assume that you want to build the source in

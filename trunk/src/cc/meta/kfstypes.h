@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/kfstypes.h#3 $
+ * $Id$ 
  *
  * \file kfstypes.h
  * \brief simple typedefs and enums for the KFS metadata server

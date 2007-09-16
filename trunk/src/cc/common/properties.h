@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: properties.h $
+// $Id$ 
 //
 // \brief Properties file similar to java.util.Properties
 //

@@ -1,5 +1,5 @@
 /**
- * $Id: KfsInputChannel.java $
+ * $Id$ 
  *
  * Created 2007/09/11
  *

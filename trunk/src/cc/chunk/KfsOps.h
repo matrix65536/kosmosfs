@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/chunk/KfsOps.h#3 $
+// $Id$ 
 //
 // Created 2006/05/26
 // Author: Sriram Rao (Kosmix Corp.) 

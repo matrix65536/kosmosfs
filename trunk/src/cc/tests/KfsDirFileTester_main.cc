@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/tests/KfsDirFileTester_main.cc#2 $
+// $Id$ 
 //
 // Created 2006/06/12
 //

@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/chunk/RemoteSyncSM.h#3 $
+// $Id$ 
 //
 // Created 2006/09/27
 // Author: Sriram Rao (Kosmix Corp.) 

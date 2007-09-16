@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/queue.h#3 $
+ * $Id$ 
  *
  * \file queue.h
  * \brief queue for requested metadata operations

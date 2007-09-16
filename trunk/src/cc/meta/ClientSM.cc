@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/ClientSM.cc#3 $
+// $Id$ 
 //
 // Created 2006/06/05
 // Author: Sriram Rao (Kosmix Corp.)

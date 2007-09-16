@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/chunk/MetaServerSM.cc#2 $
+// $Id$ 
 //
 // Created 2006/06/07
 // Author: Sriram Rao (Kosmix Corp.) 

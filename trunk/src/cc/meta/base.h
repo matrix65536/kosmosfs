@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/base.h#3 $
+ * $Id$ 
  *
  * \file base.h
  * \brief Base class for KFS metadata nodes.

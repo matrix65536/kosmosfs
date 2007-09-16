@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/libkfsIO/KfsCallbackObj.h#1 $
+// $Id$ 
 //
 // Created 2006/03/14
 // Author: Sriram Rao (Kosmix Corp.) 

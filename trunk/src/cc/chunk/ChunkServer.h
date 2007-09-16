@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/chunk/ChunkServer.h#2 $
+// $Id$ 
 //
 // Created 2006/03/16
 // Author: Sriram Rao (Kosmix Corp.) 

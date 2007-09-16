@@ -1,5 +1,5 @@
 /*
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/restore.cc#3 $
+ * $Id$ 
  *
  * \file restore.cc
  * \brief rebuild metatree from saved checkpoint

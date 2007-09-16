@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/util.h#3 $
+ * $Id$ 
  *
  * \file util.h
  * \brief miscellaneous metadata server code

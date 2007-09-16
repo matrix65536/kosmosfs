@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/logger.h#3 $
+ * $Id$ 
  *
  * \file logger.h
  * \brief metadata logger

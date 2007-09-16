@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/LayoutManager.h#3 $
+// $Id$ 
 //
 // Created 2006/06/06
 // Author: Sriram Rao (Kosmix Corp.)

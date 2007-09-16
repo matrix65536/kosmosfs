@@ -1,5 +1,5 @@
 /*
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/entry.cc#3 $
+ * $Id$ 
  *
  * \file entry.cc
  * \brief parse checkpoint and log entries

@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/replay.h#3 $
+ * $Id$ 
  *
  * \file replay.h
  * \brief log replay definitions

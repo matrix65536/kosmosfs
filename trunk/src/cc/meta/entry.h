@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/entry.h#3 $
+ * $Id$ 
  *
  * \file entry.h
  * \brief process entries from the checkpoint and log files

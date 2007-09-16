@@ -1,5 +1,5 @@
 /**
- * $Id: KfsTest.java $
+ * $Id$ 
  *
  * Created 2007/08/25
  *

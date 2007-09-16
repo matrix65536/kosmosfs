@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/common/kfstypes.h#3 $
+// $Id$ 
 //
 // \brief Common declarations for KFS (meta/chunk/client-lib)
 //

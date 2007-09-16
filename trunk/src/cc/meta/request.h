@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/request.h#4 $
+ * $Id$ 
  *
  * \file request.h
  * \brief protocol requests to KFS metadata server

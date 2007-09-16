@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: KfsSample_main.cc $
+// $Id$ 
 //
 // Created 2007/09/05
 // Author: Sriram Rao (Kosmix Corp.) 

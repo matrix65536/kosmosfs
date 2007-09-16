@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/chunk/LeaseClerk.h#3 $
+// $Id$ 
 //
 // Created 2006/10/09
 // Author: Sriram Rao (Kosmix Corp.) 

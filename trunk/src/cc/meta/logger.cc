@@ -1,5 +1,5 @@
 /*!
- * $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/meta/logger.cc#3 $
+ * $Id$ 
  *
  * Copyright 2006 Kosmix Corp.
  *
@@ -17,9 +17,9 @@
  * implied. See the License for the specific language governing
  * permissions and limitations under the License.
  *
- *
  * \file logger.cc
  * \brief thread for logging metadata updates
+ * \author Blake Lewis (Kosmix Corp.)
  */
 
 #include "logger.h"

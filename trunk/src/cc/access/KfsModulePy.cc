@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/access/KfsModulePy.cc#1 $
+// $Id$ 
 //
 // Created 2006/08/01
 // Author: Blake Lewis (Kosmix Corp.) 
