@@ -146,6 +146,9 @@ on the target machines.  To compile KFS/FUSE bindings,
 Then follow the normal compilation steps (cmake/gmake/gmake install) and
 kfs_fuse binary will be built and installed in ~/code/kfs/build/bin
 
+Due to licensing issues, you can include FUSE only if it is licensed
+under LGPL or any other license that is compatible with Apache 2.0 license.
+
 BUILDING PYTHON EXTENSION MODULE
 ================================
 
