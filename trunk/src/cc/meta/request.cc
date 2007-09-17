@@ -186,6 +186,10 @@ handle_create(MetaRequest *r)
 {
 	MetaCreate *req = static_cast <MetaCreate *>(r);
 	fid_t fid = 0;
+	if (!is_dir(req->dir)) {
+		req->status = -ENOTDIR;
+		return;
+	}
 	req->status = metatree.create(req->dir, req->name, &fid,
 					req->numReplicas);
 	req->fid = fid;
@@ -195,6 +199,10 @@ static void
 handle_mkdir(MetaRequest *r)
 {
 	MetaMkdir *req = static_cast <MetaMkdir *>(r);
+	if (!is_dir(req->dir)) {
+		req->status = -ENOTDIR;
+		return;
+	}
 	fid_t fid = 0;
 	req->status = metatree.mkdir(req->dir, req->name, &fid);
 	req->fid = fid;
