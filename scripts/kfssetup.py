@@ -187,13 +187,14 @@ def doUpgrade(config, bindir):
             server = "chunkserver"
             
         node = config.get(s, 'node')
-        cmd = "scp -q %s/%s %s:/tmp; ssh %s 'sh %s/scripts/kfsinstall.sh -d %s -u %s' " \
+        cmd = "scp -q %s/%s %s:/tmp; ssh %s 'cd %s; sh scripts/kfsinstall.sh -d %s -u %s' " \
               % (bindir, server, node, node, rundir, rundir, upgradeArgs)
-        print "Upgrade cmd: %s\n" % cmd
+        # print "Upgrade cmd: %s\n" % cmd
         os.system(cmd)
         # Cleanup remote
         cmd = "ssh %s 'rm -f /tmp/%s' " % (node, server)
         os.system(cmd)
+        print "Upgrade done on %s" % (node)
         
     cleanup()
 

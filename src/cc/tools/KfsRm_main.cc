@@ -156,7 +156,7 @@ doRecrRmdir(const char *dirname)
     vector<KfsFileAttr> dirEntries;
     vector<KfsFileAttr>::size_type i;
 
-    cout << "rmdir -p: " << dirname << endl;
+    cout << "rmdir -r: " << dirname << endl;
 
     res = gKfsClient->ReaddirPlus(dirname, dirEntries);
     if (res < 0) {
@@ -171,7 +171,9 @@ doRecrRmdir(const char *dirname)
             (dirEntries[i].filename == ".."))
             continue;
 
-        path += "/";
+        // don't add a trailing slash if it exists already
+        if (path[path.size() - 1] != '/')
+            path += "/";
         path += dirEntries[i].filename;
         if (dirEntries[i].isDirectory) {
             doRecrRmdir(path.c_str());

@@ -170,6 +170,10 @@ struct KfsFileAttr {
         return *this;
     }
 
+    bool operator < (const KfsFileAttr & other) const {
+        return filename < other.filename;
+    }
+
 };
 
 }

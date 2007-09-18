@@ -48,6 +48,7 @@ using std::min;
 using std::max;
 using std::map;
 using std::vector;
+using std::sort;
 
 using std::cout;
 using std::endl;
@@ -290,7 +291,8 @@ KfsClient::Rmdir(const char *pathname)
 ///
 /// Read a directory's contents.  This is analogous to READDIR in
 /// NFS---just reads the directory contents and returns the names;
-/// you'll need to lookup the attributes next.
+/// you'll need to lookup the attributes next.  The resulting
+/// directory entries are sorted lexicographically.
 ///
 /// XXX NFS READDIR also returns the file ids, and we should do
 /// the same here.
@@ -334,12 +336,14 @@ KfsClient::Readdir(const char *pathname, vector<string> &result)
 	result[i] = filename;
         COSMIX_LOG_DEBUG("Entry: %s", filename);
     }
+    sort(result.begin(), result.end());
     return res;
 }
 
 ///
 /// Read a directory's contents and get the attributes.  This is
-/// analogous to READDIRPLUS in NFS.
+/// analogous to READDIRPLUS in NFS.  The resulting directory entries
+/// are sort lexicographically.
 ///
 /// @param[in] pathname	The full pathname such as /.../dir
 /// @param[out] result	The filenames in the directory and their attributes
@@ -379,6 +383,7 @@ KfsClient::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result)
         // get the file size for files
 	LookupAttr(dirFid, result[i].filename.c_str(), result[i], true);
     }
+    sort(result.begin(), result.end());
 
     return res;
 }

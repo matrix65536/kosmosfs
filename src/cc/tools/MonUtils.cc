@@ -62,7 +62,7 @@ MetaPingOp::ParseResponse(const char *resp, int len)
     string respStr(resp, len);
     Properties prop;
     string serv;
-    const char delim = ' ';
+    const char delim = '\t';
     string::size_type start, end;
 
     ParseResponseCommon(respStr, prop);

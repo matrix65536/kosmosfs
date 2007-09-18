@@ -72,6 +72,7 @@ fi
 # clean up forever
 while true
 do
+	echo " `date` : Cleaning cp/logs" 
 	$CLEANER -m $min_save -M $max_save -t $keep_time $cpdir $cpfile
 	$CLEANER -m $min_save -M $max_save -t $keep_time $logdir $logfile
 	sleep $sleep_time
