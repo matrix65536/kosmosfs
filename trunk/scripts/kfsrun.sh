@@ -25,8 +25,15 @@ startServer()
 {
     if [ -e $SERVER_PID_FILE ];
     then
-	echo "$server is already running..."
-	exit 0
+	PROCID=`cat $SERVER_PID_FILE`
+	PROC_COUNT=`ps -ef | awk '{print $2}'  | grep -c $PROCID`
+	if [[ $PROC_COUNT -gt  0 ]]; 
+	    then
+	    echo "$server is already running..."
+	    exit 0
+        fi;
+	# No such process; so, restart the server
+	rm -f $PID_FILE
     fi
 
     if [ ! -f $config ];
@@ -34,12 +41,13 @@ startServer()
 	echo "No config file...Not starting $server"
 	exit -1
     fi
-    echo -n $"Starting $server"
+    echo "Starting $server..."
     bin/$server $config > $SERVER_LOG_FILE < /dev/null 2>&1 &
     echo $! > $SERVER_PID_FILE
 
     if [ ! -e $CLEANER_PID_FILE ];
 	then
+	echo "Starting cleaner..."
 	sh scripts/kfsclean.sh > $CLEANER_LOG_FILE < /dev/null 2>&1 &
 	echo $! > $CLEANER_PID_FILE
     else
@@ -53,7 +61,7 @@ startServer()
 
 stopServer()
 {
-    echo -n $"Stopping $server"
+    echo -n $"Stopping $PROG: "
 
     if [ ! -e $PID_FILE ]; 
 	then
@@ -114,8 +122,10 @@ case $mode in
 	startServer
 	;;
     "stop")
+	PROG=$server
 	PID_FILE=$SERVER_PID_FILE
 	stopServer
+	PROG=$server.cleaner
 	PID_FILE=$CLEANER_PID_FILE
 	stopServer
 	;;

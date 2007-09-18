@@ -36,7 +36,7 @@ TESTNAME = "flogger"
 # Test parameter handling
 #
 default_test_params = { 
-	"kfs_properties": "KfsTester.properties", # KFS property file
+	"kfs_properties": "KfsClient.prp", # KFS property file
 	"log_file": TESTNAME + ".log",	# log of operations
 	"op_count": "5000",		# no. of ops to perform
 	"max_file_size": "100000",	# maximum file size

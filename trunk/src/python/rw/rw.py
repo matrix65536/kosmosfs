@@ -53,7 +53,7 @@ TESTNAME = "rw"
 # Test parameter handling
 #
 default_test_params = {
-	"kfs_properties": "KfsTester.properties", # KFS property file
+	"kfs_properties": "KfsClient.prp", # KFS property file
 	"log_file": TESTNAME + ".log",	# log of operations
 	"read_count": "1000",		# no. or reads to perform
 	"write_count": "500",		# no. of writes to perform

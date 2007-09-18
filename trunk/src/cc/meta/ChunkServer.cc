@@ -760,15 +760,15 @@ ChunkServer::Ping(string &result)
 	ostringstream ost;
 
 	if (mTotalSpace < (1L << 30)) {
-		ost << "s=" << mLocation.hostname << ",p=" << mLocation.port 
-	    		<< ",t=" << convertToMB(mTotalSpace) 
-			<< ",u=" << convertToMB(mUsedSpace)
-	    		<< ",a=" << convertToMB(mAllocSpace) << " MB";
+		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
+	    		<< ", t=" << convertToMB(mTotalSpace) 
+			<< "(MB), u=" << convertToMB(mUsedSpace)
+	    		<< "(MB), a=" << convertToMB(mAllocSpace) << "(MB)\t";
 	} else {
-		ost << "s=" << mLocation.hostname << ",p=" << mLocation.port 
-	    		<< ",t=" << convertToGB(mTotalSpace) 
-			<< ",u=" << convertToGB(mUsedSpace)
-	    		<< ",a=" << convertToGB(mAllocSpace) << " GB";
+		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
+	    		<< ", t=" << convertToGB(mTotalSpace) 
+			<< "(GB), u=" << convertToGB(mUsedSpace)
+	    		<< "(GB), a=" << convertToGB(mAllocSpace) << "(GB)\t";
 	}
 	result += ost.str();
 }
