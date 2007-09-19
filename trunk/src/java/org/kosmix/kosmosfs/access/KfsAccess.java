@@ -23,7 +23,7 @@
  * \brief Java wrappers to get to the KFS client.
  */
 
-package org.kosmos.access;
+package org.kosmix.kosmosfs.access;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
