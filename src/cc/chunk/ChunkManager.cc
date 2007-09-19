@@ -162,6 +162,33 @@ ChunkManager::DeleteChunk(kfsChunkId_t chunkId)
 }
 
 int
+ChunkManager::StaleChunk(kfsChunkId_t chunkId)
+{
+    string chunkPathname, staleChunkPathname;
+    ChunkInfoHandle_t *cih;
+    CMI tableEntry;
+
+    tableEntry = mChunkTable.find(chunkId);
+    if (tableEntry == mChunkTable.end()) 
+        return -EBADF;
+
+    mIsChunkTableDirty = true;
+
+    chunkPathname = MakeChunkPathname(chunkId);
+    staleChunkPathname = MakeStaleChunkPathname(chunkId);
+    
+    rename(chunkPathname.c_str(), staleChunkPathname.c_str());
+
+    COSMIX_LOG_INFO("Moving chunk %ld to staleChunks dir", chunkId);
+
+    cih = tableEntry->second;
+    mUsedSpace -= cih->chunkInfo.chunkSize;
+    mChunkTable.erase(chunkId);
+    delete cih;
+    return 0;
+}
+
+int
 ChunkManager::TruncateChunk(kfsChunkId_t chunkId, size_t chunkSize)
 {
     string chunkPathname;
@@ -271,6 +298,15 @@ ChunkManager::MakeChunkPathname(const char *chunkId)
     ostringstream os;
 
     os << mChunkBaseDir << '/' << chunkId;
+    return os.str();
+}
+
+string
+ChunkManager::MakeStaleChunkPathname(kfsChunkId_t chunkId)
+{
+    ostringstream os;
+
+    os << mChunkBaseDir << "/stalechunks/" << chunkId;
     return os.str();
 }
 

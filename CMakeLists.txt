@@ -30,7 +30,11 @@ set (CMAKE_INSTALL_PREFIX .)
 # Change the line to Release to build release binaries
 # For servers, build with debugging info; for tools, build Release
 #
-set (CMAKE_BUILD_TYPE RelWithDebugInfo)
+
+IF (NOT CMAKE_BUILD_TYPE)
+   message (STATUS "Setting build type to Debug")
+   set (CMAKE_BUILD_TYPE "Debug")
+ENDIF (NOT CMAKE_BUILD_TYPE)
 
 # set (CMAKE_BUILD_TYPE Release)
 
@@ -66,7 +70,6 @@ add_subdirectory (src/cc/libkfsIO)
 add_subdirectory (src/cc/tools)
 add_subdirectory (src/cc/tests)
 
-# set (Fuse_LIBRARY_DIR <provide path>)
 IF (NOT ${Fuse_LIBRARY_DIR} STREQUAL "")
    message(STATUS "Found fuse")
    add_subdirectory (src/cc/fuse)

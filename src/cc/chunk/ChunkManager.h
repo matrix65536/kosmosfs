@@ -89,6 +89,13 @@ public:
     /// @retval status code
     int		DeleteChunk(kfsChunkId_t chunkId);
 
+    /// A previously created chunk is stale; move it to stale chunks
+    /// dir; space can be reclaimed later
+    ///
+    /// @param[in] chunkId id of the chunk being moved
+    /// @retval status code
+    int		StaleChunk(kfsChunkId_t chunkId);
+
     /// Truncate a chunk to the specified size
     /// @param[in] chunkId id of the chunk being truncated.
     /// @param[in] chunkSize  size to which chunk should be truncated.
@@ -272,6 +279,10 @@ private:
     /// to the chunk filename.
     std::string MakeChunkPathname(kfsChunkId_t chunkId);
     std::string MakeChunkPathname(const char *chunkId);
+
+    /// Utility function that given a chunkId, returns the full path
+    /// to the chunk filename in the "stalechunks" dir
+    std::string MakeStaleChunkPathname(kfsChunkId_t chunkId);
 
     /// Utility function that sets up a disk connection for an
     /// I/O operation on a chunk.

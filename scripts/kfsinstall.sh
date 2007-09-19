@@ -51,7 +51,7 @@ installServer()
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	-c|--chunk)
-	    mkdir -p $chunkDir
+	    mkdir -p $chunkDir/stalechunks
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	*)

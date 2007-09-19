@@ -11,6 +11,7 @@ set_target_properties (kfsIO-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
 add_dependencies (kfsIO common)
 target_link_libraries (kfsIO rt)
+target_link_libraries (kfsIO-shared rt)
 #
 install (TARGETS kfsIO kfsIO-shared
         LIBRARY DESTINATION lib
