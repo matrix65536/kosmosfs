@@ -39,12 +39,14 @@ from ConfigParser import ConfigParser
 #   node: <value>
 #   rundir: <dir>
 #   baseport: <port>
-#   space: <space in bytes>
+#   space: <space exported by the server> (n m/g)
 #   {chunkdir: <dir>}
 # [chunkserver2]
 # ...
 # [chunkserverN]
 # ...
+#
+# where, space is expressed in units of MB/GB or bytes.
 #
 # Install on each machine with the following directory hierarchy:
 #   rundir/
@@ -54,6 +56,7 @@ from ConfigParser import ConfigParser
 # If a path for storing the chunks isn't specified, then it defaults to bin
 #
 
+unitsScale = {'g' : 1 << 30, 'm' : 1 << 20, 'k' : 1 << 10, 'b' : 1}
 
 def setupMeta(section, config):
     """ Setup the metaserver binaries/config files on a node. """
@@ -85,7 +88,15 @@ def setupChunk(section, config):
     fh.write(s)
     s = "chunkServer.clientPort = %d\n" % config.getint(section, 'baseport')
     fh.write(s)
-    s = "chunkServer.totalSpace = %s\n" % config.get(section, 'space')
+    space = config.get(section, 'space')
+    s = space.split()
+    if (len(s) >= 2):
+        units = s[1].lower()
+    else:
+        units = 'b'
+    
+    value = int(s[0]) * unitsScale[ units[0] ]
+    s = "chunkServer.totalSpace = %d\n" % value
     fh.write(s)
     rundir = config.get(section, 'rundir')
     if config.has_option(section, 'chunkdir'):
@@ -214,7 +225,7 @@ def doUninstall(config):
                 chunkDir = "%s/bin/kfschunk" % (rundir)
             otherArgs = "-c %s" % (chunkDir)
         
-        cmd = "ssh %s 'sh %s/scripts/kfsinstall.sh -U -d %s %s' " % \
+        cmd = "ssh %s 'cd %s; sh scripts/kfsinstall.sh -U -d %s %s' " % \
               (node, rundir, rundir, otherArgs)
         print "Uninstall cmd: %s\n" % cmd
         os.system(cmd)

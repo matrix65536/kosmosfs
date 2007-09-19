@@ -32,6 +32,7 @@ CONTENTS:
  * RUNNING KFS
  * MONITORING KFS SERVERS
  * INCREMENTAL SCALING: ADDING NEW SERVERS
+ * WHERE DOES THE SERVER STORE THINGS
 
 DEPLOYING KFS
 =============
@@ -79,8 +80,15 @@ variables:
       to listen on the same port # on the node.
 
 For the chunkservers, there is are two additional variables that are defined:
-  * space:  This variable, defines in bytes, the amount of storage
-  space exported by that chunkserver.  
+  * space:  This variable specifies the amount of storage
+  space exported by that chunkserver.  The units for space are:
+     * 'G' for GigaBytes
+     * 'M' for MegaBytes
+     * 'B' for Bytes
+  For example, 
+       space: 30 G 
+  defines that the space exported by the chunkserver is 30 GB.
+ 
   * chunkdir: This variable is optional.  When specified, this defines
   the directory the chunkserver should use to store the chunks.  
 
@@ -202,3 +210,26 @@ To add new chunkservers to the setup, perform the following steps:
    start (1) the new chunkservers, and (2) any old chunkservers that
    may have been stopped.  When the new chunkservers startup, they
    announce themselves to the metaserver and get included in the system.
+
+
+WHERE DOES THE SERVER STORE THINGS
+==================================
+
+When the KFS servers are run (metaserver/chunkserver), the following
+directories are created: 
+ - metaserver: kfscp, kfslog.  These directories store, respectively,
+ the checkpoints and the log files produced by the metaserver.
+ - chunkserver: kfschunk, kfslog.  These directories store,
+ respectively, the chunk files and logs/checkpoints produced by the
+ chunkserver. 
+
+For either server, though checkpoint/logs are rolled once every
+minute, the older log/checkpoint files are not immediately deleted.
+There is a cleaner process that runs once an hour which deletes the
+old files.
+
+Finally, the chunkserver also has a directory "kfschunk/stalechunks"
+where it keeps "stale" chunks.  These are chunks for which there is a
+chunk version # mismatch: the version # of the chunk on the
+chunkserver is less than what the metaserver knows is the latest
+version # of that chunk.

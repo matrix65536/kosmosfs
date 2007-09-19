@@ -64,8 +64,8 @@ BUILDING C++ SIDE:
 
 In ~/code/kfs/CMakeLists.txt, few variables are defined:
  - Build type: The system is built with debug flags enabled; to build
- release binaries, change the value for CMAKE_BUILD_TYPE 
- from RelWithDebInfo to Release.
+ release binaries, change the default value for CMAKE_BUILD_TYPE 
+ from Debug to Release.
 
 To build KFS, perform the following steps:
 
@@ -73,6 +73,7 @@ To build KFS, perform the following steps:
 2. mkdir build
 3. cd build
 4. Generate the Makefiles: cmake ~/code/kfs/
+       -- will build DEBUG binaries by default
 5. Compile the source: gmake
 6. After the source, install the binaries: gmake install
 
@@ -112,10 +113,7 @@ Next,
    info. are built by default.
  
  - cd ~/code/kfs/build/release
- - Edit ~/code/kfs/CMakeLists.txt and change the value for
-   CMAKE_BUILD_TYPE
-        -- Comment out the line "RelWithDebInfo"
-        -- Uncomment the line "Release"
+ - cmake -D CMAKE_BUILD_TYPE="Release" ~/code/kfs
  - Follow the steps from #5 from the previous section to compile the
  tree
 
@@ -165,11 +163,29 @@ BUILDING PYTHON EXTENSION MODULE
     - python kfs_setup.py ~/code/kosmosfs/build/lib/ build
       This will build kfs.so in ./build/lib.../kfs.so
 
-3. The kfs.so needs to be installed in the site-packages for python.
-   For instance, if /usr/lib64/python/site-packages is where the site
-   packages, then you will need to install kfs.so there.  You will
-   need write permissions to install the file there.  To install,
+3. The kfs.so library needs to be installed in the site-packages for python.
+   a. The default installation is done via:
     - python kfs_setup.py ~/code/kosmosfs/build/lib/ install
+
+       For instance, if /usr/lib64/python/site-packages is where the
+       site packages, then you will need to install kfs.so there.  You
+       will need write permissions to install the file there.  
+
+    b. Install in alternate locations:
+
+       python kfs_setup.py ~/code/kosmosfs/build/lib install
+     --home=~/code/kosmosfs/build/lib
+
+      This command will install the python package in
+      ~/code/kosmosfs/build/lib. 
+
+       To allow python run-time environment to find this package, you
+       will need to add the package path to PYTHONPATH.  That is, in
+       the install "home" directory, find the path leading to kfs.so;
+       for example, ~/code/kosmosfs/build/lib/lib64/python/kfs.so
+       Then, update PYTHONPATH as:
+       
+        export PYTHONPATH = ${PYTHONPATH}:~/code/kosmosfs/build/lib/lib64/python
 
 4. To allow applications to use kfs.so, ~/code/kfs/build/lib should be
    in the LD_LIBRARY_PATH.

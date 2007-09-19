@@ -806,7 +806,7 @@ StaleChunksOp::Execute()
     vector<kfsChunkId_t>::size_type i;
 
     for (i = 0; i < staleChunkIds.size(); ++i) {
-        gChunkManager.DeleteChunk(staleChunkIds[i]);
+        gChunkManager.StaleChunk(staleChunkIds[i]);
     }
     status = 0;
     clnt->HandleEvent(EVENT_CMD_DONE, this);
