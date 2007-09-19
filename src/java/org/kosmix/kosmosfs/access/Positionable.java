@@ -24,7 +24,7 @@
  * \brief Interface for positioning a file pointer.
  */
 
-package org.kosmos.access;
+package org.kosmix.kosmosfs.access;
 
 import java.io.IOException;
 

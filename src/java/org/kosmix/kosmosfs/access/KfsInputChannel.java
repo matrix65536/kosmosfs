@@ -21,33 +21,31 @@
  * implied. See the License for the specific language governing
  * permissions and limitations under the License.
  * 
- * \brief An output channel that does buffered I/O.  This is to reduce
+ * \brief An input channel that does buffered I/O.  This is to reduce
  * the overhead of JNI calls.
  */
 
-package org.kosmos.access;
+package org.kosmix.kosmosfs.access;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
+import java.nio.channels.ReadableByteChannel;
 
-public class KfsOutputChannel implements WritableByteChannel, Positionable
+/* A byte channel interface with seek support */
+public class KfsInputChannel implements ReadableByteChannel, Positionable
 {
     // To get to a byte-buffer from the C++ side as a pointer, need
     // the buffer to be direct memory backed buffer.  So, allocate one
     // for reading/writing.
     private static final int DEFAULT_BUF_SIZE = 1 << 20;
-    private ByteBuffer writeBuffer;
+    private ByteBuffer readBuffer;
     private int kfsFd = -1;
 
     private final static native
+    int read(int fd, ByteBuffer buf, int begin, int end);
+
+    private final static native
     int close(int fd);
-
-    private final static native
-    int write(int fd, ByteBuffer buf, int begin, int end);
-
-    private final static native
-    int sync(int fd);
 
     private final static native
     int seek(int fd, long offset);
@@ -55,10 +53,10 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
     private final static native
     long tell(int fd);
 
-    public KfsOutputChannel(int fd) 
+    public KfsInputChannel(int fd) 
     {
-        writeBuffer = ByteBuffer.allocateDirect(DEFAULT_BUF_SIZE);
-        writeBuffer.clear();
+        readBuffer = ByteBuffer.allocateDirect(DEFAULT_BUF_SIZE);
+        readBuffer.flip();
 
         kfsFd = fd;
     }
@@ -74,86 +72,68 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
     // -- send/receive to the other side (Jave->C++ or vice-versa)
     //
 
-    public int write(ByteBuffer src) throws IOException
+    public int read(ByteBuffer dst) throws IOException
     {
         if (kfsFd < 0) 
             throw new IOException("File closed");
 
-        int r0 = src.remaining();
+        int r0 = dst.remaining();
 
-        // While the src buffer has data, copy it in and flush
-        while(src.hasRemaining())
+        // While the dst buffer has space for more data, fill
+        while(dst.hasRemaining())
         {
-            if (writeBuffer.remaining() == 0) {
-                writeBuffer.flip();
-                writeDirect(writeBuffer);
+            // Fill input buffer if it's empty
+            if(!readBuffer.hasRemaining())
+            {
+                readBuffer.clear();
+                readDirect(readBuffer);
+                readBuffer.flip();
+
+                // If we failed to get anything, call that EOF
+                if(!readBuffer.hasRemaining())
+                    break;
             }
 
             // Save end of input buffer
-            int lim = src.limit();
+            int lim = readBuffer.limit();
 
-            // Copy in as much data we have space
-            if (writeBuffer.remaining() < src.remaining())
-                src.limit(src.position() + writeBuffer.remaining());
-            writeBuffer.put(src);
+            // If dst buffer can't contain all of input buffer, limit
+            // our copy size.
+            if(dst.remaining() < readBuffer.remaining())
+                readBuffer.limit(readBuffer.position() + dst.remaining());
 
-            // restore the limit to what it was
-            src.limit(lim);
+            // Copy into dst buffer
+            dst.put(readBuffer);
+
+            // Restore end of input buffer marker (maybe changed
+            // earlier)
+            readBuffer.limit(lim);
         }
 
-        int r1 = src.remaining();
-        return r0 - r1;
+        // If we copied anything into the dst buffer (or if there was
+        // no space available to do so), return the number of bytes
+        // copied.  Otherwise return -1 to indicate EOF.
+        int r1 = dst.remaining();
+        if(r1 < r0 || r0 == 0)
+            return r0 - r1;
+        else
+            return -1;
+
     }
 
-    private void writeDirect(ByteBuffer buf) throws IOException
+    private void readDirect(ByteBuffer buf) throws IOException
     {
         if(!buf.isDirect())
             throw new IllegalArgumentException("need direct buffer");
 
         int pos = buf.position();
-        int last = buf.limit();
-
-        if (last - pos == 0)
-            return;
-
-        int sz = write(kfsFd, buf, pos, last);
-        
+        int sz = read(kfsFd, buf, pos, buf.limit());
         if(sz < 0)
-            throw new IOException("writeDirect failed");
+            throw new IOException("readDirect failed");
 
-        // System.out.println("Wrote via JNI: kfsFd: " + kfsFd + " amt: " + sz);
-
-        if (sz == last) {
-            buf.clear();
-            return;
-        }
-
-        if (sz == 0) {
-            return;
-        }
-
-        // System.out.println("Compacting on kfsfd: " + kfsFd);
-
-        // we wrote less than what is available.  so, shift things
-        // over to reflect what was written out.
-        ByteBuffer temp = ByteBuffer.allocateDirect(DEFAULT_BUF_SIZE);
-        temp.put(buf);
-        temp.flip();
-        buf.clear();
-        buf.put(temp);
-    }
-
-
-    public int sync() throws IOException
-    {
-        if (kfsFd < 0) 
-            throw new IOException("File closed");
-
-        // flush everything
-        writeBuffer.flip();
-        writeDirect(writeBuffer);
-
-        return sync(kfsFd);
+        // System.out.println("Read via JNI: kfsFd: " + kfsFd + " amt: " + sz);
+        
+        buf.position(pos + sz);
     }
 
     // is modeled after the seek of Java's RandomAccessFile; offset is
@@ -163,7 +143,8 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
         if (kfsFd < 0) 
             throw new IOException("File closed");
 
-        sync();
+        readBuffer.clear();
+        readBuffer.flip();
 
         return seek(kfsFd, offset);
     }
@@ -180,8 +161,6 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
     {
         if (kfsFd < 0)
             return;
-
-        sync();
 
         close(kfsFd);
         kfsFd = -1;

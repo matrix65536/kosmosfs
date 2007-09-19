@@ -23,7 +23,7 @@
  */
 
 
-package org.kosmos.access;
+package org.kosmix.kosmosfs.access;
 
 import java.io.*;
 import java.net.*;
