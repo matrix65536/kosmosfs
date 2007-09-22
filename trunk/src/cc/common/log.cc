@@ -24,31 +24,33 @@
 #include "log.h"
 #include <stdlib.h>
 
-pthread_mutex_t _cosmix_log_internal_stdio_lock = PTHREAD_MUTEX_INITIALIZER;
+using namespace KFS;
 
-const CosmixLogLevel COSMIX_LOG_INSANE_LEVEL = 5;
-const CosmixLogLevel COSMIX_LOG_DEBUG_LEVEL = 4;
-const CosmixLogLevel COSMIX_LOG_INFO_LEVEL = 3;
-const CosmixLogLevel COSMIX_LOG_WARN_LEVEL = 2;
-const CosmixLogLevel COSMIX_LOG_ERROR_LEVEL = 1;
+pthread_mutex_t KFS::_kosmosfs_log_internal_stdio_lock = PTHREAD_MUTEX_INITIALIZER;
 
-class CosmixLog {
+const KosmosFSLogLevel KFS::KFS_LOG_INSANE_LEVEL = 5;
+const KosmosFSLogLevel KFS::KFS_LOG_DEBUG_LEVEL = 4;
+const KosmosFSLogLevel KFS::KFS_LOG_INFO_LEVEL = 3;
+const KosmosFSLogLevel KFS::KFS_LOG_WARN_LEVEL = 2;
+const KosmosFSLogLevel KFS::KFS_LOG_ERROR_LEVEL = 1;
+
+class KosmosFSLog {
 public:
-    static CosmixLogLevel getloglevel() {
+    static KosmosFSLogLevel getloglevel() {
 
 #ifdef NDEBUG
-        // Omit COSMIX_LOG_DEBUG by default for NDEBUG code.
-        CosmixLogLevel level = COSMIX_LOG_INFO_LEVEL;
+        // Omit KFS_LOG_DEBUG by default for NDEBUG code.
+        KosmosFSLogLevel level = KFS_LOG_INFO_LEVEL;
 #else
-        CosmixLogLevel level = COSMIX_LOG_DEBUG_LEVEL;
+        KosmosFSLogLevel level = KFS_LOG_DEBUG_LEVEL;
 #endif
 
-        char *env = getenv("COSMIX_LOG_LEVEL");
+        char *env = getenv("KFS_LOG_LEVEL");
         if (env == NULL) return level;
-        level = (CosmixLogLevel)strtol(env, NULL, 0);
+        level = (KosmosFSLogLevel)strtol(env, NULL, 0);
         if (level <= 0 || level > 5) return level;
         return level;
     }
 };
 
-CosmixLogLevel cosmix_log_level = CosmixLog::getloglevel();
+KosmosFSLogLevel KFS::kosmosfs_log_level = KosmosFSLog::getloglevel();

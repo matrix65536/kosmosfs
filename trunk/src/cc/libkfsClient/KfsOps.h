@@ -56,6 +56,7 @@ enum KfsOp_t {
     CMD_RENAME,
     CMD_LEASE_ACQUIRE,
     CMD_LEASE_RENEW,
+    CMD_CHANGE_FILE_REPLICATION,
     // Chunkserver RPCs
     CMD_OPEN,
     CMD_CLOSE,
@@ -116,9 +117,10 @@ struct CreateOp : public KfsOp {
     const char *filename;
     kfsFileId_t fileId; // result
     int numReplicas; // desired degree of replication
-    CreateOp(kfsSeq_t s, kfsFileId_t p, const char *f, int n) :
+    bool exclusive; // O_EXCL flag
+    CreateOp(kfsSeq_t s, kfsFileId_t p, const char *f, int n, bool e) :
         KfsOp(CMD_CREATE, s), parentFid(p), filename(f),
-        numReplicas(n)
+        numReplicas(n), exclusive(e)
     {
 
     }
@@ -551,6 +553,26 @@ struct LeaseRenewOp : public KfsOp {
     string Show() const {
         ostringstream os;
         os << "lease-renew: chunkid=" << chunkId << " leaseId=" << leaseId;
+        return os.str();
+    }
+};
+
+struct ChangeFileReplicationOp : public KfsOp {
+    kfsFileId_t fid; // input
+    int16_t numReplicas; // desired replication
+    ChangeFileReplicationOp(kfsSeq_t s, kfsFileId_t f, int16_t r) :
+        KfsOp(CMD_CHANGE_FILE_REPLICATION, s), fid(f), numReplicas(r) 
+    { 
+
+    }
+
+    void Request(ostringstream &os);   
+    void ParseResponseHeader(char *buf, int len);
+
+    string Show() const {
+        ostringstream os;
+        os << "change-file-replication: fid=" << fid 
+           << " # of replicas: " << numReplicas;
         return os.str();
     }
 };

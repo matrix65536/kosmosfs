@@ -38,6 +38,7 @@ using std::cout;
 using std::endl;
 using std::ifstream;
 
+using namespace KFS;
 KfsClient *gKfsClient;
 bool doMkdir(char *dirname);
 bool doFileOps(char *testDataFile, char *dirname, int seqNum, int numIter);

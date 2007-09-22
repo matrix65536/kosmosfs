@@ -27,12 +27,16 @@
 #include "common/log.h"
 
 #include "Globals.h"
-using namespace libkfsio;
 
 #include <cerrno>
 #include <netdb.h>
 
 using std::min;
+using std::max;
+using std::vector;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 TcpSocket::~TcpSocket()
 {
@@ -289,7 +293,7 @@ int TcpSocket::DoSynchRecv(char *buf, int bufLen, struct timeval &timeout)
         nfds = select(mSockFd + 1, &fds, NULL, NULL, &timeout);
         if ((nfds == 0) && 
             ((timeout.tv_sec == 0) && (timeout.tv_usec == 0))) {
-            COSMIX_LOG_DEBUG("Timeout in synch recv");
+            KFS_LOG_DEBUG("Timeout in synch recv");
             return numRecd > 0 ? numRecd : -ETIMEDOUT;
         }
 
@@ -363,4 +367,57 @@ int TcpSocket::DoSynchPeek(char *buf, int bufLen, struct timeval &timeout)
             break;
     }
     return numRecd;
+}
+
+
+int KFS::Simulcast(const char *buf, int bufLen, vector<TcpSocket *> &targets)
+{
+    int res, nfds, fd, lastfd;
+    fd_set writeSet;
+    struct timeval timeout;
+    vector<int> nsent;
+    uint32_t i, ndone = 0;
+
+    nsent.resize(targets.size());
+    for (i = 0; i < nsent.size(); i++)
+        nsent[i] = 0;
+
+    while (1) {
+        ndone = 0;
+        for (i = 0; i < targets.size(); i++) {
+            if (nsent[i] < bufLen)
+                break;
+            ndone++;
+        }
+        if (ndone == targets.size())
+            break;
+
+        // run in loops of 100 micro-seconds
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 100;
+        FD_ZERO(&writeSet);
+        for (i = 0; i < targets.size(); i++) {
+            if (!targets[i]->IsGood())
+                return -1;
+            fd = targets[i]->GetFd();
+            lastfd = max(fd, lastfd);
+            FD_SET(fd, &writeSet);
+        }
+
+        nfds = select(lastfd + 1, NULL, &writeSet, NULL, &timeout);
+        if (nfds < 0) {
+            perror("Select(): " );
+            return -1;
+        }
+        for (i = 0; i < targets.size(); i++) {
+            fd = targets[i]->GetFd();
+            // push some data on the socket if any
+            if ((FD_ISSET(fd, &writeSet)) && (nsent[i] < bufLen)) {
+                res = targets[i]->Send(buf + nsent[i], bufLen - nsent[i]);
+                if (res > 0)
+                    nsent[i] += res;
+            }
+        }
+    }
+    return 0;
 }

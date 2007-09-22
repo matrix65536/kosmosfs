@@ -31,17 +31,20 @@
 #include "ChunkServer.h"
 #include "Utils.h"
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 #include <string>
 #include <sstream>
-using std::string;
-using std::ostringstream;
-using std::istringstream;
 
 #include "common/log.h"
 #include <boost/scoped_array.hpp>
 using boost::scoped_array;
+
+using std::string;
+using std::ostringstream;
+using std::istringstream;
+using namespace KFS;
+using namespace KFS::libkfsio;
+
 
 Replicator::Replicator(ReplicateChunkOp *op) :
     mFileId(op->fid), mChunkId(op->chunkId), 
@@ -66,15 +69,15 @@ Replicator::Connect()
 {
     TcpSocket *sock;
 
-    COSMIX_LOG_DEBUG("Trying to connect to: %s", mOwner->location.ToString().c_str());
+    KFS_LOG_DEBUG("Trying to connect to: %s", mOwner->location.ToString().c_str());
 
     sock = new TcpSocket();
     if (sock->Connect(mOwner->location)) {
-        COSMIX_LOG_DEBUG("connect failed...");
+        KFS_LOG_DEBUG("connect failed...");
         delete sock;
         return false;
     }
-    COSMIX_LOG_INFO("Connect to remote server (%s) succeeded...",
+    KFS_LOG_INFO("Connect to remote server (%s) succeeded...",
                     mOwner->location.ToString().c_str());
 
     mNetConnection.reset(new NetConnection(sock, this));
@@ -125,7 +128,7 @@ Replicator::HandleStart(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	COSMIX_LOG_DEBUG("Closing connection");
+	KFS_LOG_DEBUG("Closing connection");
 
 	if (mNetConnection)
 	    mNetConnection->Close();
@@ -220,7 +223,7 @@ Replicator::HandleRead(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	COSMIX_LOG_DEBUG("Closing connection");
+	KFS_LOG_DEBUG("Closing connection");
 
 	if (mNetConnection)
 	    mNetConnection->Close();
@@ -323,11 +326,11 @@ void
 Replicator::Terminate()
 {
     if (mDone) {
-        COSMIX_LOG_DEBUG("Replication for %ld finished", mChunkId);
+        KFS_LOG_DEBUG("Replication for %ld finished", mChunkId);
         gChunkManager.ReplicationDone(mChunkId);
         mOwner->status = 0;
     } else {
-        COSMIX_LOG_DEBUG("Replication for %ld failed...cleaning up", mChunkId);
+        KFS_LOG_DEBUG("Replication for %ld failed...cleaning up", mChunkId);
         gChunkManager.DeleteChunk(mChunkId);
         mOwner->status = -1;
     }

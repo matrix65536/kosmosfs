@@ -28,7 +28,6 @@
 #include "ChunkServer.h"
 #include "libkfsIO/NetManager.h"
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 #include "common/log.h"
 #include "common/properties.h"
@@ -40,6 +39,10 @@ using std::find_if;
 using std::for_each;
 using std::istringstream;
 using std::ostringstream;
+using std::list;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 #include <boost/scoped_array.hpp>
 using boost::scoped_array;
@@ -56,15 +59,15 @@ RemoteSyncSM::Connect()
 {
     TcpSocket *sock;
 
-    COSMIX_LOG_DEBUG("Trying to connect to: %s", mLocation.ToString().c_str());
+    KFS_LOG_DEBUG("Trying to connect to: %s", mLocation.ToString().c_str());
 
     sock = new TcpSocket();
     if (sock->Connect(mLocation)) {
-        COSMIX_LOG_DEBUG("connect failed...");
+        KFS_LOG_DEBUG("connect failed...");
         delete sock;
         return false;
     }
-    COSMIX_LOG_INFO("Connect to remote server (%s) succeeded...",
+    KFS_LOG_INFO("Connect to remote server (%s) succeeded...",
                     mLocation.ToString().c_str());
 
     mNetConnection.reset(new NetConnection(sock, this));
@@ -119,7 +122,7 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	COSMIX_LOG_DEBUG("Closing connection");
+	KFS_LOG_DEBUG("Closing connection");
 
 	if (mNetConnection)
 	    mNetConnection->Close();

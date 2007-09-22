@@ -55,6 +55,9 @@ public class KfsAccess
     short getReplication(String path);
 
     private final static native
+    short setReplication(String path, int numReplicas);
+
+    private final static native
     int create(String path, int numReplicas);
 
     private final static native
@@ -199,6 +202,13 @@ public class KfsAccess
     public short kfs_getReplication(String path)
     {
         return getReplication(path);
+    }
+
+    // Request a change in the degree of replication for this file
+    // Returns the value that was set by the server for this file
+    public short kfs_setReplication(String path, int numReplicas)
+    {
+        return setReplication(path, numReplicas);
     }
 
     protected void finalize() throws Throwable

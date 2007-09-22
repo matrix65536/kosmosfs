@@ -156,6 +156,9 @@ public:
 	const Key key() const { return Key(KFS_FATTR, id()); }
 	const string show() const;
 	int checkpoint(ofstream &file) const;
+	void setReplication(int16_t val) {
+		numReplicas = val;
+	}
 };
 
 /*!

@@ -33,6 +33,8 @@
 #include "Event.h"
 #include "IOBuffer.h"
 
+namespace KFS
+{
 ///
 /// \file DiskEvent.h
 /// \brief Declarations related to events related to Disk-I/O.
@@ -124,5 +126,6 @@ struct DiskEvent_t {
 /// 
 typedef boost::shared_ptr<DiskEvent_t> DiskEventPtr;
 
+}
 
 #endif // _LIBIO_DISKEVENT_H

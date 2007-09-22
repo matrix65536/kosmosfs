@@ -33,6 +33,9 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
 
+namespace KFS
+{
+
 class Replicator : public KfsCallbackObj,
                    public boost::enable_shared_from_this<Replicator>
 {
@@ -110,5 +113,7 @@ private:
 };
 
 typedef boost::shared_ptr<Replicator> ReplicatorPtr;
+
+}
 
 #endif // CHUNKSERVER_REPLICATOR_H

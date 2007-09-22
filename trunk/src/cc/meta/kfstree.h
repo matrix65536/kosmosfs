@@ -216,7 +216,8 @@ public:
 	void printleaves();			//!< print debugging info
 	MetaFattr *getFattr(fid_t fid);		//!< return attributes
 
-	int create(fid_t dir, const string &fname, fid_t *newFid, int16_t numReplicas);
+	int create(fid_t dir, const string &fname, fid_t *newFid, 
+			int16_t numReplicas, bool exclusive);
 	int remove(fid_t dir, const string &fname);
 	int mkdir(fid_t dir, const string &dname, fid_t *newFid);
 	int rmdir(fid_t dir, const string &dname);
@@ -227,6 +228,7 @@ public:
 	MetaFattr *lookup(fid_t dir, const string &fname);
 	MetaFattr *lookupPath(fid_t rootdir, const string &path);
 	int getChunkVersion(fid_t file, chunkId_t chunkId, seq_t *chunkVersion);
+	int changeFileReplication(fid_t file, int16_t numReplicas);
 
 	int moveToDumpster(fid_t dir, const string &fname);
 	void cleanupDumpster();

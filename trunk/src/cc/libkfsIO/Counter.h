@@ -32,14 +32,14 @@
 #include <sstream>
 #include <tr1/unordered_map>
 
-using std::string;
-using std::ostringstream;
+namespace KFS
+{
 
 class Counter;
 
 /// Map from a counter name to the associated Counter object
-typedef std::tr1::unordered_map<string, Counter *> CounterMap;
-typedef std::tr1::unordered_map<string, Counter *>::const_iterator CounterMapIterator;
+typedef std::tr1::unordered_map<std::string, Counter *> CounterMap;
+typedef std::tr1::unordered_map<std::string, Counter *>::const_iterator CounterMapIterator;
 
 
 /// Counters in KFS are currently setup to track a single "thing".
@@ -56,7 +56,7 @@ public:
     virtual ~Counter() { }
 
     /// Print out some information about this counter
-    virtual void Show(ostringstream &os) {
+    virtual void Show(std::ostringstream &os) {
         os << mName << ": " << mCount << "\r\n";
     }
 
@@ -70,7 +70,7 @@ public:
     /// Reset the state of this counter
     virtual void Reset() { mCount = 0; }
 
-    const string & GetName() const {
+    const std::string & GetName() const {
         return mName;
     }
     long long GetValue() const {
@@ -78,16 +78,16 @@ public:
     }
 protected:
     /// Name of this counter object
-    string mName;
+    std::string mName;
     /// Value of this counter
     long long mCount;
 };
 
 class ShowCounter {
-    ostringstream &os;
+    std::ostringstream &os;
 public:
-    ShowCounter(ostringstream &o) : os(o) { }
-    void operator() (std::tr1::unordered_map<string, Counter *>::value_type v) {
+    ShowCounter(std::ostringstream &o) : os(o) { }
+    void operator() (std::tr1::unordered_map<std::string, Counter *>::value_type v) {
         Counter *c = v.second;
             
         c->Show(os);
@@ -120,7 +120,7 @@ public:
     /// Remove a counter object
     /// @param[in] counter   The counter to be removed
     void RemoveCounter(Counter *counter) {
-        const string & name = counter->GetName();
+        const std::string & name = counter->GetName();
         CounterMapIterator iter = mCounters.find(name);
 
         if (iter == mCounters.end())
@@ -134,7 +134,7 @@ public:
     /// @param[in] name   Name of the counter to be retrieved
     /// @retval The associated counter object if one exists; NULL
     /// otherwise. 
-    Counter *GetCounter(const string &name) {
+    Counter *GetCounter(const std::string &name) {
         CounterMapIterator iter = mCounters.find(name);
         Counter *c;
 
@@ -147,7 +147,7 @@ public:
     /// Print out all the counters in the system, one per line.  Each
     /// line is terminated with a "\r\n".  If there are no counters,
     /// then we print "\r\n".
-    void Show(ostringstream &os) {
+    void Show(std::ostringstream &os) {
         if (mCounters.size() == 0) {
             os << "\r\n";
             return;
@@ -160,5 +160,7 @@ private:
     /// Map that tracks all the counters in the system
     CounterMap  mCounters;
 };
+
+}
 
 #endif // LIBKFSIO_COUNTER_H

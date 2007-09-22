@@ -25,9 +25,10 @@
 //----------------------------------------------------------------------------
 
 #include "Globals.h"
-using namespace libkfsio;
 
-Globals_t & libkfsio::globals()
+using namespace KFS::libkfsio;
+
+Globals_t & KFS::libkfsio::globals()
 {
     static Globals_t g;
     return g;
@@ -37,7 +38,7 @@ Globals_t & libkfsio::globals()
 // Initialize the globals once.
 //
 void
-libkfsio::InitGlobals()
+KFS::libkfsio::InitGlobals()
 {
     static bool calledOnce = false;
 

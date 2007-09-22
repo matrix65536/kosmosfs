@@ -38,6 +38,9 @@
 #include "KfsOps.h"
 #include "Logger.h"
 
+namespace KFS
+{
+
 /// Encapsulate a chunk file descriptor and information about the
 /// chunk such as name and version #.
 struct ChunkInfoHandle_t {
@@ -264,7 +267,7 @@ private:
 
     /// See the comments in KfsOps.cc near WritePreapreOp related to write handling
     int64_t mWriteId;
-    list<WriteOp *> mPendingWrites;
+    std::list<WriteOp *> mPendingWrites;
 
     /// on a timeout, the timeout interface will force a checkpoint
     ChunkManagerTimeoutImpl	*mChunkManagerTimeoutImpl;
@@ -319,6 +322,11 @@ private:
 
     /// If we have too many open fd's close out whatever we can.
     void CleanupInactiveFds();
+
+    /// Notify the metaserver that chunk chunkId is corrupted; the
+    /// metaserver will re-replicate this chunk and for now, won't
+    /// send us traffic for this chunk.
+    void NotifyMetaCorruptedChunk(kfsChunkId_t chunkId);
 };
 
 /// A Timeout interface object for taking checkpoints on the
@@ -340,5 +348,7 @@ private:
 };
 
 extern ChunkManager gChunkManager;
+
+}
 
 #endif // _CHUNKMANAGER_H

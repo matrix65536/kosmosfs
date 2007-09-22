@@ -32,13 +32,12 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
-using std::vector;
-using std::string;
-using std::ostringstream;
-using std::ofstream;
 
+namespace KFS
+{
 // forward declaration to get compiler happy
 struct KfsOp;
+}
 
 #include "libkfsIO/KfsCallbackObj.h"
 #include "libkfsIO/IOBuffer.h"
@@ -48,6 +47,9 @@ struct KfsOp;
 
 #include "common/properties.h"
 #include "ClientSM.h"
+
+namespace KFS
+{
 
 enum KfsOp_t {
     CMD_UNKNOWN,
@@ -61,6 +63,7 @@ enum KfsOp_t {
     CMD_STALE_CHUNKS,
     // Chunk server->Meta server ops
     CMD_META_HELLO,
+    CMD_CORRUPT_CHUNK,
     CMD_LEASE_RENEW,
 
     // Client -> Chunkserver ops
@@ -100,18 +103,18 @@ struct KfsOp : public KfsCallbackObj {
     }
     // to allow dynamic-type-casting, make the destructor virtual
     virtual ~KfsOp() { };
-    virtual void Request(ostringstream &os) {
+    virtual void Request(std::ostringstream &os) {
         // fill this method if the op requires a message to be sent to a server.
         (void) os;
     };
     // After an op finishes execution, this method generates the
     // response that should be sent back to the client.  The response
     // string that is generated is based on the KFS protocol.
-    virtual void Response(ostringstream &os);
+    virtual void Response(std::ostringstream &os);
     virtual void Execute() = 0;
-    virtual void Log(ofstream &ofs) { };
+    virtual void Log(std::ofstream &ofs) { };
     // Return info. about op for debugging
-    virtual string Show() const = 0;
+    virtual std::string Show() const = 0;
     // If the execution of an op suspends and then resumes and
     // finishes, this method should be invoked to signify completion.
     virtual int HandleDone(int code, void *data);
@@ -133,11 +136,11 @@ struct AllocChunkOp : public KfsOp {
     {
         // All inputs will be parsed in
     }
-    void Response(ostringstream &os);
+    void Response(std::ostringstream &os);
     void Execute();
-    void Log(ofstream &ofs);
-    string Show() const {
-        ostringstream os;
+    void Log(std::ofstream &ofs);
+    std::string Show() const {
+        std::ostringstream os;
 
         os << "alloc-chunk: fileid = " << fileId << " chunkid = " << chunkId;
         os << " chunkvers = " << chunkVersion << " leaseid = " << leaseId;
@@ -155,9 +158,9 @@ struct ChangeChunkVersOp : public KfsOp {
 
     }
     void Execute();
-    void Log(ofstream &ofs);
-    string Show() const {
-        ostringstream os;
+    void Log(std::ofstream &ofs);
+    std::string Show() const {
+        std::ostringstream os;
 
         os << "change-chunk-vers: fileid = " << fileId << " chunkid = " << chunkId;
         os << " chunkvers = " << chunkVersion;
@@ -173,9 +176,9 @@ struct DeleteChunkOp : public KfsOp {
 
     }
     void Execute();
-    void Log(ofstream &ofs);
-    string Show() const {
-        ostringstream os;
+    void Log(std::ofstream &ofs);
+    std::string Show() const {
+        std::ostringstream os;
 
         os << "delete-chunk: " << " chunkid = " << chunkId;
         return os.str();
@@ -191,9 +194,9 @@ struct TruncateChunkOp : public KfsOp {
 
     }
     void Execute();
-    void Log(ofstream &ofs);
-    string Show() const {
-        ostringstream os;
+    void Log(std::ofstream &ofs);
+    std::string Show() const {
+        std::ostringstream os;
 
         os << "truncate-chunk: " << " chunkid = " << chunkId;
         os << " chunksize: " << chunkSize;
@@ -217,11 +220,11 @@ struct ReplicateChunkOp : public KfsOp {
     ReplicateChunkOp(kfsSeq_t s) :
         KfsOp(CMD_REPLICATE_CHUNK, s) { }
     void Execute();
-    void Response(ostringstream &os);
+    void Response(std::ostringstream &os);
     int HandleDone(int code, void *data);
-    void Log(ofstream &ofs);
-    string Show() const {
-        ostringstream os;
+    void Log(std::ofstream &ofs);
+    std::string Show() const {
+        std::ostringstream os;
 
         os << "replicate-chunk: " << " chunkid = " << chunkId;
         return os.str();
@@ -237,8 +240,8 @@ struct HeartbeatOp : public KfsOp {
         // the fields will be filled in when we execute
     }
     void Execute();
-    void Response(ostringstream &os);
-    string Show() const {
+    void Response(std::ostringstream &os);
+    std::string Show() const {
         return "meta-server heartbeat";
     }
 };
@@ -246,16 +249,16 @@ struct HeartbeatOp : public KfsOp {
 struct StaleChunksOp : public KfsOp {
     int contentLength; /* length of data that identifies the stale chunks */
     int numStaleChunks; /* what the server tells us */
-    vector<kfsChunkId_t> staleChunkIds; /* data we parse out */
+    std::vector<kfsChunkId_t> staleChunkIds; /* data we parse out */
     StaleChunksOp(kfsSeq_t s) :
         KfsOp(CMD_STALE_CHUNKS, s)
     { 
     
     }
     void Execute();
-    void Response(ostringstream &os);
-    string Show() const {
-        ostringstream os;
+    void Response(std::ostringstream &os);
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "stale chunks: " << " # stale: " << numStaleChunks;
         return os.str();
@@ -271,8 +274,8 @@ struct OpenOp : public KfsOp {
 
     }
     void Execute();
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "open: chunkId = " << chunkId;
         return os.str();
@@ -287,8 +290,8 @@ struct CloseOp : public KfsOp {
 
     }
     void Execute();
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "close: chunkId = " << chunkId;
         return os.str();
@@ -318,10 +321,10 @@ struct WritePrepareOp : public KfsOp {
             delete dataBuf;
     }
 
-    void Response(ostringstream &os);
+    void Response(std::ostringstream &os);
     void Execute();
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "write-prepare: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
         os << " offset: " << offset << " numBytes: " << numBytes;
@@ -343,12 +346,12 @@ struct WriteCommitOp : public KfsOp {
     }
     ~WriteCommitOp();
 
-    void Request(ostringstream &os);
-    void Response(ostringstream &os);
+    void Request(std::ostringstream &os);
+    void Response(std::ostringstream &os);
     void Execute();
     int HandleDone(int code, void *data);
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "write-commit: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
         return os.str();
@@ -364,7 +367,7 @@ struct WriteOp : public KfsOp {
     DiskConnectionPtr diskConnection; /* disk connection used for writing data */
     IOBuffer *dataBuf; /* buffer with the data to be written */
     size_t	 chunkSize; /* store the chunk size for logging purposes */
-    vector<uint32_t> checksums; /* store the checksum for logging purposes */
+    std::vector<uint32_t> checksums; /* store the checksum for logging purposes */
     /* 
      * for writes that are smaller than a checksum block, we need to
      * read the whole block in, compute the new checksum and then write
@@ -396,13 +399,13 @@ struct WriteOp : public KfsOp {
         status = numBytesIO = 0;
         SET_HANDLER(this, &WriteOp::HandleWriteDone);
     }
-    void Response(ostringstream &os) { };
+    void Response(std::ostringstream &os) { };
     void Execute();
-    void Log(ofstream &ofs);
+    void Log(std::ofstream &ofs);
     int HandleWriteDone(int code, void *data);    
     int HandleSyncDone(int code, void *data);
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "write: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
         os << " offset: " << offset << " numBytes: " << numBytes;
@@ -422,8 +425,8 @@ struct RemoteWriteInfo {
     // copy constructor does the "right" thing.
     boost::shared_ptr<WriteCommitOp> wc;
     RemoteWriteInfo() : writeId(-1) { }
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << " location= " << location.ToString() << " writeId = " << writeId;
         return os.str();
@@ -431,9 +434,9 @@ struct RemoteWriteInfo {
 };
 
 class ShowRemoteWriteInfo {
-    ostringstream &os;
+    std::ostringstream &os;
 public:
-    ShowRemoteWriteInfo(ostringstream &o) : os(o) { }
+    ShowRemoteWriteInfo(std::ostringstream &o) : os(o) { }
     void operator() (const RemoteWriteInfo &r) {
         os << r.Show() << ' ';
     }
@@ -443,21 +446,21 @@ public:
 struct WriteSyncOp : public KfsOp {
     kfsChunkId_t chunkId;    
     int64_t chunkVersion;
-    vector<RemoteWriteInfo> remoteWriteInfo;
-    vector<RemoteWriteInfo>::size_type numDone;
+    std::vector<RemoteWriteInfo> remoteWriteInfo;
+    std::vector<RemoteWriteInfo>::size_type numDone;
 
     WriteSyncOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, int32_t n, 
-                const string &writeInfo);
+                const std::string &writeInfo);
 
-    void Response(ostringstream &os);
+    void Response(std::ostringstream &os);
     void Execute();
     // on a write sync, first do the write locally.  after that is
     // done, send out requests to remote servers to do the write.
     // after they finish, notify the client
     int HandleLocalDone(int code, void *data);
     int HandleDone(int code, void *data);    
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "write-sync: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
         for_each(remoteWriteInfo.begin(), remoteWriteInfo.end(),
@@ -501,12 +504,12 @@ struct ReadOp : public KfsOp {
             diskConnection->Close();
     }
 
-    void Request(ostringstream &os);
-    void Response(ostringstream &os);
+    void Request(std::ostringstream &os);
+    void Response(std::ostringstream &os);
     void Execute();
     int HandleDone(int code, void *data);
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "read: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
         os << " offset: " << offset << " numBytes: " << numBytes;
@@ -524,11 +527,11 @@ struct SizeOp : public KfsOp {
     SizeOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
         KfsOp(CMD_SIZE, s), chunkId(c), chunkVersion(v) { }
 
-    void Request(ostringstream &os);
-    void Response(ostringstream &os);
+    void Request(std::ostringstream &os);
+    void Response(std::ostringstream &os);
     void Execute();
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
         
         os << "size: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
         return os.str();
@@ -541,21 +544,21 @@ struct PingOp : public KfsOp {
     size_t usedSpace;
     PingOp(kfsSeq_t s) :
         KfsOp(CMD_PING, s) { }
-    void Response(ostringstream &os);
+    void Response(std::ostringstream &os);
     void Execute();
-    string Show() const {
+    std::string Show() const {
         return "monitoring ping";
     }
 };
 
 // used to extract out all the counters we have
 struct StatsOp : public KfsOp {
-    string stats; // result
+    std::string stats; // result
     StatsOp(kfsSeq_t s) :
         KfsOp(CMD_STATS, s) { }
-    void Response(ostringstream &os);
+    void Response(std::ostringstream &os);
     void Execute();
-    string Show() const {
+    std::string Show() const {
         return "monitoring stats";
     }
 };
@@ -568,12 +571,12 @@ struct StatsOp : public KfsOp {
 // that point code will need to come in for ops and such.
 
 struct CheckpointOp : public KfsOp {
-    ostringstream data; // the data that needs to be checkpointed
+    std::ostringstream data; // the data that needs to be checkpointed
     CheckpointOp(kfsSeq_t s) :
         KfsOp(CMD_CHECKPOINT, s) { }
-    void Response(ostringstream &os) { };
+    void Response(std::ostringstream &os) { };
     void Execute() { };
-    string Show() const {
+    std::string Show() const {
         return "internal: checkpoint";
     }
 };
@@ -581,18 +584,18 @@ struct CheckpointOp : public KfsOp {
 struct LeaseRenewOp : public KfsOp {
     kfsChunkId_t chunkId;
     int64_t leaseId;
-    string leaseType;
-    LeaseRenewOp(kfsSeq_t s, kfsChunkId_t c, int64_t l, string t) :
+    std::string leaseType;
+    LeaseRenewOp(kfsSeq_t s, kfsChunkId_t c, int64_t l, std::string t) :
         KfsOp(CMD_LEASE_RENEW, s), chunkId(c), leaseId(l), leaseType(t)
     {
         SET_HANDLER(this, &LeaseRenewOp::HandleDone);
     }
-    void Request(ostringstream &os);
+    void Request(std::ostringstream &os);
     // To be called whenever we get a reply from the server
     int HandleDone(int code, void *data);
     void Execute() { };
-    string Show() const {
-        ostringstream os;
+    std::string Show() const {
+        std::ostringstream os;
 
         os << "lease-renew: " << " chunkid = " << chunkId;
         os << " leaseId: " << leaseId << " type: " << leaseType;
@@ -605,16 +608,38 @@ struct HelloMetaOp : public KfsOp {
     ServerLocation myLocation;
     size_t totalSpace;
     size_t usedSpace;
-    vector<ChunkInfo_t> chunks;
+    std::vector<ChunkInfo_t> chunks;
     HelloMetaOp(kfsSeq_t s, ServerLocation &l) :
         KfsOp(CMD_META_HELLO, s), myLocation(l) {
     }
     void Execute() { }
-    void Request(ostringstream &os);
-    string Show() const {
-        ostringstream os;
+    void Request(std::ostringstream &os);
+    std::string Show() const {
+        std::ostringstream os;
 
         os << "meta-hello: " << " mylocation = " << myLocation.ToString();
+        return os.str();
+    }
+};
+
+struct CorruptChunkOp : public KfsOp {
+    kfsFileId_t fid; // input: fid whose chunk is bad
+    kfsChunkId_t chunkId; // input: chunkid of the corrupted chunk
+
+    CorruptChunkOp(kfsSeq_t s, kfsFileId_t f, kfsChunkId_t c) :
+        KfsOp(CMD_CORRUPT_CHUNK, s), fid(f), chunkId(c)
+    {
+        SET_HANDLER(this, &CorruptChunkOp::HandleDone);
+    }
+    void Request(std::ostringstream &os);
+    // To be called whenever we get a reply from the server
+    int HandleDone(int code, void *data);
+    void Execute() { };
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "corrupt chunk: " << " fileid = " << fid 
+           << " chunkid = " << chunkId;
         return os.str();
     }
 };
@@ -634,5 +659,7 @@ extern void InitParseHandlers();
 extern void RegisterCounters();
 
 extern int ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res);
+
+}
 
 #endif // CHUNKSERVER_KFSOPS_H

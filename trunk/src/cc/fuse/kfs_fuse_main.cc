@@ -31,8 +31,11 @@ extern "C" {
 #include <sys/stat.h>
 }
 
+using std::vector;
+using namespace KFS;
+
 static char *FUSE_KFS_PROPERTIES = "./kfs.prp";
-static KfsClient *client;
+static KFS::KfsClient *client;
 
 void *
 fuse_init()

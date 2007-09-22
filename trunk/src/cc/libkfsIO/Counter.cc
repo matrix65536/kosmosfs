@@ -26,6 +26,8 @@
 
 #include "Counter.h"
 
+using namespace KFS;
+
 /// A few commonly needed counters
 Counter gOpenNetFds("Open network fds");
 Counter gOpenDiskFds("Open disk fds");

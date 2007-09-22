@@ -37,14 +37,15 @@ extern "C" {
 #include "ChunkServer.h"
 #include "ChunkManager.h"
 
-using namespace libkfsio;
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 // all the globals we need...
-ChunkServer gChunkServer;
-ChunkManager gChunkManager;
-Logger gLogger;
-MetaServerSM gMetaServerSM;
-ClientManager gClientManager;
+ChunkServer KFS::gChunkServer;
+ChunkManager KFS::gChunkManager;
+Logger KFS::gLogger;
+MetaServerSM KFS::gMetaServerSM;
+ClientManager KFS::gClientManager;
 
 const char *gChunksDir, *gLogDir;
 ServerLocation gMetaServerLoc;

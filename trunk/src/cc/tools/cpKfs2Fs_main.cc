@@ -47,6 +47,7 @@ using std::cout;
 using std::endl;
 using std::ofstream;
 
+using namespace KFS;
 KfsClient *gKfsClient;
 
 // Given a kfsdirname, restore it to dirname.  Dirname will be created
@@ -91,7 +92,7 @@ main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                COSMIX_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }

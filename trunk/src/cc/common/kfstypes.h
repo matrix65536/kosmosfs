@@ -49,7 +49,8 @@ typedef int64_t kfsSeq_t;
 
 const size_t CHUNKSIZE = 1u << 26; //!< (64MB)
 const int MAX_RPC_HEADER_LEN = 1024; //!< Max length of header in RPC req/response
-const unsigned short int NUM_REPLICAS_PER_FILE = 3; //!< default degree of replication
+const short int NUM_REPLICAS_PER_FILE = 3; //!< default degree of replication
+const short int MAX_REPLICAS_PER_FILE = 64; //!< max. replicas per chunk of file
 
 //!< Default lease interval of 1 min
 const int LEASE_INTERVAL_SECS = 60;

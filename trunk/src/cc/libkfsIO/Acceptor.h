@@ -29,6 +29,9 @@
 #include "KfsCallbackObj.h"
 #include "NetConnection.h"
 
+namespace KFS
+{
+
 ///
 /// \file Acceptor.h
 /// \brief Mechanism for accepting TCP connections.
@@ -96,5 +99,6 @@ private:
     IAcceptorOwner	*mAcceptorOwner;
 };
 
+}
 
 #endif // _LIBIO_ACCEPTOR_H

@@ -33,13 +33,16 @@
 
 #include "libkfsIO/NetManager.h"
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 #include <algorithm>
 #include <sstream>
 using std::ostringstream;
 using std::istringstream;
 using std::find_if;
+using std::list;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 #include <boost/scoped_array.hpp>
 using boost::scoped_array;
@@ -67,7 +70,7 @@ void
 MetaServerSM::Timeout()
 {
     if (!mNetConnection) {
-        COSMIX_LOG_WARN("Connection to meta broke. Reconnecting...");
+        KFS_LOG_WARN("Connection to meta broke. Reconnecting...");
         if (Connect() < 0) {
             return;
         }
@@ -85,16 +88,16 @@ MetaServerSM::Connect()
         globals().netManager.RegisterTimeoutHandler(mTimer);
     }
 
-    COSMIX_LOG_DEBUG("Trying to connect to: %s:%d",
+    KFS_LOG_DEBUG("Trying to connect to: %s:%d",
                      mLocation.hostname.c_str(), mLocation.port);
 
     sock = new TcpSocket();
     if (sock->Connect(mLocation) < 0) {
-        COSMIX_LOG_DEBUG("Reconnect failed...");
+        KFS_LOG_DEBUG("Reconnect failed...");
         delete sock;
         return -1;
     }
-    COSMIX_LOG_INFO("Connect to metaserver (%s) succeeded...",
+    KFS_LOG_INFO("Connect to metaserver (%s) succeeded...",
                     mLocation.ToString().c_str());
 
     mNetConnection.reset(new NetConnection(sock, this));
@@ -116,7 +119,7 @@ MetaServerSM::SendHello(int chunkServerPort)
 
     if (!mNetConnection) {
         if (Connect() < 0) {
-            COSMIX_LOG_DEBUG("Unable to connect to meta server");
+            KFS_LOG_DEBUG("Unable to connect to meta server");
             return -1;
         }
     }
@@ -134,7 +137,7 @@ MetaServerSM::SendHello(int chunkServerPort)
 
     mSentHello = true;
 
-    COSMIX_LOG_INFO("Sent hello to meta server: %s", op.Show().c_str());
+    KFS_LOG_INFO("Sent hello to meta server: %s", op.Show().c_str());
 
     ResubmitPendingOps();
 
@@ -180,7 +183,7 @@ MetaServerSM::HandleRequest(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	COSMIX_LOG_DEBUG("Closing connection");
+	KFS_LOG_DEBUG("Closing connection");
 
 	if (mNetConnection)
 	    mNetConnection->Close();
@@ -271,7 +274,7 @@ MetaServerSM::HandleCmd(IOBuffer *iobuf, int cmdLen)
     if (ParseCommand(buf.get(), cmdLen, &op) != 0) {
         iobuf->Consume(cmdLen);
 
-        COSMIX_LOG_DEBUG("Aye?: %s", buf.get());
+        KFS_LOG_DEBUG("Aye?: %s", buf.get());
         // got a bogus command
         return;
     }
@@ -304,7 +307,7 @@ MetaServerSM::HandleCmd(IOBuffer *iobuf, int cmdLen)
     op->Execute();
     
     if (iobuf->BytesConsumable() > 0) {
-        COSMIX_LOG_DEBUG("More command data likely available for chunk: ");
+        KFS_LOG_DEBUG("More command data likely available for chunk: ");
     }
 }
 
@@ -322,7 +325,7 @@ MetaServerSM::SendResponse(KfsOp *op)
     op->Response(os);
 
 /*
-    COSMIX_LOG_DEBUG("Command %d: Response: \n%s\n", 
+    KFS_LOG_DEBUG("Command %d: Response: \n%s\n", 
                      op->op, os.str().c_str());
 */
 
@@ -340,7 +343,7 @@ MetaServerSM::SubmitOp(KfsOp *op)
 
     // XXX: If the server connection is dead, hold on
     if ((!mNetConnection) || (!mSentHello)) {
-        COSMIX_LOG_DEBUG("Metaserver connection is down...will dispatch later");
+        KFS_LOG_DEBUG("Metaserver connection is down...will dispatch later");
         return;
     }
     op->Request(os);

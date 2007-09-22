@@ -26,13 +26,15 @@
 
 #include "LeaseClerk.h"
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 #include "ChunkServer.h"
 #include "ChunkManager.h"
 #include "MetaServerSM.h"
 
-LeaseClerk gLeaseClerk;
+using namespace KFS;
+using namespace KFS::libkfsio;
+
+LeaseClerk KFS::gLeaseClerk;
 
 /// 0 is a special chunkid that is not used in the system.  so,
 /// use that as a key to signify cleanup.
@@ -65,7 +67,7 @@ LeaseClerk::RegisterLease(kfsChunkId_t chunkId, int64_t leaseId)
                                 LEASE_RENEW_INTERVAL_MSECS, false));
     mLeases[chunkId] = lease;
     globals().eventManager.Schedule(lease.timer, LEASE_RENEW_INTERVAL_MSECS);
-    COSMIX_LOG_DEBUG("Registered lease: chunk=%ld, lease=%ld",
+    KFS_LOG_DEBUG("Registered lease: chunk=%ld, lease=%ld",
                      chunkId, leaseId);
 }
 
@@ -78,7 +80,7 @@ LeaseClerk::UnRegisterLease(kfsChunkId_t chunkId)
     if (iter != mLeases.end()) {
         mLeases.erase(iter);
     }
-    COSMIX_LOG_DEBUG("Lease for chunk = %ld unregistered",
+    KFS_LOG_DEBUG("Lease for chunk = %ld unregistered",
                      chunkId);
 
 }
@@ -128,7 +130,7 @@ LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
     LeaseInfo_t lease = iter->second;
 
     if (chunkId != 0) {
-        COSMIX_LOG_DEBUG("Lease for chunk = %ld renewed",
+        KFS_LOG_DEBUG("Lease for chunk = %ld renewed",
                          chunkId);
     }
     
@@ -180,13 +182,13 @@ LeaseClerk::HandleEvent(int code, void *data)
 	    LeaseRenewOp *op = new LeaseRenewOp(-1, chunkId, lease.leaseId,
 			"WRITE_LEASE");
 
-	    COSMIX_LOG_DEBUG("renewing lease for: chunk=%ld, lease=%ld",
+	    KFS_LOG_DEBUG("renewing lease for: chunk=%ld, lease=%ld",
 	    chunkId, lease.leaseId);
 
 	    op->clnt = this;
 	    gMetaServerSM.SubmitOp(op);
 	} else {
-	    COSMIX_LOG_DEBUG("not renewing lease for: chunk=%ld, lease=%ld",
+	    KFS_LOG_DEBUG("not renewing lease for: chunk=%ld, lease=%ld",
 	    chunkId, lease.leaseId);
 	    // else...need to cleanup expired leases
 	}

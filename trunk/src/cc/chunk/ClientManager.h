@@ -29,6 +29,9 @@
 #include "libkfsIO/Acceptor.h"
 #include "ClientSM.h"
 
+namespace KFS
+{
+
 class ClientManager : public IAcceptorOwner {
 public:
     ClientManager() {
@@ -45,10 +48,12 @@ public:
     }
     void Remove(ClientSM *clnt);
 private:
-    list<ClientSM *> mClients;
+    std::list<ClientSM *> mClients;
     Acceptor	*mAcceptor;
 };
 
 extern ClientManager gClientManager;
+
+}
 
 #endif // _CLIENTMANAGER_H

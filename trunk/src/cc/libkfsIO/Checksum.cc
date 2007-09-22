@@ -31,22 +31,25 @@
 #include <vector>
 using std::min;
 using std::vector;
+using std::list;
+
+using namespace KFS;
 
 uint32_t
-OffsetToChecksumBlockNum(off_t offset)
+KFS::OffsetToChecksumBlockNum(off_t offset)
 {
     return offset / CHECKSUM_BLOCKSIZE;
 }
 
 uint32_t
-OffsetToChecksumBlockStart(off_t offset)
+KFS::OffsetToChecksumBlockStart(off_t offset)
 {
     return (offset / CHECKSUM_BLOCKSIZE) *
         CHECKSUM_BLOCKSIZE;
 }
 
 uint32_t
-OffsetToChecksumBlockEnd(off_t offset)
+KFS::OffsetToChecksumBlockEnd(off_t offset)
 {
     return ((offset / CHECKSUM_BLOCKSIZE) + 1) *
         CHECKSUM_BLOCKSIZE;
@@ -58,7 +61,7 @@ OffsetToChecksumBlockEnd(off_t offset)
 /// Given a block of data, compute its checksum.
 ///
 uint32_t
-ComputeBlockChecksum(IOBuffer *data, size_t len)
+KFS::ComputeBlockChecksum(IOBuffer *data, size_t len)
 {
     uint32_t a = 1, b = 0;
     int count = 0;
@@ -105,7 +108,7 @@ ComputeBlockChecksum(IOBuffer *data, size_t len)
 /// individual CHECKSUM_BLOCKSIZE's and return them.
 ///
 vector<uint32_t>
-ComputeChecksums(IOBuffer *data, size_t len)
+KFS::ComputeChecksums(IOBuffer *data, size_t len)
 {
     vector<uint32_t> cksums;
     list<IOBufferDataPtr>::iterator iter = data->mBuf.begin();

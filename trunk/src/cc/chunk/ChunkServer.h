@@ -38,6 +38,8 @@
 #include "MetaServerSM.h"
 #include "RemoteSyncSM.h"
 
+namespace KFS
+{
 class ChunkServer {
 public:
     ChunkServer() { };
@@ -57,10 +59,11 @@ private:
     int mClientAcceptPort;
     
     ServerLocation mLocation;
-    list<RemoteSyncSMPtr> mRemoteSyncers;
+    std::list<RemoteSyncSMPtr> mRemoteSyncers;
 
 };
 
 extern ChunkServer gChunkServer;
+}
 
 #endif // _CHUNKSERVER_H

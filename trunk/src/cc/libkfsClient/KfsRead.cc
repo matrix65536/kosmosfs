@@ -90,7 +90,7 @@ KfsClient::Read(int fd, char *buf, size_t numBytes)
 	    break;
 
 	if (pos->fileOffset >= (off_t) fa->fileSize) {
-	    COSMIX_LOG_DEBUG("Current pointer (%ld) is past EOF (%ld) ...so, done",
+	    KFS_LOG_DEBUG("Current pointer (%ld) is past EOF (%ld) ...so, done",
 	                     pos->fileOffset, fa->fileSize);
 	    break;
 	}
@@ -105,7 +105,7 @@ KfsClient::Read(int fd, char *buf, size_t numBytes)
     }
 
     /*
-    COSMIX_LOG_DEBUG("----Read done: asked: %d, got: %d----------",
+    KFS_LOG_DEBUG("----Read done: asked: %d, got: %d----------",
 	             numBytes, nread);
     */
     return nread;
@@ -220,7 +220,7 @@ KfsClient::ReadChunk(int fd, char *buf, size_t numBytes)
             break;
         }
 
-        COSMIX_LOG_DEBUG("Need to retry read...");
+        KFS_LOG_DEBUG("Need to retry read...");
         // Ok...so, we need to retry the read.  so, re-determine where
         // the chunk went and then retry.
         chunk->chunkId = -1;
@@ -316,7 +316,7 @@ KfsClient::ZeroFillBuf(int fd, char *buf, size_t numBytes)
     // Fill in 0's based on space in the buffer....
     numIO = min(numIO, numBytes);
 
-    // COSMIX_LOG_DEBUG("Zero-filling %d bytes", numIO);
+    // KFS_LOG_DEBUG("Zero-filling %d bytes", numIO);
 
     memset(buf, 0, numIO);
     return numIO;
@@ -349,7 +349,7 @@ KfsClient::CopyFromChunkBuf(int fd, char *buf, size_t numBytes)
     // Figure out where the data we want copied out starts
     memcpy(buf, &cb->buf[start], numIO);
 
-    // COSMIX_LOG_DEBUG("Copying out data from chunk buf...%d bytes", numIO);
+    // KFS_LOG_DEBUG("Copying out data from chunk buf...%d bytes", numIO);
 
     return numIO;
 }
@@ -393,21 +393,30 @@ KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
 
     ssize_t numIO = DoPipelinedRead(ops, pos->preferredServer);
     if (numIO < 0) {
-	COSMIX_LOG_DEBUG("Pipelined read from server failed...");
+	KFS_LOG_DEBUG("Pipelined read from server failed...");
     }
+
+    int retryStatus = 0;
 
     for (vector<KfsOp *>::size_type i = 0; i < ops.size(); ++i) {
 	ReadOp *op = static_cast<ReadOp *> (ops[i]);
-	if (op->status < 0)
+	if (op->status < 0) {
+            if (NeedToRetryRead(op->status))
+                retryStatus = op->status;
 	    numIO = op->status;
+        }
 	else if (numIO >= 0)
 	    numIO += op->status;
 	op->ReleaseContentBuf();
 	delete op;
     }
 
-    COSMIX_LOG_DEBUG("Read data from server...%d bytes",
-	             numIO);
+    // If the op needs to be retried, pass that up
+    if (retryStatus != 0)
+        numIO = retryStatus;
+
+    KFS_LOG_DEBUG("Read data from server...%d bytes",
+                  numIO);
 
     return numIO;
 }

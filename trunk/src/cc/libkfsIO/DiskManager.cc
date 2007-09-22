@@ -38,7 +38,9 @@
 
 #include "common/log.h"
 
-using namespace libkfsio;
+using std::list;
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 ///
 /// \file DiskManager.cc
@@ -95,7 +97,7 @@ DiskManager::Timeout()
             case 0:
             default:
                 if (aioStatus != 0) {
-                    COSMIX_LOG_DEBUG("AIO for event: %s, returned (errno value): %d", 
+                    KFS_LOG_DEBUG("AIO for event: %s, returned (errno value): %d", 
                                      event->ToString(),
                                      aioStatus);
                 }
@@ -104,7 +106,7 @@ DiskManager::Timeout()
                 // if aioRes = -1, aioStatus contains the value of errno
                 
                 /*
-                COSMIX_LOG_INFO("AIO done for event: %s (bytes = %d)", 
+                KFS_LOG_INFO("AIO done for event: %s (bytes = %d)", 
                                 event->ToString(),
                                 event->aio_cb.aio_nbytes);
                 */
@@ -139,7 +141,7 @@ DiskManager::Read(DiskConnection *conn, int fd,
     struct aiocb *aio_cb = &event->aio_cb;
 
 /*
-    COSMIX_LOG_DEBUG("reading from fd=%d at offset=%d, numbytes = %d",
+    KFS_LOG_DEBUG("reading from fd=%d at offset=%d, numbytes = %d",
                      fd, offset, numBytes);
 */
 
@@ -171,7 +173,7 @@ DiskManager::Write(DiskConnection *conn, int fd,
     struct aiocb *aio_cb = &event->aio_cb;
 
 /*
-    COSMIX_LOG_DEBUG("writing at fd=%d at offset=%d, numbytes = %d",
+    KFS_LOG_DEBUG("writing at fd=%d at offset=%d, numbytes = %d",
                      fd, offset, numBytes);
 */
 
@@ -205,7 +207,7 @@ DiskManager::Sync(DiskConnection *conn, int fd,
     DiskEventPtr event(new DiskEvent_t(conn->shared_from_this(), OP_SYNC));
     struct aiocb *aio_cb = &event->aio_cb;
 
-    COSMIX_LOG_DEBUG("syncing fd = %d", fd);
+    KFS_LOG_DEBUG("syncing fd = %d", fd);
 
     // schedule a datasync request
     aio_cb->aio_fildes = fd;

@@ -34,7 +34,9 @@
 #include <cassert>
 #include "TcpSocket.h"
 #include <string>
-using std::string;
+
+namespace KFS
+{
 
 class BufferedSocket : public TcpSocket {
 public:
@@ -49,7 +51,7 @@ public:
     /// @param[out] result   The string that corresponds to data read
     /// from the network
     /// @retval # of bytes read; -1 on error
-    int ReadLine(string &result);
+    int ReadLine(std::string &result);
 
     /// Synchronously (blocking) receive for the desired # of bytes.
     /// Note that we first pull data out the buffer and if there is
@@ -101,5 +103,7 @@ private:
     }
 
 };
+
+}
 
 #endif // LIBKFSIO_BUFFEREDSOCKET_H

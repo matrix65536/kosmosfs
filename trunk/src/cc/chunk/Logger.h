@@ -30,8 +30,6 @@
 
 #include <fstream>
 #include <string>
-using std::ofstream;
-using std::string;
 
 #include "libkfsIO/ITimeout.h"
 #include "libkfsIO/Chunk.h"
@@ -40,7 +38,9 @@ using std::string;
 
 #include "meta/queue.h"
 #include "meta/thread.h"
-using namespace KFS;
+
+namespace KFS
+{
 
 class LoggerTimeoutImpl;
 
@@ -84,12 +84,12 @@ private:
     /// The path to the directory for writing out logs
     const char *mLogDir;
     /// The name of the log file
-    string mLogFilename;
+    std::string mLogFilename;
     /// counter that tracks the generation # of the log file
     long long mLogGenNum;
 
     /// The handle to the log file
-    ofstream mFile;
+    std::ofstream mFile;
     /// pending ops that need to be logged
     MetaQueue<KfsOp> mPending;
     /// ops for which logging is done
@@ -109,15 +109,15 @@ private:
 
     /// Helper function that builds the log file's name using the generation #
     /// @retval The name of the log file that includes the generation #
-    string MakeLogFilename();
+    std::string MakeLogFilename();
 
     /// Helper function that builds the ckpt file's name using the generation #
     /// @retval The name of the ckpt file that includes the generation #
-    string MakeCkptFilename();
+    std::string MakeCkptFilename();
 
     /// Helper function that builds the "latest" ckpt file's name
     /// @retval The name of the "latest" ckpt file
-    string MakeLatestCkptFilename();
+    std::string MakeLatestCkptFilename();
 
     /// Given a line from a checkpoint file, parse out the ChunkInfo_t
     /// structure from it.
@@ -151,5 +151,7 @@ private:
 };
 
 extern Logger gLogger;
+
+}
 
 #endif // CHUNKSERVER_LOGGER_H

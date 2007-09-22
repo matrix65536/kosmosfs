@@ -25,7 +25,10 @@
 
 #include "EventManager.h"
 #include "Globals.h"
-using namespace libkfsio;
+
+using std::list;
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 EventManager::EventManager()
 {
@@ -95,7 +98,7 @@ void EventManager::Timeout()
 
     if ((mLongtermEvents.size() > 0) &&
         (msElapsed - EVENT_GRANULARITY_MS >= 3 * EVENT_GRANULARITY_MS)) {
-        COSMIX_LOG_DEBUG("Elapsed ms = %d", msElapsed);
+        KFS_LOG_DEBUG("Elapsed ms = %d", msElapsed);
     }
     // Now, pull all the long-term events
     iter = mLongtermEvents.begin();

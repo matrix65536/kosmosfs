@@ -28,6 +28,8 @@
 
 #include <iostream>
 
+namespace KFS
+{
 ///
 /// \file KfsCallbackObj.h
 /// \brief Callback/Continuations based programming model
@@ -137,5 +139,6 @@ private:
     ObjectMethodBase	*mObjMeth;
 };
 
+}
 
 #endif // _LIBIO_KFSCALLBACKOBJ_H

@@ -41,11 +41,12 @@ extern "C" {
 
 #include <string>
 #include <sstream>
-using std::string;
-using std::ostringstream;
+#include <vector>
 
 #include "common/kfsdecls.h"
-using namespace KFS;
+
+namespace KFS
+{
 
 ///
 /// \file TcpSocket.h
@@ -130,5 +131,13 @@ private:
 };
 
 typedef boost::shared_ptr<TcpSocket> TcpSocketPtr;
+
+///
+/// Send the data to the specified set of targets concurrently.
+/// @retval Returns 0 on success; -1 on failure.
+///   Here, success means we sent the data to ALL the targets; -1 if
+/// there was a connection break.
+int Simulcast(const char *buf, int bufLen, std::vector<TcpSocket *> &targets);
+}
 
 #endif // _LIBIO_TCP_SOCKET_H

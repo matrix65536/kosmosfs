@@ -175,12 +175,12 @@ KfsClient::Cd(const char *pathname)
     int status = Stat(path.c_str(), s);
 
     if (status < 0) {
-	COSMIX_LOG_DEBUG("Non-existent path: %s", pathname);
+	KFS_LOG_DEBUG("Non-existent path: %s", pathname);
 	return -ENOENT;
     }
 
     if (!S_ISDIR(s.st_mode)) {
-	COSMIX_LOG_DEBUG("Non-existent dir: %s", pathname);
+	KFS_LOG_DEBUG("Non-existent dir: %s", pathname);
 	return -ENOTDIR;
     }
 
@@ -334,7 +334,7 @@ KfsClient::Readdir(const char *pathname, vector<string> &result)
 	// ist >> result[i];
 	ist.getline(filename, MAX_FILENAME_LEN);
 	result[i] = filename;
-        COSMIX_LOG_DEBUG("Entry: %s", filename);
+        KFS_LOG_DEBUG("Entry: %s", filename);
     }
     sort(result.begin(), result.end());
     return res;
@@ -379,7 +379,7 @@ KfsClient::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result)
     for (int i = 0; i < op.numEntries; ++i) {
 	ist.getline(filename, MAX_FILENAME_LEN);
 	result[i].filename = filename;
-        COSMIX_LOG_DEBUG("Entry: %s", filename);
+        KFS_LOG_DEBUG("Entry: %s", filename);
         // get the file size for files
 	LookupAttr(dirFid, result[i].filename.c_str(), result[i], true);
     }
@@ -477,7 +477,7 @@ KfsClient::LookupAttr(kfsFileId_t parentFid, const char *filename,
 }
 
 int
-KfsClient::Create(const char *pathname, int numReplicas)
+KfsClient::Create(const char *pathname, int numReplicas, bool exclusive)
 {
     MutexLock l(&mMutex);
 
@@ -485,24 +485,24 @@ KfsClient::Create(const char *pathname, int numReplicas)
     string filename;
     int res = GetPathComponents(pathname, &parentFid, filename);
     if (res < 0) {
-	COSMIX_LOG_DEBUG("status %d for pathname %s", res, pathname);
+	KFS_LOG_DEBUG("status %d for pathname %s", res, pathname);
 	return res;
     }
 
     if (filename.size() >= MAX_FILENAME_LEN)
 	return -ENAMETOOLONG;
 
-    CreateOp op(nextSeq(), parentFid, filename.c_str(), numReplicas);
+    CreateOp op(nextSeq(), parentFid, filename.c_str(), numReplicas, exclusive);
     (void)DoMetaOpWithRetry(&op);
     if (op.status < 0) {
-	COSMIX_LOG_DEBUG("status %ld from create RPC", op.status);
+	KFS_LOG_DEBUG("status %ld from create RPC", op.status);
 	return op.status;
     }
 
     // Everything is good now...
     int fte = ClaimFileTableEntry(parentFid, filename.c_str());
     if (fte < 0) {	// XXX Too many open files
-	COSMIX_LOG_DEBUG("status %d from ClaimFileTableEntry", fte);
+	KFS_LOG_DEBUG("status %d from ClaimFileTableEntry", fte);
 	return fte;
     }
 
@@ -555,7 +555,7 @@ KfsClient::Rename(const char *oldpath, const char *newpath, bool overwrite)
 		    absNewpath.c_str(), overwrite);
     (void)DoMetaOpWithRetry(&op);
 
-    COSMIX_LOG_DEBUG("Status of renaming %s -> %s is: %d", 
+    KFS_LOG_DEBUG("Status of renaming %s -> %s is: %d", 
                      oldpath, newpath, op.status);
 
     return op.status;
@@ -598,12 +598,17 @@ KfsClient::Open(const char *pathname, int openMode, int numReplicas)
 
     LookupOp op(nextSeq(), parentFid, filename.c_str());
     (void)DoMetaOpWithRetry(&op);
+
     if (op.status < 0) {
 	if (openMode & O_CREAT) {
 	    // file doesn't exist.  Create it
-	    return Create(pathname, numReplicas);
+	    return Create(pathname, numReplicas, openMode & O_EXCL);
 	}
 	return op.status;
+    } else {
+        // file exists; now fail open if: O_CREAT | O_EXCL
+        if ((openMode & (O_CREAT|O_EXCL)) == (O_CREAT|O_EXCL))
+            return -EEXIST;
     }
 
     fte = ClaimFileTableEntry(parentFid, filename.c_str());
@@ -792,6 +797,43 @@ KfsClient::GetReplicationFactor(const char *pathname)
     return numReplicas;
 }
 
+int16_t
+KfsClient::SetReplicationFactor(const char *pathname, int16_t numReplicas)
+{
+    MutexLock l(&mMutex);
+
+    int res, fd;
+    bool didOpen = false;
+
+    // Non-existent
+    if (!IsFile(pathname)) 
+        return -ENOENT;
+
+    // load up the fte
+    fd = LookupFileTableEntry(pathname);
+    if (fd < 0) {
+        // Open the file for reading...this'll get the attributes setup
+        fd = Open(pathname, O_RDONLY);
+        // we got too many open files?
+        if (fd < 0)
+            return fd;
+        didOpen = true;
+    }
+    ChangeFileReplicationOp op(nextSeq(), FdAttr(fd)->fileId, numReplicas);
+    (void) DoMetaOpWithRetry(&op);
+
+    if (op.status == 0) {
+        FdAttr(fd)->numReplicas = op.numReplicas;
+        res = op.numReplicas;
+    } else
+        res = op.status;
+
+    if (didOpen)
+        Close(fd);
+
+
+    return res;
+}
 
 off_t
 KfsClient::Seek(int fd, off_t offset)
@@ -869,7 +911,7 @@ KfsClient::AllocChunk(int fd)
 
     (void) DoMetaOpWithRetry(&op);
     if (op.status < 0) {
-	COSMIX_LOG_DEBUG("AllocChunk(%ld)", op.status);
+	KFS_LOG_DEBUG("AllocChunk(%ld)", op.status);
 	return op.status;
     }
     ChunkAttr chunk;
@@ -883,11 +925,11 @@ KfsClient::AllocChunk(int fd)
     if (op.chunkServers.size() > 0)
         FdPos(fd)->SetPreferredServer(op.chunkServers[0]);
 
-    COSMIX_LOG_DEBUG("Fileid: %ld, chunk : %ld, version: %ld, hosted on:",
+    KFS_LOG_DEBUG("Fileid: %ld, chunk : %ld, version: %ld, hosted on:",
                      fa->fileId, chunk.chunkId, chunk.chunkVersion);
 
     for (uint32_t i = 0; i < op.chunkServers.size(); i++) {
-	COSMIX_LOG_DEBUG("%s", op.chunkServers[i].ToString().c_str());
+	KFS_LOG_DEBUG("%s", op.chunkServers[i].ToString().c_str());
     }
 
     return op.status;
@@ -923,7 +965,7 @@ KfsClient::LocateChunk(int fd, int chunkNum)
     (void)DoMetaOpWithRetry(&op);
     if (op.status < 0) {
 	string errstr = ErrorCodeToStr(op.status);
-	COSMIX_LOG_DEBUG("LocateChunk (%ld): %s", op.status, errstr.c_str());
+	KFS_LOG_DEBUG("LocateChunk (%ld): %s", op.status, errstr.c_str());
 	return op.status;
     }
 
@@ -934,7 +976,7 @@ KfsClient::LocateChunk(int fd, int chunkNum)
     mFileTable[fd]->cattr[chunkNum] = chunk;
 
     if (op.chunkServers.size() > 0) {
-	COSMIX_LOG_DEBUG("Fileid: %ld, chunk: %ld, hosted on (%s)",
+	KFS_LOG_DEBUG("Fileid: %ld, chunk: %ld, hosted on (%s)",
 	                 mFileTable[fd]->fattr.fileId,
 	                 chunk.chunkId,
 	                 op.chunkServers[0].ToString().c_str());
@@ -960,10 +1002,10 @@ KfsClient::IsCurrChunkAttrKnown(int fd)
 int
 KFS::DoOpSend(KfsOp *op, TcpSocket *sock)
 {
-    std::ostringstream os;
+    ostringstream os;
 
     if ((sock == NULL ) || (!sock->IsGood())) {
-	COSMIX_LOG_DEBUG("Trying to do I/O on a closed socket..failing it");
+	KFS_LOG_DEBUG("Trying to do I/O on a closed socket..failing it");
 	op->status = -EHOSTUNREACH;
 	return -1;
     }
@@ -972,7 +1014,7 @@ KFS::DoOpSend(KfsOp *op, TcpSocket *sock)
     int numIO = sock->DoSynchSend(os.str().c_str(), os.str().length());
     if (numIO <= 0) {
 	sock->Close();
-	COSMIX_LOG_DEBUG("Send failed...closing socket");
+	KFS_LOG_DEBUG("Send failed...closing socket");
 	op->status = -EHOSTUNREACH;
 	return -1;
     }
@@ -980,10 +1022,44 @@ KFS::DoOpSend(KfsOp *op, TcpSocket *sock)
 	numIO = sock->DoSynchSend(op->contentBuf, op->contentLength);
 	if (numIO <= 0) {
 	    sock->Close();
-	    COSMIX_LOG_DEBUG("Send failed...closing socket");
+	    KFS_LOG_DEBUG("Send failed...closing socket");
 	    op->status = -EHOSTUNREACH;
 	    return -1;
 	}
+    }
+    return 0;
+}
+
+///
+/// Helper function that does the work for sending out an op to a set of
+/// servers.  Op push is done concurrently.
+///
+/// @param[in] op the op to be sent out
+/// @param[in] targets the set of socket on which we communicate with servers
+/// @retval 0 on success; -1 on failure
+///   Here, send succeeds if it is succeeds to all servers; otherwise failure
+///
+int
+KFS::DoOpSend(KfsOp *op, vector<TcpSocket *> &targets)
+{
+    ostringstream os;
+
+    op->Request(os);
+
+    // When we "simulcast" the data, the status we get back says
+    // everything was sent to all the targets; or it failed at least
+    // one of the targets.
+    int numIO = Simulcast(os.str().c_str(), os.str().length(), targets);
+    if (numIO < 0) {
+        op->status = -EHOSTUNREACH;
+        return -1;
+    }
+    if (op->contentLength > 0) {
+        numIO = Simulcast(op->contentBuf, op->contentLength, targets);
+        if (numIO < 0) {
+            op->status = -EHOSTUNREACH;
+            return -1;
+        }
     }
     return 0;
 }
@@ -1069,7 +1145,7 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
 
     if ((sock == NULL) || (!sock->IsGood())) {
 	op->status = -EHOSTUNREACH;
-	COSMIX_LOG_DEBUG("Trying to do I/O on a closed socket..failing it");
+	KFS_LOG_DEBUG("Trying to do I/O on a closed socket..failing it");
 	return -1;
     }
 
@@ -1085,9 +1161,9 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
 		op->status = -1;
 	    } else if (numIO == -ETIMEDOUT) {
 		op->status = -ETIMEDOUT;
-		COSMIX_LOG_DEBUG("Get response recv timed out...");
+		KFS_LOG_DEBUG("Get response recv timed out...");
 	    } else {
-		COSMIX_LOG_DEBUG("Get response failed...closing socket");
+		KFS_LOG_DEBUG("Get response failed...closing socket");
 		sock->Close();
 		op->status = -EHOSTUNREACH;
 	    }
@@ -1102,7 +1178,7 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
 	if (resSeq == op->seq) {
 	    break;
 	}
-	COSMIX_LOG_DEBUG("Seq #'s dont match: Expect: %ld, got: %ld",
+	KFS_LOG_DEBUG("Seq #'s dont match: Expect: %ld, got: %ld",
                          op->seq, resSeq);
         // assert(!"Seq # mismatch");
 
@@ -1154,10 +1230,10 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
 
 	nread = sock->DoSynchRecv(op->contentBuf + navail, nleft, timeout);
 	if (nread == -ETIMEDOUT) {
-	    COSMIX_LOG_DEBUG("Recv timed out...");
+	    KFS_LOG_DEBUG("Recv timed out...");
 	    op->status = -ETIMEDOUT;
 	} else if (nread <= 0) {
-	    COSMIX_LOG_DEBUG("Recv failed...closing socket");
+	    KFS_LOG_DEBUG("Recv failed...closing socket");
 	    op->status = -EHOSTUNREACH;
 	    sock->Close();
 	}
@@ -1184,27 +1260,27 @@ int
 KFS::DoOpCommon(KfsOp *op, TcpSocket *sock)
 {
     if (sock == NULL) {
-	COSMIX_LOG_DEBUG("%s: send failed; no socket", op->Show().c_str());
+	KFS_LOG_DEBUG("%s: send failed; no socket", op->Show().c_str());
 	assert(sock);
 	return -EHOSTUNREACH;
     }
 
     int res = DoOpSend(op, sock);
     if (res < 0) {
-	COSMIX_LOG_DEBUG("%s: send failure code: %d", op->Show().c_str(), res);
+	KFS_LOG_DEBUG("%s: send failure code: %d", op->Show().c_str(), res);
 	return res;
     }
 
     res = DoOpResponse(op, sock);
 
     if (res < 0) {
-	COSMIX_LOG_DEBUG("%s: recv failure code: %d", op->Show().c_str(), res);
+	KFS_LOG_DEBUG("%s: recv failure code: %d", op->Show().c_str(), res);
 	return res;
     }
 
     if (op->status < 0) {
 	string errstr = ErrorCodeToStr(op->status);
-	COSMIX_LOG_DEBUG("%s failed with code: %s", op->Show().c_str(), errstr.c_str());
+	KFS_LOG_DEBUG("%s failed with code: %s", op->Show().c_str(), errstr.c_str());
     }
 
     return res;
@@ -1262,10 +1338,10 @@ KfsClient::ComputeFilesize(kfsFileId_t kfsfid)
     }
 
     if (lop.ParseLayoutInfo()) {
-	COSMIX_LOG_DEBUG("Unable to parse layout info");
+	KFS_LOG_DEBUG("Unable to parse layout info");
 	return -1;
     }
-    COSMIX_LOG_DEBUG("Fileid: %ld, # of chunks: %lu", kfsfid, lop.chunks.size());
+    KFS_LOG_DEBUG("Fileid: %ld, # of chunks: %lu", kfsfid, lop.chunks.size());
     if (lop.chunks.size() == 0)
 	return 0;
 
@@ -1279,13 +1355,13 @@ KfsClient::ComputeFilesize(kfsFileId_t kfsfid)
 			    responder);
     if (s != last->chunkServers.end()) {
 	if (rstatus < 0) {
-	    COSMIX_LOG_DEBUG("RespondingServer status %d", rstatus);
+	    KFS_LOG_DEBUG("RespondingServer status %d", rstatus);
 	    return 0;
 	}
 	filesize += endsize;
     }
 
-    COSMIX_LOG_DEBUG("Size of kfsfid = %ld, size = %ld",
+    KFS_LOG_DEBUG("Size of kfsfid = %ld, size = %ld",
 	             kfsfid, filesize);
 
     return filesize;
@@ -1324,7 +1400,7 @@ KfsClient::OpenChunk(int fd)
     if (s != chunk->chunkServerLoc.end()) {
         FdPos(fd)->SetPreferredServer(*s);
         if (FdPos(fd)->GetPreferredServer() != NULL) {
-            COSMIX_LOG_DEBUG("Picking local server: %s", s->ToString().c_str());
+            KFS_LOG_DEBUG("Picking local server: %s", s->ToString().c_str());
             return SizeChunk(fd);
         }
     }
@@ -1338,7 +1414,7 @@ KfsClient::OpenChunk(int fd)
         FdPos(fd)->SetPreferredServer(loc[i]);
 #ifdef DEBUG
         if (FdPos(fd)->GetPreferredServer() != NULL)
-            COSMIX_LOG_DEBUG("Randomly chose: %s", loc[i].ToString().c_str());
+            KFS_LOG_DEBUG("Randomly chose: %s", loc[i].ToString().c_str());
 #endif
     }
 
@@ -1356,7 +1432,7 @@ KfsClient::SizeChunk(int fd)
     (void)DoOpCommon(&op, FdPos(fd)->preferredServer);
     chunk->chunkSize = op.size;
 
-    COSMIX_LOG_DEBUG("Chunk: %ld, size = %zd",
+    KFS_LOG_DEBUG("Chunk: %ld, size = %zd",
 	             chunk->chunkId, chunk->chunkSize);
 
     return op.status;
@@ -1465,7 +1541,7 @@ KfsClient::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
         (now - FdInfo(fte)->validatedTime < FILE_CACHE_ENTRY_VALID_TIME))
         return fte;
 
-    COSMIX_LOG_DEBUG("Entry for <%d, %s> is likely stale; forcing revalidation", 
+    KFS_LOG_DEBUG("Entry for <%d, %s> is likely stale; forcing revalidation", 
                      parentFid, name);
     // the entry maybe stale; force revalidation
     ReleaseFileTableEntry(fte);
@@ -1606,7 +1682,7 @@ KfsClient::GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
 	start = next + 1; // next points to '/'
     }
 
-    COSMIX_LOG_DEBUG("file-id for dir: %s (file = %s) is %ld",
+    KFS_LOG_DEBUG("file-id for dir: %s (file = %s) is %ld",
 	             pathstr.c_str(), name.c_str(), *parentFid);
     return 0;
 }
@@ -1651,7 +1727,7 @@ KfsClient::GetLease(kfsChunkId_t chunkId)
 	    break;
 	}
 
-	COSMIX_LOG_DEBUG("Server says lease is busy...waiting");
+	KFS_LOG_DEBUG("Server says lease is busy...waiting");
 	// Server says the lease is busy...so wait
 	Sleep(KFS::LEASE_INTERVAL_SECS);
     }

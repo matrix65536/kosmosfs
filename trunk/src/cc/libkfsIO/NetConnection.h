@@ -35,6 +35,8 @@
 
 #include <boost/shared_ptr.hpp>
 
+namespace KFS
+{
 ///
 /// \file NetConnection.h
 /// \brief A network connection uses TCP sockets for doing I/O.
@@ -133,7 +135,7 @@ public:
 
     /// Close the connection.
     void Close() {
-        COSMIX_LOG_DEBUG("Closing socket: %d", mSock->GetFd());
+        KFS_LOG_DEBUG("Closing socket: %d", mSock->GetFd());
         mSock->Close();
     }
     
@@ -154,4 +156,5 @@ private:
 
 typedef boost::shared_ptr<NetConnection> NetConnectionPtr;
 
+}
 #endif // LIBIO_NETCONNECTION_H

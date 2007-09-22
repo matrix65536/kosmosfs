@@ -30,7 +30,10 @@
 #include <cerrno>
 #include <sstream>
 using std::istringstream;
+using std::ostringstream;
+using std::string;
 
+using namespace KFS;
 using namespace KFS_MON;
 
 const char *KFS_VERSION_STR = "KFS/1.0";

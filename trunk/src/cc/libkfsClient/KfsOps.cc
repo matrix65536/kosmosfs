@@ -50,12 +50,15 @@ using namespace KFS;
 void
 CreateOp::Request(ostringstream &os)
 {
+    int e = exclusive ? 1 : 0;
+
     os << "CREATE " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Filename: " << filename << "\r\n";
-    os << "Num-replicas: " << numReplicas << "\r\n\r\n";
+    os << "Num-replicas: " << numReplicas << "\r\n";
+    os << "Exclusive: " << e << "\r\n\r\n";
 }
 
 void
@@ -269,6 +272,16 @@ LeaseRenewOp::Request(ostringstream &os)
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Lease-id: " << leaseId << "\r\n";
     os << "Lease-type: READ_LEASE" << "\r\n\r\n";
+}
+
+void
+ChangeFileReplicationOp::Request(ostringstream &os)
+{
+    os << "CHANGE_FILE_REPLICATION \r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "File-handle: " << fid << "\r\n";
+    os << "Num-replicas: " << numReplicas << "\r\n\r\n";
 }
 
 
@@ -516,6 +529,16 @@ LeaseAcquireOp::ParseResponseHeader(char *buf, int len)
 
     ParseResponseHeaderCommon(resp, prop);
     leaseId = prop.getValue("Lease-id", (long long) -1);
+}
+
+void
+ChangeFileReplicationOp::ParseResponseHeader(char *buf, int len)
+{
+    string resp(buf, len);
+    Properties prop;
+
+    ParseResponseHeaderCommon(resp, prop);
+    numReplicas = prop.getValue("Num-replicas", 1);
 }
 
 static void

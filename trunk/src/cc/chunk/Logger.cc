@@ -26,7 +26,6 @@
 #include<map>
 #include<sstream>
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 #include "Logger.h"
 #include "ChunkManager.h"
@@ -35,6 +34,14 @@ using std::ios_base;
 using std::map;
 using std::ifstream;
 using std::istringstream;
+using std::ostringstream;
+using std::list;
+using std::ofstream;
+using std::string;
+using std::vector;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 // checksums for a 64MB chunk can make a long line...
 const int MAX_LINE_LENGTH = 32768;
@@ -160,13 +167,13 @@ Logger::Start()
 
     mFile.open(filename.c_str(), ios_base::app);
     if (writeHeader) {
-        COSMIX_LOG_DEBUG("Writing out a log header");
+        KFS_LOG_DEBUG("Writing out a log header");
         mFile << ckptLogVersionStr << '\n';
         mFile.flush();
     }
 
     if (!mFile.is_open()) {
-        COSMIX_LOG_DEBUG("Unable to open: %s",
+        KFS_LOG_DEBUG("Unable to open: %s",
                          filename.c_str());
     }
     assert(!mFile.fail());
@@ -258,7 +265,7 @@ Logger::RotateLog()
     filename = MakeLogFilename();
     mFile.open(filename.c_str());
     if (!mFile.is_open()) {
-        COSMIX_LOG_DEBUG("Unable to open: %s",
+        KFS_LOG_DEBUG("Unable to open: %s",
                          filename.c_str());
         return;
     }
@@ -293,7 +300,7 @@ Logger::Restore()
     if (ifs.eof())
         goto out;
     if (strncmp(line, ckptLogVersionStr, strlen(ckptLogVersionStr)) != 0) {
-        COSMIX_LOG_DEBUG("Restore ckpt: Ckpt version str mismatch: read: %s",
+        KFS_LOG_DEBUG("Restore ckpt: Ckpt version str mismatch: read: %s",
                          line);
         goto out;
     }
@@ -304,7 +311,7 @@ Logger::Restore()
     if (ifs.eof())
         goto out;
     if (strncmp(line, "log:", 4) != 0) {
-        COSMIX_LOG_DEBUG("Restore ckpt: Log line mismatch: read: %s",
+        KFS_LOG_DEBUG("Restore ckpt: Log line mismatch: read: %s",
                          line);
         goto out;
     }
@@ -312,7 +319,7 @@ Logger::Restore()
     if (genNum != NULL) {
         genNum++;
         mLogGenNum = atoll(genNum);
-        COSMIX_LOG_DEBUG("Read log gen #: %lld",
+        KFS_LOG_DEBUG("Read log gen #: %lld",
                          mLogGenNum);
     }
     
@@ -325,7 +332,7 @@ Logger::Restore()
         cih = new ChunkInfoHandle_t();
         cih->chunkInfo = entry;
 
-        COSMIX_LOG_DEBUG("Read chunk: %ld, %d, %lu", 
+        KFS_LOG_DEBUG("Read chunk: %ld, %d, %lu", 
                          cih->chunkInfo.chunkId,
                          cih->chunkInfo.chunkVersion,
                          cih->chunkInfo.chunkSize);
@@ -456,14 +463,14 @@ Logger::ReplayLog()
     filename = MakeLogFilename();
 
     if (!file_exists(filename.c_str())) {
-        COSMIX_LOG_DEBUG("File: %s doesn't exist; no log replay",
+        KFS_LOG_DEBUG("File: %s doesn't exist; no log replay",
                          filename.c_str());
         return;
     }
 
     ifs.open(filename.c_str(), ios_base::in);
     if (!ifs) {
-        COSMIX_LOG_DEBUG("Unable to open: %s",
+        KFS_LOG_DEBUG("Unable to open: %s",
                          filename.c_str()); 
         return;
     }
@@ -478,7 +485,7 @@ Logger::ReplayLog()
     }
 
     if (strncmp(line, ckptLogVersionStr, strlen(ckptLogVersionStr)) != 0) {
-        COSMIX_LOG_DEBUG("Replay log failed: Log version str mismatch: read: %s",
+        KFS_LOG_DEBUG("Replay log failed: Log version str mismatch: read: %s",
                          line);
         ifs.close();
         return;
@@ -501,7 +508,7 @@ Logger::ReplayLog()
         iter = opHandlers.find(opName);
 
         if (iter == opHandlers.end()) {
-            COSMIX_LOG_DEBUG("Unable to replay %s", line);
+            KFS_LOG_DEBUG("Unable to replay %s", line);
             ist.clear();
             continue;
         }

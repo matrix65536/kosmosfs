@@ -46,6 +46,7 @@ extern "C" {
 using std::cout;
 using std::endl;
 using std::ifstream;
+using namespace KFS;
 
 KfsClient *gKfsClient;
 
@@ -94,7 +95,7 @@ main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                COSMIX_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }

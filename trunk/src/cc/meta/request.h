@@ -66,6 +66,7 @@ enum MetaOp {
 	META_TRUNCATE,
 	META_RENAME,
 	META_CHECKPOINT,
+	META_CHANGE_FILE_REPLICATION, //! < Client is asking for a change in file's replication factor
 	//!< Metadata server <-> Chunk server ops
 	META_HELLO,  //!< Hello RPC sent by chunkserver on startup
 	META_BYE,  //!< Internally generated op whenever a chunkserver goes down
@@ -77,6 +78,7 @@ enum MetaOp {
 	META_CHUNK_VERSCHANGE, //!< Notify chunkserver of version # change from meta->chunk
 	META_CHUNK_REPLICATE, //!< Ask chunkserver to replicate a chunk
 	META_CHUNK_REPLICATION_CHECK, //!< Internally generated
+	META_CHUNK_CORRUPT, //!< Chunkserver is notifying us that a chunk is corrupt
 
 	//!< Lease related messages
 	META_LEASE_ACQUIRE,
@@ -169,9 +171,10 @@ struct MetaCreate: public MetaRequest {
 	string name;	//!< name to create
 	fid_t fid;	//!< file ID of new file
 	int16_t numReplicas; //!< desired degree of replication
-	MetaCreate(seq_t s, fid_t d, string n, int16_t r):
+	bool exclusive;  //!< model the O_EXCL flag
+	MetaCreate(seq_t s, fid_t d, string n, int16_t r, bool e):
 		MetaRequest(META_CREATE, s, true), dir(d),
-		name(n), numReplicas(r) { }
+		name(n), numReplicas(r), exclusive(e) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
 	string Show() 
@@ -404,6 +407,26 @@ struct MetaRename: public MetaRequest {
 		os << "rename: oldname = " << oldname;
 		os << " (fid = " << dir << ")";
 		os << " newname = " << newname;
+		return os.str();
+	}
+};
+
+/*!
+ * \brief change a file's replication factor
+ */
+struct MetaChangeFileReplication: public MetaRequest {
+	fid_t fid;	//!< fid whose replication has to be changed
+	int16_t numReplicas; //!< desired degree of replication
+	MetaChangeFileReplication(seq_t s, fid_t f, int16_t n):
+		MetaRequest(META_CHANGE_FILE_REPLICATION, s, true), fid(f), numReplicas(n) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show() 
+	{
+		ostringstream os;
+
+		os << "change-file-replication: fid = " << fid;
+		os << "new # of replicas: " << numReplicas;
 		return os.str();
 	}
 };
@@ -690,6 +713,27 @@ struct MetaStats: public MetaRequest {
 	string Show()
 	{
 		return "stats";
+	}
+};
+
+/*!
+ * \brief Op for handling a notify of a corrupt chunk
+ */
+struct MetaChunkCorrupt: public MetaRequest {
+	fid_t fid; //!< input
+	chunkId_t chunkId; //!< input
+	ChunkServerPtr server; //!< The chunkserver that sent us this message
+	MetaChunkCorrupt(seq_t s, fid_t f, chunkId_t c):
+		MetaRequest(META_CHUNK_CORRUPT, s, false),
+		fid(f), chunkId(c) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		ostringstream os;
+
+		os << "corrupt chunk: fid = " << fid << " chunkid = " << chunkId;
+		return os.str();
 	}
 };
 
