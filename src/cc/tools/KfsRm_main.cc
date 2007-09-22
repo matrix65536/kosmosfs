@@ -48,6 +48,7 @@ using std::endl;
 using std::ifstream;
 using std::vector;
 
+using namespace KFS;
 KfsClient *gKfsClient;
 
 void doRecrRemove(const char *dirname);
@@ -80,7 +81,7 @@ main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                COSMIX_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }

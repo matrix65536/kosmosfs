@@ -319,7 +319,7 @@ namespace KFS
                 /// list of RPCs that we have sent to this chunk
                 /// server.  This list is operated by the network
                 /// thread.
-                list <MetaRequest *> mDispatchedReqs;
+                std::list <MetaRequest *> mDispatchedReqs;
 
                 ///
                 /// We have received a message from the chunk

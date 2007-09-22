@@ -29,9 +29,6 @@
 #include <vector>
 #include <string>
 #include <sstream>
-using std::vector;
-using std::string;
-using std::ostringstream;
 
 #include "libkfsIO/TcpSocket.h"
 #include "common/properties.h"
@@ -52,49 +49,49 @@ namespace KFS_MON
         KfsMonOp(KfsMonOp_t o, int32_t s) :
             op(o), seq(s) { };
         virtual ~KfsMonOp() { };
-        virtual void Request(ostringstream &os) = 0;
+        virtual void Request(std::ostringstream &os) = 0;
         virtual void ParseResponse(const char *resp, int len) = 0;
-        void ParseResponseCommon(string &resp, Properties &prop);
+        void ParseResponseCommon(std::string &resp, KFS::Properties &prop);
     };
 
     struct MetaPingOp : public KfsMonOp {
-        vector<string> servers; /// result
+        std::vector<std::string> servers; /// result
         MetaPingOp(int32_t s) :
             KfsMonOp(CMD_METAPING, s) { };
-        void Request(ostringstream &os);
+        void Request(std::ostringstream &os);
         void ParseResponse(const char *resp, int len);
     };
 
     struct ChunkPingOp : public KfsMonOp {
-        ServerLocation location;
+        KFS::ServerLocation location;
         size_t totalSpace;
         size_t usedSpace;
         ChunkPingOp(int32_t s) :
             KfsMonOp(CMD_CHUNKPING, s) { };
-        void Request(ostringstream &os);
+        void Request(std::ostringstream &os);
         void ParseResponse(const char *resp, int len);
     };
 
     struct MetaStatsOp : public KfsMonOp {
-        Properties stats; // result
+        KFS::Properties stats; // result
         MetaStatsOp(int32_t s) :
             KfsMonOp(CMD_METAPING, s) { };
-        void Request(ostringstream &os);
+        void Request(std::ostringstream &os);
         void ParseResponse(const char *resp, int len);
     };
 
     struct ChunkStatsOp : public KfsMonOp {
-        Properties stats; // result
+        KFS::Properties stats; // result
         ChunkStatsOp(int32_t s) :
             KfsMonOp(CMD_CHUNKPING, s) { };
-        void Request(ostringstream &os);
+        void Request(std::ostringstream &os);
         void ParseResponse(const char *resp, int len);
     };
 
-    extern int DoOpCommon(KfsMonOp *op, TcpSocket *sock);
+    extern int DoOpCommon(KfsMonOp *op, KFS::TcpSocket *sock);
     extern int GetResponse(char *buf, int bufSize,
                            int *delims,
-                           TcpSocket *sock);
+                           KFS::TcpSocket *sock);
 
 }
 

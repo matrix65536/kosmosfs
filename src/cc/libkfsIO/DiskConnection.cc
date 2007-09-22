@@ -27,7 +27,13 @@
 #include "DiskManager.h"
 #include "Counter.h"
 #include "Globals.h"
-using namespace libkfsio;
+
+using std::deque;
+using std::string;
+using std::list;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 /// String description of the enum's in DiskEvent_t
 static const char *gDiskEventStr[] = { "OP_NONE", "OP_READ", "OP_WRITE", "OP_SYNC" };
@@ -41,7 +47,7 @@ DiskEvent_t::ToString()
 DiskConnection::DiskConnection(ChunkHandlePtr &handle,
                                KfsCallbackObj *callbackObj) 
 {
-    // COSMIX_LOG_DEBUG("Allocating connection 0x%p", this);
+    // KFS_LOG_DEBUG("Allocating connection 0x%p", this);
 
     mHandle = handle;
     mCallbackObj = callbackObj;
@@ -49,7 +55,7 @@ DiskConnection::DiskConnection(ChunkHandlePtr &handle,
 
 DiskConnection::~DiskConnection() 
 {
-    // COSMIX_LOG_DEBUG("Freeing connection 0x%p", this);
+    // KFS_LOG_DEBUG("Freeing connection 0x%p", this);
     // Cancel out the events
     Close();
     mDiskIO.clear();
@@ -115,7 +121,7 @@ DiskConnection::Read(off_t offset, size_t numBytes)
     }
 
     /*
-    COSMIX_LOG_DEBUG("# of reads queued for (off = %lld, size = %zd): %d",
+    KFS_LOG_DEBUG("# of reads queued for (off = %lld, size = %zd): %d",
                      r.offset, r.numBytes, r.diskEvents.size());
     */
 
@@ -141,7 +147,7 @@ int DiskConnection::ReadDone(DiskEventPtr &doneEvent, int res)
     bool found;
 
     if (res != 0) {
-        COSMIX_LOG_DEBUG("Read failure: errno = %d",
+        KFS_LOG_DEBUG("Read failure: errno = %d",
                          res);
     }
     assert(mCallbackObj != NULL);
@@ -264,10 +270,10 @@ DiskConnection::Write(off_t offset, size_t numBytes, IOBuffer *buf)
     mDiskIO.push_back(r);
 
     /*
-    COSMIX_LOG_DEBUG("# of writes queued for (off = %lld, size = %lld): %d",
+    KFS_LOG_DEBUG("# of writes queued for (off = %lld, size = %lld): %d",
                      r.offset, r.numBytes, r.diskEvents.size());
 
-    COSMIX_LOG_DEBUG("# of elements in write list: %d",
+    KFS_LOG_DEBUG("# of elements in write list: %d",
                      mDiskIO.size());
     */
 
@@ -287,7 +293,7 @@ int DiskConnection::WriteDone(DiskEventPtr &doneEvent, int res)
     int retVal = 0;
 
     if (res != 0) {
-        COSMIX_LOG_DEBUG("Write failure: errno = %d",
+        KFS_LOG_DEBUG("Write failure: errno = %d",
                          res);
     }
 

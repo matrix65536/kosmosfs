@@ -35,6 +35,8 @@ using std::endl;
 using std::ifstream;
 using std::string;
 
+using namespace KFS;
+
 KfsClient *gKfsClient;
 static bool doMkdir(const char *dirname);
 static long doWrite(const string &kfspathname, int numMBytes, size_t writeSizeBytes);
@@ -64,7 +66,7 @@ main(int argc, char **argv)
                 numMBytes = atoi(optarg);
                 break;
             default:
-                COSMIX_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }
@@ -151,7 +153,7 @@ doWrite(const string &filename, int numMBytes, size_t writeSizeBytes)
         dataBuf[bytesWritten] = 'a' + bytesWritten % 26;
     }
     // fd = gKfsClient->Open(filename.c_str(), O_CREAT|O_RDWR);
-    fd = gKfsClient->Create(filename.c_str(), 1);
+    fd = gKfsClient->Create(filename.c_str(), 3);
     if (fd < 0) {
         cout << "Create failed: " << endl;
         exit(0);

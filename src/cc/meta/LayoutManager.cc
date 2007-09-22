@@ -28,18 +28,22 @@
 #include <algorithm>
 #include <functional>
 
+#include "LayoutManager.h"
+#include "kfstree.h"
+#include "libkfsIO/Globals.h"
+
 using std::for_each;
 using std::find;
 using std::ptr_fun;
 using std::sort;
 using std::remove_if;
-
-#include "LayoutManager.h"
-#include "kfstree.h"
-#include "libkfsIO/Globals.h"
-using namespace libkfsio;
+using std::set;
+using std::vector;
+using std::map;
+using std::min;
 
 using namespace KFS;
+using namespace KFS::libkfsio;
 
 LayoutManager KFS::gLayoutManager;
 const int MAX_CONCURRENT_REPLICATIONS = 10;
@@ -95,7 +99,7 @@ LayoutManager::AddNewServer(MetaHello *r)
         //
         for (j = 0; j < mChunkServers.size(); ++j) {
 		if (mChunkServers[j]->MatchingServer(r->location)) {
-			COSMIX_LOG_DEBUG("Duplicate server: %s, %d",
+			KFS_LOG_DEBUG("Duplicate server: %s, %d",
 					 r->location.hostname.c_str(), r->location.port);
 			return;
 		}
@@ -127,14 +131,14 @@ LayoutManager::AddNewServer(MetaHello *r)
 				}
 			}
 			else {
-                        	COSMIX_LOG_DEBUG("Old version for chunk id = %lld => stale",
+                        	KFS_LOG_DEBUG("Old version for chunk id = %lld => stale",
                                          r->chunks[i].chunkId);
 			}
 		}
 
                 if (res < 0) {
                         /// stale chunk
-                        COSMIX_LOG_DEBUG("Non-existent chunk id = %lld => stale",
+                        KFS_LOG_DEBUG("Non-existent chunk id = %lld => stale",
                                          r->chunks[i].chunkId);
                         staleChunkIds.push_back(r->chunks[i].chunkId);
                 }
@@ -147,10 +151,11 @@ LayoutManager::AddNewServer(MetaHello *r)
 
 class MapPurger {
 	CSMap &cmap;
+	CRCheckSet &crset;
 	const ChunkServer *target;
 public:
-	MapPurger(CSMap &m, const ChunkServer *t):
-		cmap(m), target(t) { }
+	MapPurger(CSMap &m, CRCheckSet &c, const ChunkServer *t):
+		cmap(m), crset(c), target(t) { }
 	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
 		ChunkPlacementInfo c = p.second;
 
@@ -158,6 +163,8 @@ public:
 					ChunkServerMatcher(target)), 
 					c.chunkServers.end());
 		cmap[p.first] = c;
+		// we need to check the replication level of this chunk
+		crset.insert(p.first);
 	}
 };
 
@@ -176,7 +183,7 @@ LayoutManager::ServerDown(ChunkServer *server)
 	server->FailPendingOps();
 
 	mChunkServers.erase(i);
-	MapPurger purge(mChunkToServerMap, server);
+	MapPurger purge(mChunkToServerMap, mChunkReplicationCheckSet, server);
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
 }
 
@@ -303,7 +310,7 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 	// issuing the lease during recovery---because there could
 	// be some server who has a lease and hasn't told us yet.
 	if (InRecovery()) {
-		COSMIX_LOG_DEBUG("GetChunkWriteLease: InRecovery() => EBUSY");
+		KFS_LOG_DEBUG("GetChunkWriteLease: InRecovery() => EBUSY");
 		return -EBUSY;
 	}
 
@@ -325,7 +332,7 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 #ifdef DEBUG
 		time_t now = time(0);
 		assert(now <= lease.expires);
-		COSMIX_LOG_DEBUG("write lease exists...no version bump");
+		KFS_LOG_DEBUG("write lease exists...no version bump");
 #endif
 		// valid write lease; so, tell the client where to go
 		isNewLease = false;
@@ -339,7 +346,7 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 	l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
 			ptr_fun(LeaseInfo::IsValidLease));
 	if (l != v.chunkLeases.end()) {
-		COSMIX_LOG_DEBUG("GetChunkWriteLease: read lease => EBUSY");
+		KFS_LOG_DEBUG("GetChunkWriteLease: read lease => EBUSY");
 		return -EBUSY;
 	}
 	// no one has a valid lease
@@ -381,7 +388,7 @@ LayoutManager::GetChunkReadLease(MetaLeaseAcquire *req)
 	ChunkPlacementInfo v;
 
 	if (InRecovery()) {
-		COSMIX_LOG_DEBUG("GetChunkReadLease: inRecovery() => EBUSY");
+		KFS_LOG_DEBUG("GetChunkReadLease: inRecovery() => EBUSY");
 		return -EBUSY;
 	}
 
@@ -428,7 +435,7 @@ LayoutManager::IsValidLeaseIssued(const vector <MetaChunkInfo *> &c)
 	i = find_if(c.begin(), c.end(), ValidLeaseIssued(mChunkToServerMap));
 	if (i == c.end())
 		return false;
-	COSMIX_LOG_DEBUG("Valid lease issued on chunk: %lld",
+	KFS_LOG_DEBUG("Valid lease issued on chunk: %lld",
 			(*i)->chunkId);
 	return true;
 }
@@ -477,6 +484,36 @@ LayoutManager::LeaseRenew(MetaLeaseRenew *req)
 	l->expires = now + LEASE_INTERVAL_SECS;
 	mChunkToServerMap[req->chunkId] = v;
 	return 0;
+}
+
+///
+/// Handling a corrupted chunk involves removing the mapping
+/// from chunk id->chunkserver that we know has it.
+///
+void
+LayoutManager::ChunkCorrupt(MetaChunkCorrupt *r)
+{
+        CSMapIter iter;
+	ChunkPlacementInfo v;
+
+        iter = mChunkToServerMap.find(r->chunkId);
+	if (iter == mChunkToServerMap.end())
+		return;
+
+	v = iter->second;
+	if(v.fid != r->fid) {
+		KFS_LOG_WARN("Server claims invalid chunk: <%ld, %ld> to be corrupt",
+				r->fid, r->chunkId);
+		return;
+	}
+
+	KFS_LOG_INFO("Server claims file/chunk: <%ld, %ld> to be corrupt",
+			r->fid, r->chunkId);
+	v.chunkServers.erase(remove_if(v.chunkServers.begin(), v.chunkServers.end(), 
+			ChunkServerMatcher(r->server.get())), v.chunkServers.end());
+	mChunkToServerMap[r->chunkId] = v;
+	// check the replication state when the replicaiton checker gets to it
+	ChangeChunkReplication(r->chunkId);
 }
 
 class ChunkDeletor {
@@ -552,7 +589,7 @@ LayoutManager::AddChunkToServerMapping(chunkId_t chunkId, fid_t fid,
 
 	assert(ValidServer(c));
 
-	COSMIX_LOG_DEBUG("Laying out chunk=%lld on server %s",
+	KFS_LOG_DEBUG("Laying out chunk=%lld on server %s",
 			 chunkId, c->GetServerName());
 
 	if (UpdateChunkToServerMapping(chunkId, c) == 0)
@@ -587,7 +624,7 @@ LayoutManager::UpdateChunkToServerMapping(chunkId_t chunkId, ChunkServer *c)
                 return -1;
 
 	/*
-	COSMIX_LOG_DEBUG("chunk=%lld was laid out on server %s",
+	KFS_LOG_DEBUG("chunk=%lld was laid out on server %s",
 			 chunkId, c->GetServerName());
 	*/
         iter->second.chunkServers.push_back(c->shared_from_this());
@@ -718,8 +755,8 @@ LayoutManager::LeaseCleanup(chunkId_t chunkId, ChunkPlacementInfo &v)
 }
 
 void
-LayoutManager::ReplicateChunk(chunkId_t chunkId, 
-				const ChunkPlacementInfo &clli)
+LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
+				int16_t numReplicas)
 {
 	// find a place
 	vector<ChunkServerPtr> candidates;
@@ -729,16 +766,6 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId,
 
 	if (candidates.size() == 0)
 		return;
-
-	c = candidates[0];
-
-#ifdef DEBUG
-	vector<ChunkServerPtr>::const_iterator iter;
-	iter = find(clli.chunkServers.begin(), clli.chunkServers.end(), c);
-	if (iter != clli.chunkServers.end()) {
-		assert(!"Not possible...");
-	}
-#endif
 
 	vector<MetaChunkInfo *> v;
 	vector<MetaChunkInfo *>::iterator chunk;
@@ -755,13 +782,28 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId,
 	mOngoingReplicationStats->Update(1);
 
 	MetaChunkInfo *mci = *chunk;
-	c->ReplicateChunk(fid, chunkId, mci->chunkVersion,
-			clli.chunkServers[0]->GetServerLocation());
+	uint32_t numCopies = min((size_t) numReplicas - clli.chunkServers.size(), 
+				candidates.size());
+
+	for (uint32_t i = 0; i < numCopies; i++) {
+		c = candidates[i];
+#ifdef DEBUG
+		// verify that we got good candidates
+		vector<ChunkServerPtr>::const_iterator iter;
+		iter = find(clli.chunkServers.begin(), clli.chunkServers.end(), c);
+		if (iter != clli.chunkServers.end()) {
+			assert(!"Not possible...");
+		}
+#endif
+		c->ReplicateChunk(fid, chunkId, mci->chunkVersion,
+				clli.chunkServers[0]->GetServerLocation());
+	}
 }
 
 bool
 LayoutManager::ChunkNeedsReplication(chunkId_t chunkId, 
-				ChunkPlacementInfo &c)
+				ChunkPlacementInfo &c,
+				int16_t &numReplicas)
 {
 	vector<LeaseInfo>::iterator l;
 
@@ -777,9 +819,15 @@ LayoutManager::ChunkNeedsReplication(chunkId_t chunkId,
 	if (c.chunkServers.size() == 0)
 		return false;
 
-	if (c.chunkServers.size() < NUM_REPLICAS_PER_FILE)
+	MetaFattr *fa = metatree.getFattr(c.fid);
+	if (fa == NULL)
+		return false;
+
+	if (c.chunkServers.size() < fa->numReplicas) {
 		// Need to re-replicate this chunk
+		numReplicas = fa->numReplicas;
 		return true;
+	}
 
 	return false;
 }
@@ -792,16 +840,45 @@ LayoutManager::ChunkReplicationChecker()
 		return;
 	}
 
-	for (CSMapIter iter = mChunkToServerMap.begin(); 
+	// There is a set of chunks that are affected: their server went down
+	// or there is a change in their degree of replication.  in either
+	// case, walk this set of chunkid's and work on their replication amount.
+	if (mChunkReplicationCheckSet.size() == 0)
+		return;
+	
+	CSMapIter iter;
+	chunkId_t chunkId;
+	CRCheckSet delset;
+	int16_t numReplicas;
+
+	for (CRCheckSetIter citer = mChunkReplicationCheckSet.begin(); 
 		mNumOngoingReplications <= MAX_CONCURRENT_REPLICATIONS &&
-		iter != mChunkToServerMap.end(); ++iter) {
+		citer != mChunkReplicationCheckSet.end(); ++citer) {
+		chunkId = *citer;
+
+        	iter = mChunkToServerMap.find(chunkId);
+        	if (iter == mChunkToServerMap.end()) {
+			delset.insert(chunkId);
+			continue;
+		}
 		if (iter->second.isBeingReplicated)
 			continue;
 
-		if (ChunkNeedsReplication(iter->first, iter->second)) {
-			ReplicateChunk(iter->first, iter->second);
+		KFS_LOG_DEBUG("Checking replication level for chunk: %ld", chunkId);
+
+		if (ChunkNeedsReplication(iter->first, iter->second, numReplicas)) {
+			ReplicateChunk(iter->first, iter->second, numReplicas);
 			iter->second.isBeingReplicated = true;
 			mNumOngoingReplications++;
+		} else {
+			delset.insert(chunkId);
+		}
+	}
+	
+	if (delset.size() > 0) {
+		for (CRCheckSetIter citer = delset.begin(); 
+			citer != delset.end(); ++citer) {
+			mChunkReplicationCheckSet.erase(*citer);
 		}
 	}
 }
@@ -831,8 +908,10 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 		return;
 	}
 
-	// replication succeded...validate that the server got the
-	// latest copy of the chunk
+	// replication succeeded: book-keeping
+	mChunkReplicationCheckSet.erase(req->chunkId);
+
+	// validate that the server got the latest copy of the chunk
 	vector<MetaChunkInfo *> v;
 	vector<MetaChunkInfo *>::iterator chunk;
 
@@ -840,7 +919,7 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(req->chunkId));
 	if (chunk == v.end()) {
 		// Chunk disappeared -> stale; this chunk will get nuked
-		COSMIX_LOG_DEBUG("Re-replicate: chunk (%lld) disappeared => so, stale",
+		KFS_LOG_DEBUG("Re-replicate: chunk (%lld) disappeared => so, stale",
 				req->chunkId);
 		mFailedReplicationStats->Update(1);
 		req->server->NotifyStaleChunk(req->chunkId);
@@ -849,7 +928,7 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	MetaChunkInfo *mci = *chunk;
 	if (mci->chunkVersion != req->chunkVersion) {
 		// Version that we replicated has changed...so, stale
-		COSMIX_LOG_DEBUG("Re-replicate: chunk (%lld) version changed (was=%lld, now=%lld) => so, stale",
+		KFS_LOG_DEBUG("Re-replicate: chunk (%lld) version changed (was=%lld, now=%lld) => so, stale",
 				req->chunkId, req->chunkVersion, mci->chunkVersion);
 		mFailedReplicationStats->Update(1);
 		req->server->NotifyStaleChunk(req->chunkId);
@@ -859,4 +938,10 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	// Yaeee...all good...
 	UpdateChunkToServerMapping(req->chunkId, req->server.get());
 
+}
+
+void
+LayoutManager::ChangeChunkReplication(chunkId_t chunkId)
+{
+	mChunkReplicationCheckSet.insert(chunkId);
 }

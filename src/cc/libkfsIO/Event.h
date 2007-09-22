@@ -29,6 +29,8 @@
 #include "KfsCallbackObj.h"
 #include <boost/shared_ptr.hpp>
 
+namespace KFS
+{
 ///
 /// \enum EventCode_t
 /// Various event codes that a KfsCallbackObj is notified with when
@@ -120,5 +122,7 @@ private:
 };
 
 typedef boost::shared_ptr<Event> EventPtr;
+
+}
 
 #endif // _LIBKFSIO_EVENT_H

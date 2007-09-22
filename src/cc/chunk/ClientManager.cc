@@ -25,6 +25,10 @@
 
 #include "ClientManager.h"
 
+using std::list;
+
+using namespace KFS;
+
 void 
 ClientManager::StartAcceptor(int port)
 {

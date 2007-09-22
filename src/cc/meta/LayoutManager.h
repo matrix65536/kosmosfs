@@ -33,8 +33,7 @@
 
 #include <map>
 #include <vector>
-using std::vector;
-using std::map;
+#include <set>
 
 #include "kfstypes.h"
 #include "meta.h"
@@ -95,14 +94,18 @@ namespace KFS
 		fid_t fid;
 		/// is this chunk being (re) replicated now?
 		bool isBeingReplicated;
-		vector<ChunkServerPtr> chunkServers;
-		vector<LeaseInfo> chunkLeases;
+		std::vector<ChunkServerPtr> chunkServers;
+		std::vector<LeaseInfo> chunkLeases;
 	};
 
 	// chunkid to server(s) map
-	typedef map <chunkId_t, ChunkPlacementInfo > CSMap;
-	typedef map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
-	typedef map <chunkId_t, ChunkPlacementInfo >::iterator CSMapIter;
+	typedef std::map <chunkId_t, ChunkPlacementInfo > CSMap;
+	typedef std::map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
+	typedef std::map <chunkId_t, ChunkPlacementInfo >::iterator CSMapIter;
+	
+	// set of chunks whose replication needs checking
+	typedef std::set <chunkId_t> CRCheckSet;
+	typedef std::set <chunkId_t>::iterator CRCheckSetIter;
 
         ///
         /// LayoutManager is responsible for write allocation:
@@ -168,6 +171,13 @@ namespace KFS
                 /// @param[in] chunkId The id of the chunk being deleted
 		void DeleteChunk(chunkId_t chunkId);
 
+                /// A chunkserver is notifying us that a chunk it has is
+		/// corrupt; so update our tables to reflect that the chunk isn't
+		/// hosted on that chunkserver any more; re-replication will take
+		/// care of recovering that chunk.
+                /// @param[in] r  The request that describes the corrupted chunk
+		void ChunkCorrupt(MetaChunkCorrupt *r);
+
                 /// Truncate a chunk to the desired size on the server that holds it.
                 /// @param[in] chunkId The id of the chunk being
                 /// truncated
@@ -182,7 +192,7 @@ namespace KFS
 
 		/// Is a valid lease issued on any of the chunks in the
 		/// vector of MetaChunkInfo's?
-		bool IsValidLeaseIssued(const vector <MetaChunkInfo *> &c);
+		bool IsValidLeaseIssued(const std::vector <MetaChunkInfo *> &c);
 
                 /// Add a mapping from chunkId -> server.
                 /// @param[in] chunkId  chunkId that has been stored
@@ -214,7 +224,7 @@ namespace KFS
                 /// @param[out] c   server(s) that stores chunk chunkId
                 /// @retval 0 if a mapping was found; -1 otherwise
                 ///
-		int GetChunkToServerMapping(chunkId_t chunkId, vector<ChunkServerPtr> &c);
+		int GetChunkToServerMapping(chunkId_t chunkId, std::vector<ChunkServerPtr> &c);
 
                 /// Ask each of the chunkserver's to dispatch pending RPCs
 		void Dispatch();
@@ -246,6 +256,13 @@ namespace KFS
 		/// it to do the replication.
 		void ChunkReplicationDone(const MetaChunkReplicate *req);
 
+		/// Degree of replication for chunk has changed.  When the replication
+		/// checker runs, have it check the status for this chunk.
+		/// @param[in] chunkId  chunk whose replication level needs checking
+		///
+		void ChangeChunkReplication(chunkId_t chunkId);
+
+
 		void InitRecoveryStartTime()
 		{
 			mRecoveryStartTime = time(0);
@@ -276,10 +293,13 @@ namespace KFS
 		ChunkReplicator mChunkReplicator;
 
                 /// List of connected chunk servers.
-                vector <ChunkServerPtr> mChunkServers;
+                std::vector <ChunkServerPtr> mChunkServers;
 
                 /// Mapping from a chunk to its location(s).
                 CSMap mChunkToServerMap;
+
+                /// Set of chunks whose replication needs checking
+                CRCheckSet mChunkReplicationCheckSet;
 
 		/// Counters to track chunk replications
 		Counter *mOngoingReplicationStats;
@@ -293,8 +313,8 @@ namespace KFS
 		/// @param[out] result  The set of available servers
 		/// @param[in] excludes  The set of servers to exclude from
 		///    candidate generation.
-		void FindCandidateServers(vector<ChunkServerPtr> &result,
-					const vector<ChunkServerPtr> &excludes);
+		void FindCandidateServers(std::vector<ChunkServerPtr> &result,
+					const std::vector<ChunkServerPtr> &excludes);
 
 		/// Check the # of copies for the chunk and return true if the
 		/// # of copies is less than 3.  We also don't replicate a chunk
@@ -302,17 +322,20 @@ namespace KFS
 		/// has been issued).
 		/// @param[in] chunkId   The id of the chunk which we are checking
 		/// @param[in] clli  The lease/location information about the chunk.
+		/// @param[out] numReplicas  The target # of replicas for the chunk
 		/// @retval true if the chunk is to be replicated; false otherwise
 		bool ChunkNeedsReplication(chunkId_t chunkId, 
-				ChunkPlacementInfo &clli);
+				ChunkPlacementInfo &clli,
+				int16_t &numReplicas);
 
 		/// Replicate a chunk.  This involves finding a new location for
 		/// the chunk that is different from the existing set of replicas
 		/// and asking the chunkserver to get a copy.
 		/// @param[in] chunkId   The id of the chunk which we are checking
 		/// @param[in] clli  The lease/location information about the chunk.
-		void ReplicateChunk(chunkId_t chunkId, 
-				const ChunkPlacementInfo &clli);
+		/// @param[in] numReplicas  The target # of replicas for the chunk
+		void ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
+				int16_t numReplicas);
 
 		/// Return true if c is a server in mChunkServers[].
 		bool ValidServer(ChunkServer *c);

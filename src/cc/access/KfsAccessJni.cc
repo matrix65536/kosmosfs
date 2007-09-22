@@ -81,6 +81,9 @@ extern "C" {
     jshort Java_org_kosmix_kosmosfs_access_KfsAccess_getReplication(
         JNIEnv *jenv, jclass jcls, jstring jpath);
 
+    jshort Java_org_kosmix_kosmosfs_access_KfsAccess_setReplication(
+        JNIEnv *jenv, jclass jcls, jstring jpath, jint jnumReplicas);
+
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_open(
         JNIEnv *jenv, jclass jcls, jstring jpath, jstring jmode, jint jnumReplicas);
 
@@ -423,6 +426,17 @@ jshort Java_org_kosmix_kosmosfs_access_KfsAccess_getReplication(
 
     setStr(path, jenv, jpath);
     return clnt->GetReplicationFactor(path.c_str());
+}
+
+jshort Java_org_kosmix_kosmosfs_access_KfsAccess_setReplication(
+    JNIEnv *jenv, jclass jcls, jstring jpath, jint jnumReplicas)
+{
+    KfsClient *clnt = KfsClient::Instance();
+
+    string path;
+
+    setStr(path, jenv, jpath);
+    return clnt->SetReplicationFactor(path.c_str(), jnumReplicas);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_read(

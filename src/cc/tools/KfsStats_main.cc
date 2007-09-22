@@ -40,6 +40,8 @@ using std::endl;
 #include "common/log.h"
 
 #include "MonUtils.h"
+
+using namespace KFS;
 using namespace KFS_MON;
 
 static void
@@ -99,7 +101,7 @@ int main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                COSMIX_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }
@@ -136,7 +138,7 @@ StatsMetaServer(const ServerLocation &location, bool rpcStats, int numSecs)
     TcpSocket metaServerSock;
 
     if (metaServerSock.Connect(location) < 0) {
-        COSMIX_LOG_ERROR("Unable to connect to %s",
+        KFS_LOG_ERROR("Unable to connect to %s",
                          location.ToString().c_str());
         exit(0);
     }
@@ -160,7 +162,7 @@ RpcStatsMetaServer(TcpSocket &metaServerSock, int numSecs)
         ++cmdSeqNum;
         numIO = DoOpCommon(&op, &metaServerSock);
         if (numIO < 0) {
-            COSMIX_LOG_ERROR("Server isn't responding to stats");
+            KFS_LOG_ERROR("Server isn't responding to stats");
             exit(0);
         }
         
@@ -203,7 +205,7 @@ BasicStatsMetaServer(TcpSocket &metaServerSock, int numSecs)
         ++cmdSeqNum;
         numIO = DoOpCommon(&op, &metaServerSock);
         if (numIO < 0) {
-            COSMIX_LOG_ERROR("Server isn't responding to stats");
+            KFS_LOG_ERROR("Server isn't responding to stats");
             exit(0);
         }
         // useful things to have: # of connections handled
@@ -231,7 +233,7 @@ StatsChunkServer(const ServerLocation &location, bool rpcStats, int numSecs)
     TcpSocket chunkServerSock;
 
     if (chunkServerSock.Connect(location) < 0) {
-        COSMIX_LOG_ERROR("Unable to connect to %s",
+        KFS_LOG_ERROR("Unable to connect to %s",
                          location.ToString().c_str());
         exit(0);
     }
@@ -256,7 +258,7 @@ RpcStatsChunkServer(TcpSocket &chunkServerSock, int numSecs)
         ++cmdSeqNum;
         numIO = DoOpCommon(&op, &chunkServerSock);
         if (numIO < 0) {
-            COSMIX_LOG_ERROR("Server isn't responding to stats");
+            KFS_LOG_ERROR("Server isn't responding to stats");
             exit(0);
         }
 
@@ -289,7 +291,7 @@ BasicStatsChunkServer(TcpSocket &chunkServerSock, int numSecs)
         ++cmdSeqNum;
         numIO = DoOpCommon(&op, &chunkServerSock);
         if (numIO < 0) {
-            COSMIX_LOG_ERROR("Server isn't responding to stats");
+            KFS_LOG_ERROR("Server isn't responding to stats");
             exit(0);
         }
 

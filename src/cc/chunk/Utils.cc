@@ -26,13 +26,16 @@
 #include "Utils.h"
 #include "common/log.h"
 
+using std::string;
+using namespace KFS;
+
 ///
 /// Return true if there is a sequence of "\r\n\r\n".
 /// @param[in] iobuf: Buffer with data sent by the client
 /// @param[out] msgLen: string length of the command in the buffer
 /// @retval true if a command is present; false otherwise.
 ///
-bool IsMsgAvail(IOBuffer *iobuf, int *msgLen)
+bool KFS::IsMsgAvail(IOBuffer *iobuf, int *msgLen)
 {
     char buf[1024];
     int nAvail, len = 0, i;
@@ -57,10 +60,9 @@ bool IsMsgAvail(IOBuffer *iobuf, int *msgLen)
     return false;
 }
 
-void
-die(const string &msg)
+void KFS::die(const string &msg)
 {
-    COSMIX_LOG_ERROR("Panic'ing: %s", msg.c_str());
+    KFS_LOG_ERROR("Panic'ing: %s", msg.c_str());
     abort();
 }
 

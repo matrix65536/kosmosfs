@@ -140,7 +140,7 @@ struct FilePosition {
     }
     void Reset() {
 
-        COSMIX_LOG_DEBUG("Calling reset servers");
+        KFS_LOG_DEBUG("Calling reset servers");
 
 	fileOffset = chunkOffset = 0;
 	chunkNum = 0;
@@ -164,7 +164,7 @@ struct FilePosition {
     TcpSocket *preferredServer;
 
     void ResetServers() {
-        COSMIX_LOG_DEBUG("Calling reset servers");
+        KFS_LOG_DEBUG("Calling reset servers");
 
         chunkServers.clear();
         preferredServer = NULL;
@@ -326,10 +326,11 @@ public:
     /// @param[in] pathname that has to be created
     /// @param[in] numReplicas the desired degree of replication for
     /// the file.
+    /// @param[in] exclusive  create will fail if the exists (O_EXCL flag)
     /// @retval on success, fd corresponding to the created file;
     /// -errno on failure.
     ///
-    int Create(const char *pathname, int numReplicas = 3);
+    int Create(const char *pathname, int numReplicas = 3, bool exclusive = false);
 
     ///
     /// Remove a file which is specified by a complete path.
@@ -438,6 +439,14 @@ public:
     /// @retval count
     ///
     int16_t GetReplicationFactor(const char *pathname);
+
+    ///
+    /// Set the degree of replication for the pathname.
+    /// @param[in] pathname	The full pathname of the file such as /../foo
+    /// @param[in] numReplicas  The desired degree of replication.
+    /// @retval -1 on failure; on success, the # of replicas that will be made.
+    ///
+    int16_t SetReplicationFactor(const char *pathname, int16_t numReplicas);
 
     // Next sequence number for operations.
     // This is called in a thread safe manner.
@@ -698,6 +707,7 @@ private:
 extern std::string ErrorCodeToStr(int status);
 // Helper functions
 extern int DoOpSend(KfsOp *op, TcpSocket *sock);
+extern int DoOpSend(KfsOp *op, std::vector<TcpSocket *> &targets);
 extern int DoOpResponse(KfsOp *op, TcpSocket *sock);
 extern int DoOpCommon(KfsOp *op, TcpSocket *sock);
 

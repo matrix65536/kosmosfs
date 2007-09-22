@@ -28,7 +28,9 @@
 
 #include "libkfsIO/IOBuffer.h"
 #include <string>
-using std::string;
+
+namespace KFS
+{
 
 ///
 /// Given some data in a buffer, determine if we have a received a
@@ -44,6 +46,8 @@ extern bool IsMsgAvail(IOBuffer *iobuf, int *msgLen);
 /// \brief bomb out on "impossible" error
 /// \param[in] msg       panic text
 ///
-extern void die(const string &msg);
+extern void die(const std::string &msg);
+
+}
 
 #endif // CHUNKSERVER_UTILS_H

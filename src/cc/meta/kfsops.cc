@@ -120,16 +120,17 @@ Tree::link(fid_t dir, const string fname, FileType type, fid_t myID,
  * \param[in] dir	file id of the parent directory
  * \param[in] fname	file name
  * \param[out] newFid	id of new file
- * \param[in] nuMReplicas desired degree of replication for file
+ * \param[in] numReplicas desired degree of replication for file
+ * \param[in] exclusive  model the O_EXCL flag of open()
  *
  * \return		status code (zero on success)
  */
 int
 Tree::create(fid_t dir, const string &fname, fid_t *newFid, 
-		int16_t numReplicas)
+		int16_t numReplicas, bool exclusive)
 {
 	if (!legalname(fname)) {
-		COSMIX_LOG_DEBUG("Bad file name %s", fname.c_str());
+		KFS_LOG_DEBUG("Bad file name %s", fname.c_str());
 		return -EINVAL;
 	}
 
@@ -138,9 +139,14 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 		if (fa->type != KFS_FILE)
 			return -EISDIR;
 
+		// Model O_EXECL behavior in create: if the file exists
+		// and exclusive is specified, fail the create.
+		if (exclusive)
+			return -EEXIST;
+
 		int status = remove(dir, fname);
 		if (status == -EBUSY) {
-			COSMIX_LOG_DEBUG("Remove failed as file is busy");
+			KFS_LOG_DEBUG("Remove failed as file is busy");
 			return status;
 		}
 		assert(status == 0);
@@ -194,7 +200,7 @@ Tree::remove(fid_t dir, const string &fname)
 		if (gLayoutManager.IsValidLeaseIssued(chunkInfo)) {
 			// put the file into dumpster
 			int status = moveToDumpster(dir, fname);
-			COSMIX_LOG_DEBUG("Moving %s to dumpster", fname.c_str());
+			KFS_LOG_DEBUG("Moving %s to dumpster", fname.c_str());
 			return status;
 		}
 		// fire-away...
@@ -265,7 +271,7 @@ Tree::rmdir(fid_t dir, const string &dname)
 	MetaFattr *fa = lookup(dir, dname);
 
 	if ((dir == ROOTFID) && (dname == DUMPSTERDIR)) {
-		COSMIX_LOG_INFO(" Preventing removing dumpster (%s)",
+		KFS_LOG_INFO(" Preventing removing dumpster (%s)",
 					dname.c_str());
 		return -EPERM;
 	}
@@ -708,6 +714,32 @@ Tree::rename(fid_t parent, const string &oldname, string &newname,
 	return 0;
 }
 
+
+/*!
+ * \brief Change the degree of replication for a file.
+ * \param[in] dir	file id of the file
+ * \param[in] numReplicas	desired degree of replication
+ * \return		status code (-errno on failure)
+ */
+int
+Tree::changeFileReplication(fid_t fid, int16_t numReplicas)
+{
+	MetaFattr *fa = getFattr(fid);
+        vector<MetaChunkInfo*> chunkInfo;
+
+	if (fa == NULL)
+		return -ENOENT;
+
+	fa->setReplication(numReplicas);
+
+        getalloc(fid, chunkInfo);
+
+        for (vector<ChunkLayoutInfo>::size_type i = 0; i < chunkInfo.size(); ++i) {
+		gLayoutManager.ChangeChunkReplication(chunkInfo[i]->chunkId);
+	}
+	return 0;
+}
+
 /*!
  * \brief  A file that has to be removed is currently busy.  So, rename the
  * file to the dumpster and we'll clean it up later.
@@ -724,12 +756,12 @@ Tree::moveToDumpster(fid_t dir, const string &fname)
 
 	if (fa == NULL) {
 		// Someone nuked the dumpster
-		COSMIX_LOG_DEBUG("No dumpster dir...recreating...");
+		KFS_LOG_DEBUG("No dumpster dir...recreating...");
 		makeDumpsterDir();
 		fa = lookup(ROOTFID, DUMPSTERDIR);
 		if (fa == NULL) {
 			assert(!"No dumpster");
-			COSMIX_LOG_INFO("Unable to create dumpster dir to remove %s",
+			KFS_LOG_INFO("Unable to create dumpster dir to remove %s",
 					fname.c_str());
 			return -1;
 		}
@@ -766,7 +798,7 @@ Tree::cleanupDumpster()
 
 	if (fa == NULL) {
 		// Someone nuked the dumpster
-		COSMIX_LOG_DEBUG("No dumpster...recreating...");
+		KFS_LOG_DEBUG("No dumpster...recreating...");
 		makeDumpsterDir();
 	}
 		

@@ -27,7 +27,8 @@
 #include "NetConnection.h"
 #include "Globals.h"
 
-using namespace libkfsio;
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 void NetConnection::HandleReadEvent()
 {
@@ -39,7 +40,7 @@ void NetConnection::HandleReadEvent()
         sock = mSock->Accept();
 #ifdef DEBUG
         if (sock == NULL) {
-            COSMIX_LOG_DEBUG("# of open-fd's: disk=%d, net=%d",
+            KFS_LOG_DEBUG("# of open-fd's: disk=%d, net=%d",
                              globals().ctrOpenDiskFds.GetValue(),
                              globals().ctrOpenNetFds.GetValue());
         }
@@ -56,7 +57,7 @@ void NetConnection::HandleReadEvent()
         }
         nread = mInBuffer->Read(mSock->GetFd());
         if (nread == 0) {
-            COSMIX_LOG_DEBUG("Read 0 bytes...connection dropped");
+            KFS_LOG_DEBUG("Read 0 bytes...connection dropped");
             mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
         } else if (nread > 0) {
             mCallbackObj->HandleEvent(EVENT_NET_READ, (void *) mInBuffer);
@@ -75,7 +76,7 @@ void NetConnection::HandleWriteEvent()
     // only as much as is asked for.
     nwrote = mOutBuffer->Write(mSock->GetFd());
     if (nwrote == 0) {
-        COSMIX_LOG_DEBUG("Wrote 0 bytes...connection dropped");
+        KFS_LOG_DEBUG("Wrote 0 bytes...connection dropped");
         mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
     } else if (nwrote > 0) {
         mCallbackObj->HandleEvent(EVENT_NET_WROTE, (void *) mOutBuffer);
@@ -84,7 +85,7 @@ void NetConnection::HandleWriteEvent()
 
 void NetConnection::HandleErrorEvent()
 {
-    COSMIX_LOG_DEBUG("Got an error on socket.  Closing connection");
+    KFS_LOG_DEBUG("Got an error on socket.  Closing connection");
     mSock->Close();
     mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
 }

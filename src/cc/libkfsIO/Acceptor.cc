@@ -26,8 +26,9 @@
 #include "Acceptor.h"
 #include "NetManager.h"
 #include "Globals.h"
-using namespace libkfsio;
 
+using namespace KFS;
+using namespace KFS::libkfsio;
 ///
 /// Create a TCP socket, bind it to the port, and listen for incoming connections.
 ///

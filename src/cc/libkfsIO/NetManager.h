@@ -29,10 +29,12 @@
 #include <sys/time.h>
 
 #include <list>
-using std::list;
 
 #include "ITimeout.h"
 #include "NetConnection.h"
+
+namespace KFS
+{
 
 ///
 /// \file NetManager.h
@@ -49,8 +51,8 @@ using std::list;
 /// timeout interval is mSelectTimeout.
 //
 
-typedef list<NetConnectionPtr> NetConnectionList_t;
-typedef list<NetConnectionPtr>::iterator NetConnectionListIter_t;
+typedef std::list<NetConnectionPtr> NetConnectionList_t;
+typedef std::list<NetConnectionPtr>::iterator NetConnectionListIter_t;
 
 class NetManager {
 public:
@@ -85,7 +87,9 @@ private:
     struct timeval 	mSelectTimeout;
     /// Handlers that are notified whenever a call to select()
     /// returns.  To the handlers, the notification is a timeout signal.
-    list<ITimeout *>	mTimeoutHandlers;
+    std::list<ITimeout *>	mTimeoutHandlers;
 };
+
+}
 
 #endif // _LIBIO_NETMANAGER_H

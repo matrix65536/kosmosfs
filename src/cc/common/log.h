@@ -39,11 +39,11 @@
 #endif
 #include <pthread.h>
 
-#ifndef _COSMIX_LOG_USE_NAMESPACE_STD
+#ifndef _KFS_LOG_USE_NAMESPACE_STD
 #ifdef __cplusplus
-#define _COSMIX_LOG_USE_NAMESPACE_STD	using namespace std
+#define _KFS_LOG_USE_NAMESPACE_STD	using namespace std
 #else
-#define _COSMIX_LOG_USE_NAMESPACE_STD
+#define _KFS_LOG_USE_NAMESPACE_STD
 #endif
 #endif
 
@@ -55,15 +55,18 @@
  */
 #pragma GCC system_header
 
-extern pthread_mutex_t _cosmix_log_internal_stdio_lock;
+namespace KFS 
+{
 
-typedef int CosmixLogLevel;
-extern const CosmixLogLevel COSMIX_LOG_ERROR_LEVEL;
-extern const CosmixLogLevel COSMIX_LOG_WARN_LEVEL;
-extern const CosmixLogLevel COSMIX_LOG_INFO_LEVEL;
-extern const CosmixLogLevel COSMIX_LOG_DEBUG_LEVEL;
-extern const CosmixLogLevel COSMIX_LOG_INSANE_LEVEL;
-extern CosmixLogLevel cosmix_log_level;
+extern pthread_mutex_t _kosmosfs_log_internal_stdio_lock;
+
+typedef int KosmosFSLogLevel;
+extern const KosmosFSLogLevel KFS_LOG_ERROR_LEVEL;
+extern const KosmosFSLogLevel KFS_LOG_WARN_LEVEL;
+extern const KosmosFSLogLevel KFS_LOG_INFO_LEVEL;
+extern const KosmosFSLogLevel KFS_LOG_DEBUG_LEVEL;
+extern const KosmosFSLogLevel KFS_LOG_INSANE_LEVEL;
+extern KosmosFSLogLevel kosmosfs_log_level;
 
 /*
  * How logging systems handle log levels:
@@ -74,76 +77,78 @@ extern CosmixLogLevel cosmix_log_level;
 */
 
 /** Internal placeholder log-to-stderr function. */
-#ifndef _COSMIX_LOG_INTERNAL
-#define _COSMIX_LOG_INTERNAL(level, ...) \
+#ifndef _KFS_LOG_INTERNAL
+#define _KFS_LOG_INTERNAL(level, ...) \
   { \
-    _COSMIX_LOG_USE_NAMESPACE_STD; \
+    _KFS_LOG_USE_NAMESPACE_STD; \
     time_t now = std::time(NULL); \
     char nowString[26]; \
     ctime_r(&now, &nowString[0]); \
     nowString[strlen(nowString)-1] = '\0'; \
-    pthread_mutex_lock(&_cosmix_log_internal_stdio_lock); \
+    pthread_mutex_lock(&_kosmosfs_log_internal_stdio_lock); \
     fprintf(stderr, "%s (%lu) %s: %s:%d:%s: ", nowString, pthread_self(), level, \
       __FILE__, __LINE__, __func__); \
     fprintf(stderr, __VA_ARGS__); \
     fputc('\n', stderr); \
-    pthread_mutex_unlock(&_cosmix_log_internal_stdio_lock); \
+    pthread_mutex_unlock(&_kosmosfs_log_internal_stdio_lock); \
   }
 #endif
 
 // A logging library will have a macro wrapper, so
 // these are macro wrappers too.
-#ifndef COSMIX_LOG_INSANE
+#ifndef KFS_LOG_INSANE
 /** Print a insane message, using printf-style varargs. */
-#define COSMIX_LOG_INSANE(...) \
+#define KFS_LOG_INSANE(...) \
 	do { \
-         if (cosmix_log_level >= COSMIX_LOG_INSANE_LEVEL) \
-            _COSMIX_LOG_INTERNAL("INSANE", __VA_ARGS__) \
+         if (kosmosfs_log_level >= KFS_LOG_INSANE_LEVEL) \
+            _KFS_LOG_INTERNAL("INSANE", __VA_ARGS__) \
         } while(0)
 #endif
 
-#ifndef COSMIX_LOG_DEBUG
+#ifndef KFS_LOG_DEBUG
 /** Print a debug message, using printf-style varargs. */
-#define COSMIX_LOG_DEBUG(...) \
+#define KFS_LOG_DEBUG(...) \
 	do { \
-         if (cosmix_log_level >= COSMIX_LOG_DEBUG_LEVEL) \
-            _COSMIX_LOG_INTERNAL("DEBUG", __VA_ARGS__) \
+         if (kosmosfs_log_level >= KFS_LOG_DEBUG_LEVEL) \
+            _KFS_LOG_INTERNAL("DEBUG", __VA_ARGS__) \
         } while(0)
 #endif
 
-#ifndef COSMIX_LOG_INFO
+#ifndef KFS_LOG_INFO
 /** Print an info message, using printf-style varargs. */
-#define COSMIX_LOG_INFO(...) \
+#define KFS_LOG_INFO(...) \
 	do { \
-         if (cosmix_log_level >= COSMIX_LOG_INFO_LEVEL) \
-            _COSMIX_LOG_INTERNAL("INFO", __VA_ARGS__) \
+         if (kosmosfs_log_level >= KFS_LOG_INFO_LEVEL) \
+            _KFS_LOG_INTERNAL("INFO", __VA_ARGS__) \
         } while(0)
 #endif
 
-#ifndef COSMIX_LOG_WARN
+#ifndef KFS_LOG_WARN
 /** Print a warn message, using printf-style varargs. */
-#define COSMIX_LOG_WARN(...) \
+#define KFS_LOG_WARN(...) \
 	do { \
-         if (cosmix_log_level >= COSMIX_LOG_WARN_LEVEL) \
-            _COSMIX_LOG_INTERNAL("WARN", __VA_ARGS__) \
+         if (kosmosfs_log_level >= KFS_LOG_WARN_LEVEL) \
+            _KFS_LOG_INTERNAL("WARN", __VA_ARGS__) \
         } while(0)
 #endif
 
-#ifndef COSMIX_LOG_ERROR
+#ifndef KFS_LOG_ERROR
 /** Print an error message, using printf-style varargs. */
-#define COSMIX_LOG_ERROR(...) \
+#define KFS_LOG_ERROR(...) \
 	do { \
-         if (cosmix_log_level >= COSMIX_LOG_ERROR_LEVEL) \
-            _COSMIX_LOG_INTERNAL("ERROR", __VA_ARGS__) \
+         if (kosmosfs_log_level >= KFS_LOG_ERROR_LEVEL) \
+            _KFS_LOG_INTERNAL("ERROR", __VA_ARGS__) \
         } while(0)
 #endif
 
-#ifndef COSMIX_LOG_PERF
+#ifndef KFS_LOG_PERF
 /** Print an perf log entry, using printf-style varargs. */
-#define COSMIX_LOG_PERF(...) \
+#define KFS_LOG_PERF(...) \
   { \
-    _COSMIX_LOG_INTERNAL("PERF", __VA_ARGS__) \
+    _KFS_LOG_INTERNAL("PERF", __VA_ARGS__) \
   }
 #endif
+
+}
 
 #endif // COMMON_LOG_H

@@ -26,9 +26,13 @@
 // order of #includes here is critical.  don't change it
 #include "libkfsIO/Counter.h"
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 #include "ChunkServer.h"
+
+using std::list;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 void
 ChunkServer::Init()
@@ -50,7 +54,7 @@ ChunkServer::MainLoop(int clientAcceptPort)
         exit(-1);
     }
 
-    COSMIX_LOG_DEBUG("Hostname: %s", hostname);
+    KFS_LOG_DEBUG("Hostname: %s", hostname);
     
     mLocation.Reset(hostname, clientAcceptPort);
 

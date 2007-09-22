@@ -8,6 +8,7 @@ cpFs2Kfs
 cpKfs2Fs
 KfsCp
 KfsCat
+KfsChangeReplication
 KfsLs
 KfsMkdir
 KfsPing

@@ -26,10 +26,12 @@
 #ifndef _CLIENTSM_H
 #define _CLIENTSM_H
 
+namespace KFS
+{
 class ClientSM; // forward declaration to get things to build...
+}
 
 #include <deque>
-using std::deque;
 
 #include "libkfsIO/Chunk.h"
 #include "libkfsIO/KfsCallbackObj.h"
@@ -37,6 +39,8 @@ using std::deque;
 #include "libkfsIO/NetConnection.h"
 #include "KfsOps.h"
 
+namespace KFS
+{
 
 class ClientSM : public KfsCallbackObj {
 public:
@@ -66,7 +70,7 @@ public:
 private:
     NetConnectionPtr	mNetConnection;
     /// Queue of outstanding ops from the client.  We reply to ops in FIFO
-    deque<KfsOp *>	mOps;
+    std::deque<KfsOp *>	mOps;
 
     /// Given a (possibly) complete op in a buffer, run it.
     /// @retval True if the command was handled (i.e., we have all the
@@ -77,5 +81,6 @@ private:
     void		SendResponse(KfsOp *op);
 };
 
+}
 
 #endif // _CLIENTSM_H

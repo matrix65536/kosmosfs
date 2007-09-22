@@ -31,7 +31,10 @@
 
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
+#include <deque>
 
+namespace KFS
+{
 // forward declaration
 class DiskManager; 
 class DiskConnection;
@@ -42,14 +45,15 @@ class DiskConnection;
 /// last reference is released, appropriate cleanup occurs.
 ///
 typedef boost::shared_ptr<DiskConnection> DiskConnectionPtr;
+}
 
 #include "Chunk.h"
 #include "KfsCallbackObj.h"
 #include "IOBuffer.h"
 #include "DiskEvent.h"
 
-#include <deque>
-using std::deque;
+namespace KFS
+{
 
 ///
 /// \file DiskConnection.h
@@ -81,7 +85,7 @@ struct DiskIORequest {
     off_t  offset;  /// offset from the chunk at which I/O should
                        /// be done
     size_t  numBytes; /// # of bytes in this request
-    list<DiskEventPtr> diskEvents; /// disk events associated with
+    std::list<DiskEventPtr> diskEvents; /// disk events associated with
                                    /// this request.
     bool operator == (DiskIORequest &other) const {
         return ((offset == other.offset) && 
@@ -163,9 +167,10 @@ private:
     /// Queue of disk IO requests that have been scheduled on this
     /// connection.  Whenever the I/O on the head of the queue is complete, the
     /// associated KfsCallbackObj is notified.
-    deque<DiskIORequest>	mDiskIO;
+    std::deque<DiskIORequest>	mDiskIO;
 
 };
 
+}
 
 #endif // _LIBIO_DISKCONNECTION_H

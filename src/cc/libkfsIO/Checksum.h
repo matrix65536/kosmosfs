@@ -29,6 +29,8 @@
 #include <vector>
 #include "libkfsIO/IOBuffer.h"
 
+namespace KFS
+{
 /// Checksums are computed on 64KB block boundaries.  We use the
 /// "rolling" 32-bit Adler checksum algorithm
 const uint32_t CHECKSUM_BLOCKSIZE = 65536;
@@ -47,5 +49,6 @@ extern uint32_t ComputeBlockChecksum(IOBuffer *data, size_t len);
 /// Call this function if you want a checksums for a sequence of CHECKSUM_BLOCKSIZE bytes
 extern std::vector<uint32_t> ComputeChecksums(IOBuffer *data, size_t len);
 
+}
 
 #endif // CHUNKSERVER_CHECKSUM_H

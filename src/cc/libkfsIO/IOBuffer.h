@@ -29,9 +29,11 @@
 #include <cassert>
 #include <list>
 #include <exception>
-using std::list;
 
 #include <boost/shared_ptr.hpp>
+
+namespace KFS
+{
 
 ///
 /// \file IOBuffer.h
@@ -244,15 +246,18 @@ struct IOBuffer {
     void Trim(int nbytes);
 
     /// List of IOBufferData blocks that comprise this buffer.
-    list<IOBufferDataPtr> mBuf;
+    std::list<IOBufferDataPtr> mBuf;
 };
 
-namespace libkfsio
-{
-    /// API to set the default allocation when allocating
-    /// IOBufferData().  The default allocation unit is 4K unless
-    /// changed by this API call.
-    void SetIOBufferSize(uint32_t bufsz);
+
+    namespace libkfsio
+    {
+        /// API to set the default allocation when allocating
+        /// IOBufferData().  The default allocation unit is 4K unless
+        /// changed by this API call.
+        void SetIOBufferSize(uint32_t bufsz);
+    }
+
 }
 
 #endif // _LIBIO_IOBUFFER_H

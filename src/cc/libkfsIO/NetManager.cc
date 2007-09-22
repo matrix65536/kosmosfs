@@ -28,11 +28,14 @@
 #include "NetManager.h"
 #include "TcpSocket.h"
 #include "Globals.h"
-using namespace libkfsio;
 
 #include "common/log.h"
 
 using std::mem_fun;
+using std::list;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 NetManager::NetManager()
 {
@@ -165,7 +168,7 @@ NetManager::MainLoop()
             // Something happened and the connection has closed.  So,
             // remove the connection from our list.
             if (conn->GetFd() < 0) {
-                COSMIX_LOG_DEBUG("Removing fd from poll list");
+                KFS_LOG_DEBUG("Removing fd from poll list");
                 eltToRemove = iter;
                 ++iter;
                 mConnections.erase(eltToRemove);

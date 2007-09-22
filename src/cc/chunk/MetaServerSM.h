@@ -36,8 +36,9 @@
 
 #include <list>
 #include <string>
-using std::list;
-using std::string;
+
+namespace KFS
+{
 
 class MetaServerSMTimeoutImpl;
 
@@ -84,7 +85,7 @@ private:
     /// Track if we have sent a "HELLO" to metaserver
     bool mSentHello;
 
-    list<KfsOp *> mDispatchedOps;
+    std::list<KfsOp *> mDispatchedOps;
 
     /// Our connection to the meta server.
     NetConnectionPtr mNetConnection;
@@ -128,5 +129,7 @@ private:
 };
 
 extern MetaServerSM gMetaServerSM;
+
+}
 
 #endif // CHUNKSERVER_METASERVERSM_H

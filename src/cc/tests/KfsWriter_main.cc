@@ -37,7 +37,7 @@
 using std::cout;
 using std::endl;
 using std::ifstream;
-
+using namespace KFS;
 KfsClient *gKfsClient;
 
 bool doMkdir(char *dirname);
@@ -148,13 +148,16 @@ bool doFileOps(char *testDataFile,
     snprintf(newpath, 256, "/dir1/foo.%d",
              seqNum + 5);
 
-#if 0
-    cout << "Doing rename once..." << endl;
-    int res;
-    if ((res = gKfsClient->RenameOnce(fileName, newpath)) < 0) {
-        cout << "rename once failed as expected" << endl;
+    // test out the O_EXCL flag and verify failure...
+    fd = gKfsClient->Open(fileName, O_CREAT|O_RDWR|O_EXCL);
+    if (fd > 0) {
+        cout << "Failure: Create with O_EXCL on an existing file worked... " << endl;
+        exit(0);
+    } else {
+        cout << "Crate with O_EXCL failed: " << ErrorCodeToStr(fd) << endl;
+        cout << "Expected failure..." << endl;
     }
-#endif 
+
 
     delete [] kfsBuf;
     delete [] dataBuf;

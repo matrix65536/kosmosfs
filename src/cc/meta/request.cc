@@ -32,13 +32,14 @@
 #include "LayoutManager.h"
 
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 using std::map;
 using std::string;
 using std::istringstream;
+using std::min;
 
 using namespace KFS;
+using namespace KFS::libkfsio;
 
 MetaQueue <MetaRequest> requestList;
 
@@ -59,9 +60,11 @@ static int parseHandlerGetalloc(Properties &prop, MetaRequest **r);
 static int parseHandlerGetlayout(Properties &prop, MetaRequest **r);
 static int parseHandlerAllocate(Properties &prop, MetaRequest **r);
 static int parseHandlerTruncate(Properties &prop, MetaRequest **r);
+static int parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r);
 
 static int parseHandlerLeaseAcquire(Properties &prop, MetaRequest **r);
 static int parseHandlerLeaseRenew(Properties &prop, MetaRequest **r);
+static int parseHandlerChunkCorrupt(Properties &prop, MetaRequest **r);
 
 static int parseHandlerHello(Properties &prop, MetaRequest **r);
 
@@ -120,9 +123,11 @@ KFS::RegisterCounters()
 	AddCounter("Rename", META_RENAME);
 	AddCounter("Mkdir", META_MKDIR);
 	AddCounter("Rmdir", META_RMDIR);
+	AddCounter("Change File Replication", META_CHANGE_FILE_REPLICATION);
 	AddCounter("Lease Acquire", META_LEASE_ACQUIRE);
 	AddCounter("Lease Renew", META_LEASE_RENEW);
 	AddCounter("Lease Cleanup", META_LEASE_CLEANUP);
+	AddCounter("Corrupt Chunk ", META_CHUNK_CORRUPT);
 	AddCounter("Chunkserver Hello ", META_HELLO);
 	AddCounter("Chunkserver Bye ", META_BYE);
 	AddCounter("Replication Checker ", META_CHUNK_REPLICATION_CHECK);
@@ -191,7 +196,7 @@ handle_create(MetaRequest *r)
 		return;
 	}
 	req->status = metatree.create(req->dir, req->name, &fid,
-					req->numReplicas);
+					req->numReplicas, req->exclusive);
 	req->fid = fid;
 }
 
@@ -262,14 +267,14 @@ handle_getalloc(MetaRequest *r)
 	vector<ChunkServerPtr> c;
 
 	if (!file_exists(req->fid)) {
-		COSMIX_LOG_DEBUG("handle_getalloc: no such file");
+		KFS_LOG_DEBUG("handle_getalloc: no such file");
 		req->status = -ENOENT;
 		return;
 	}
 
 	req->status = metatree.getalloc(req->fid, req->offset, &chunkInfo);
 	if (req->status != 0) {
-		COSMIX_LOG_DEBUG(
+		KFS_LOG_DEBUG(
 			"handle_getalloc(%lld, %lld) = %d: kfsop failed",
 			req->fid, req->offset, req->status);
 		return;
@@ -278,7 +283,7 @@ handle_getalloc(MetaRequest *r)
 	req->chunkId = chunkInfo->chunkId;
 	req->chunkVersion = chunkInfo->chunkVersion;
 	if (gLayoutManager.GetChunkToServerMapping(req->chunkId, c) != 0) {
-		COSMIX_LOG_DEBUG("handle_getalloc: no chunkservers");
+		KFS_LOG_DEBUG("handle_getalloc: no chunkservers");
 		req->status = -ENOENT;
 		return;
 	}
@@ -377,7 +382,7 @@ handle_allocate(MetaRequest *r)
 	MetaAllocate *req = static_cast<MetaAllocate *>(r);
 
 	if (!req->layoutDone) {
-		COSMIX_LOG_DEBUG("Starting layout for req:%lld", req->opSeqno);
+		KFS_LOG_DEBUG("Starting layout for req:%lld", req->opSeqno);
 		// force an allocation
 		req->chunkId = 0;
 		// start at step #2 above.
@@ -397,7 +402,7 @@ handle_allocate(MetaRequest *r)
 				return;
 			}
 			if (!isNewLease) {
-				COSMIX_LOG_DEBUG("Got valid lease for req:%lld",
+				KFS_LOG_DEBUG("Got valid lease for req:%lld",
 						req->opSeqno);
 				// we got a valid lease.  so, return
 				return;
@@ -415,7 +420,7 @@ handle_allocate(MetaRequest *r)
 		req->suspended = true;
 		return;
 	}
-	COSMIX_LOG_DEBUG("Layout is done for req:%lld", req->opSeqno);
+	KFS_LOG_DEBUG("Layout is done for req:%lld", req->opSeqno);
 
 	if (req->status != 0) {
 		// we have a problem: it is possible that the server
@@ -448,7 +453,7 @@ handle_allocate(MetaRequest *r)
 	req->status = metatree.assignChunkId(req->fid, req->offset,
 					req->chunkId, req->chunkVersion);
 	if (req->status != 0)
-		COSMIX_LOG_DEBUG("Assign chunk id failed...");
+		KFS_LOG_DEBUG("Assign chunk id failed...");
 }
 
 static void
@@ -463,7 +468,7 @@ handle_truncate(MetaRequest *r)
 		MetaAllocate *alloc = new MetaAllocate(req->opSeqno, req->fid,
 							allocOffset);
 
-		COSMIX_LOG_DEBUG("Suspending truncation due to alloc at offset: %lld",
+		KFS_LOG_DEBUG("Suspending truncation due to alloc at offset: %lld",
 				allocOffset);
 
 		// tie things together
@@ -479,6 +484,16 @@ handle_rename(MetaRequest *r)
 	MetaRename *req = static_cast <MetaRename *>(r);
 	req->status = metatree.rename(req->dir, req->oldname, req->newname,
 					req->overwrite);
+}
+
+static void
+handle_change_file_replication(MetaRequest *r)
+{
+	MetaChangeFileReplication *req = static_cast <MetaChangeFileReplication *>(r);
+	if (file_exists(req->fid))
+		req->status = metatree.changeFileReplication(req->fid, req->numReplicas);
+	else
+		req->status = -ENOENT;
 }
 
 static void
@@ -529,6 +544,15 @@ handle_lease_cleanup(MetaRequest *r)
 	gLayoutManager.LeaseCleanup();
 	// some leases are gone.  so, cleanup dumpster
 	metatree.cleanupDumpster();
+	req->status = 0;
+}
+
+static void
+handle_chunk_corrupt(MetaRequest *r)
+{
+	MetaChunkCorrupt *req = static_cast <MetaChunkCorrupt *>(r);
+
+	gLayoutManager.ChunkCorrupt(req);
 	req->status = 0;
 }
 
@@ -599,6 +623,7 @@ setup_handlers()
 	handler[META_ALLOCATE] = handle_allocate;
 	handler[META_TRUNCATE] = handle_truncate;
 	handler[META_RENAME] = handle_rename;
+	handler[META_CHANGE_FILE_REPLICATION] = handle_change_file_replication;
 	handler[META_CHECKPOINT] = handle_checkpoint;
 	handler[META_CHUNK_REPLICATE] = handle_chunk_replication_done;
 	handler[META_CHUNK_REPLICATION_CHECK] = handle_chunk_replication_check;
@@ -610,7 +635,10 @@ setup_handlers()
 	handler[META_LEASE_ACQUIRE] = handle_lease_acquire;
 	handler[META_LEASE_RENEW] = handle_lease_renew;
 	handler[META_LEASE_CLEANUP] = handle_lease_cleanup;
+
+	// Chunk version # increment/corrupt chunk
 	handler[META_CHANGE_CHUNKVERSIONINC] = handle_change_chunkVersionInc;
+	handler[META_CHUNK_CORRUPT] = handle_chunk_corrupt;
 
 	// Monitoring RPCs
 	handler[META_PING] = handle_ping;
@@ -628,10 +656,12 @@ setup_handlers()
 	gParseHandlers["ALLOCATE"] = parseHandlerAllocate;
 	gParseHandlers["TRUNCATE"] = parseHandlerTruncate;
 	gParseHandlers["RENAME"] = parseHandlerRename;
+	gParseHandlers["CHANGE_FILE_REPLICATION"] = parseHandlerChangeFileReplication;
 
 	// Lease related ops
 	gParseHandlers["LEASE_ACQUIRE"] = parseHandlerLeaseAcquire;
 	gParseHandlers["LEASE_RENEW"] = parseHandlerLeaseRenew;
+	gParseHandlers["CORRUPT_CHUNK"] = parseHandlerChunkCorrupt;
 
 	// Meta server <-> Chunk server ops
 	gParseHandlers["HELLO"] = parseHandlerHello;
@@ -818,6 +848,16 @@ MetaChangeChunkVersionInc::log(ofstream &file) const
 }
 
 /*!
+ * \brief log change file replication (nop)
+ */
+int
+MetaChangeFileReplication::log(ofstream &file) const
+{
+	return 0;
+}
+
+
+/*!
  * \brief close log and begin checkpoint generation
  */
 int
@@ -885,6 +925,15 @@ MetaChunkHeartbeat::log(ofstream &file) const
  */
 int
 MetaChunkStaleNotify::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief when a chunkserver tells us of a corrupted chunk, there is nothing to log
+ */
+int
+MetaChunkCorrupt::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1072,6 +1121,7 @@ parseHandlerCreate(Properties &prop, MetaRequest **r)
 	const char *name;
 	seq_t seq;
 	int16_t numReplicas;
+	bool exclusive;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
 	dir = prop.getValue("Parent File-handle", (fid_t) -1);
@@ -1080,14 +1130,15 @@ parseHandlerCreate(Properties &prop, MetaRequest **r)
 	name = prop.getValue("Filename", (const char *) NULL);
 	if (name == NULL)
 		return -1;
-	numReplicas = prop.getValue("Num-replicas", 1);
-	if (numReplicas == 0)
+	// cap replication 
+	numReplicas = min((int16_t) prop.getValue("Num-replicas", 1), MAX_REPLICAS_PER_FILE);
+	if (numReplicas <= 0)
 		return -1;
-	// cap replication at 3
-	if (numReplicas > NUM_REPLICAS_PER_FILE)
-		numReplicas = NUM_REPLICAS_PER_FILE;
+	// by default, create overwrites the file; when it is turned off, 
+	// it is for supporting O_EXCL
+	exclusive = (prop.getValue("Exclusive", 1)) == 1;
 
-	*r = new MetaCreate(seq, dir, name, numReplicas);
+	*r = new MetaCreate(seq, dir, name, numReplicas, exclusive);
 	return 0;
 }
 
@@ -1242,6 +1293,22 @@ parseHandlerRename(Properties &prop, MetaRequest **r)
 	return 0;
 }
 
+static int
+parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r)
+{
+	fid_t fid;
+	seq_t seq;
+	int16_t numReplicas;
+
+	seq = prop.getValue("Cseq", (seq_t) -1);
+	fid = prop.getValue("File-handle", (fid_t) -1);
+	numReplicas = min((int16_t) prop.getValue("Num-replicas", 1), MAX_REPLICAS_PER_FILE);
+	if (numReplicas <= 0)
+		return -1;
+	*r = new MetaChangeFileReplication(seq, fid, numReplicas);
+	return 0;
+}
+
 /*!
  * \brief Parse out the headers from a HELLO message.  The message
  * body contains the id's of the chunks hosted on the server.
@@ -1302,6 +1369,20 @@ parseHandlerLeaseRenew(Properties &prop, MetaRequest **r)
 		leaseType = READ_LEASE;
 
 	*r = new MetaLeaseRenew(seq, leaseType, chunkId, leaseId);
+	return 0;
+}
+
+/*!
+ * \brief Parse out the headers from a CORRUPT_CHUNK message.
+ */
+int
+parseHandlerChunkCorrupt(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	fid_t fid = prop.getValue("File-handle", (chunkId_t) -1);
+	chunkId_t chunkId = prop.getValue("Chunk-handle", (chunkId_t) -1);
+
+	*r = new MetaChunkCorrupt(seq, fid, chunkId);
 	return 0;
 }
 
@@ -1575,10 +1656,27 @@ MetaLeaseRenew::response(ostringstream &os)
 }
 
 void
+MetaChunkCorrupt::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
 MetaTruncate::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
+MetaChangeFileReplication::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Num-replicas: " << numReplicas << "\r\n";
 	os << "Status: " << status << "\r\n\r\n";
 }
 

@@ -35,7 +35,9 @@ using std::endl;
 using std::ifstream;
 using std::string;
 
+using namespace KFS;
 KfsClient *gKfsClient;
+
 static long doRead(const string &kfspathname, int numMBytes, int readSizeBytes);
 
 int
@@ -62,7 +64,7 @@ main(int argc, char **argv)
                 numMBytes = atoi(optarg);
                 break;
             default:
-                COSMIX_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }

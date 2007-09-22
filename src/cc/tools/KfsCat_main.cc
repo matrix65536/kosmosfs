@@ -37,6 +37,7 @@ using std::cout;
 using std::endl;
 using std::ifstream;
 using std::string;
+using namespace KFS;
 
 KfsClient *gKfsClient;
 static ssize_t DoCat(const char *pahtname);
@@ -61,7 +62,7 @@ main(int argc, char **argv)
                 port = atoi(optarg);
                 break;
             default:
-                COSMIX_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }

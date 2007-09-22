@@ -29,7 +29,6 @@
 #include "KfsOps.h"
 #include "common/kfstypes.h"
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 #include "ChunkManager.h"
 #include "ChunkServer.h"
@@ -40,9 +39,14 @@ using namespace libkfsio;
 
 using std::map;
 using std::string;
+using std::ofstream;
 using std::istringstream;
 using std::ostringstream;
 using std::for_each;
+using std::vector;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 typedef int (*ParseHandler)(Properties &, KfsOp **);
 
@@ -81,7 +85,7 @@ int parseHandlerPing(Properties &prop, KfsOp **c);
 int parseHandlerStats(Properties &prop, KfsOp **c);
 
 void
-InitParseHandlers()
+KFS::InitParseHandlers()
 {
     gParseHandlers["OPEN"] = parseHandlerOpen;
     gParseHandlers["CLOSE"] = parseHandlerClose;
@@ -112,7 +116,7 @@ AddCounter(const char *name, KfsOp_t opName)
 }
 
 void
-RegisterCounters()
+KFS::RegisterCounters()
 {
     static int calledOnce = 0;
     if (calledOnce)
@@ -174,7 +178,7 @@ UpdateCounter(KfsOp_t opName)
 /// @retval 0 on success;  -1 if there is an error
 /// 
 int
-ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res)
+KFS::ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res)
 {
     const char *delims = " \r\n";
     // header/value pairs are separated by a :
@@ -559,7 +563,7 @@ WriteOp::HandleWriteDone(int code, void *data)
         numBytesIO = status;
         SET_HANDLER(this, &WriteOp::HandleSyncDone);
         if (gChunkManager.Sync(this) < 0) {
-            COSMIX_LOG_DEBUG("Sync failed...");
+            KFS_LOG_DEBUG("Sync failed...");
             // eat up everything that was sent
             dataBuf->Consume(numBytes);
             // Sync failed
@@ -759,7 +763,7 @@ ReplicateChunkOp::Execute()
 
 #ifdef DEBUG
     string s = location.ToString();
-    COSMIX_LOG_DEBUG("Replicating chunk: %ld from %s",
+    KFS_LOG_DEBUG("Replicating chunk: %ld from %s",
                      chunkId, s.c_str());
 #endif
 
@@ -871,7 +875,7 @@ WriteCommitOp::Execute()
 
     int64_t v = gChunkManager.GetChunkVersion(chunkId);
     if (v != chunkVersion) {
-        COSMIX_LOG_DEBUG("Version # mismatch(have=%ld vs asked=%ld...failing a commit",
+        KFS_LOG_DEBUG("Version # mismatch(have=%ld vs asked=%ld...failing a commit",
                          v, chunkVersion);
         status = -KFS::EBADVERS;
         clnt->HandleEvent(EVENT_CMD_DONE, this);
@@ -1164,7 +1168,7 @@ WriteSyncOp::Execute()
     UpdateCounter(CMD_WRITE_SYNC);
 
     if (!gLeaseClerk.IsLeaseValid(chunkId)) {
-        COSMIX_LOG_DEBUG("Write sync failed...lease expired for %ld",
+        KFS_LOG_DEBUG("Write sync failed...lease expired for %ld",
                          chunkId);
         status = -KFS::ELEASEEXPIRED;
     }
@@ -1284,6 +1288,24 @@ LeaseRenewOp::HandleDone(int code, void *data)
 
     assert(op == this);
     return op->clnt->HandleEvent(EVENT_CMD_DONE, data);
+}
+
+void
+CorruptChunkOp::Request(ostringstream &os)
+{
+    os << "CORRUPT_CHUNK\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "File-handle:" << fid << "\r\n";
+    os << "Chunk-handle:" << chunkId << "\r\n\r\n";
+}
+
+int
+CorruptChunkOp::HandleDone(int code, void *data)
+{
+    // Thank you metaserver for replying :-)
+    delete this;
+    return 0;
 }
 
 class PrintChunkInfo {

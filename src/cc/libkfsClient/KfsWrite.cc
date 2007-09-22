@@ -97,7 +97,7 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 	if (pos->preferredServer == NULL) {
 	    numIO = OpenChunk(fd);
 	    if (numIO < 0) {
-		COSMIX_LOG_DEBUG("OpenChunk(%ld)", numIO);
+		KFS_LOG_DEBUG("OpenChunk(%ld)", numIO);
 		break;
 	    }
 	}
@@ -115,14 +115,14 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 
 	if (numIO < 0) {
 	    string errstr = ErrorCodeToStr(numIO);
-	    COSMIX_LOG_DEBUG("WriteToXXX:%s", errstr.c_str());
+	    KFS_LOG_DEBUG("WriteToXXX:%s", errstr.c_str());
 	    break;
 	}
 
 	nwrote += numIO;
 	numIO = Seek(fd, numIO, SEEK_CUR);
 	if (numIO < 0) {
-	    COSMIX_LOG_DEBUG("Seek(%ld)", numIO);
+	    KFS_LOG_DEBUG("Seek(%ld)", numIO);
 	    break;
 	}
     }
@@ -131,7 +131,7 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 	return numIO;
 
     if (nwrote != numBytes) {
-	COSMIX_LOG_DEBUG("----Write done: asked: %lu, got: %lu-----",
+	KFS_LOG_DEBUG("----Write done: asked: %lu, got: %lu-----",
 			  numBytes, nwrote);
     }
     return nwrote;
@@ -180,7 +180,7 @@ KfsClient::WriteToBuffer(int fd, const char *buf, size_t numBytes)
     numIO = min(ChunkBuffer::BUF_SIZE - cb->length, numBytes);
     assert(numIO > 0);
 
-    // COSMIX_LOG_DEBUG("Buffer absorbs write...%d bytes", numIO);
+    // KFS_LOG_DEBUG("Buffer absorbs write...%d bytes", numIO);
 
     // chunkBuf[0] corresponds to some offset in the chunk,
     // which is defined by chunkBufStart.
@@ -242,7 +242,7 @@ KfsClient::WriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 	}
 
 	if (res == -KFS::ELEASEEXPIRED) {
-	    COSMIX_LOG_DEBUG("Server says lease expired...re-doing allocation");
+	    KFS_LOG_DEBUG("Server says lease expired...re-doing allocation");
 	    Sleep(KFS::LEASE_INTERVAL_SECS / 2);
 	}
 	if ((res == -EHOSTUNREACH) ||
@@ -282,7 +282,7 @@ KfsClient::DoAllocation(int fd, bool force)
 	// handouts etc).
 	for (uint8_t retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
 	    if (retryCount) {
-		COSMIX_LOG_DEBUG("Allocation failed...will retry after a few secs");
+		KFS_LOG_DEBUG("Allocation failed...will retry after a few secs");
 		if (res == -EBUSY)
 		    // the metaserver says it can't get us a lease for
 		    // the chunk.  so, wait for a lease interval to
@@ -304,7 +304,7 @@ KfsClient::DoAllocation(int fd, bool force)
 	assert(chunk != NULL);
 	chunk->didAllocation = true;
 	if (force) {
-	    COSMIX_LOG_DEBUG("Forced allocation version: %ld",
+	    KFS_LOG_DEBUG("Forced allocation version: %ld",
                              chunk->chunkVersion);
 	}
 	// XXX: This is incorrect...you may double-count for
@@ -336,7 +336,7 @@ KfsClient::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 
     for (uint8_t retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
 	if (retryCount) {
-	    COSMIX_LOG_DEBUG("Will retry write after %d secs",
+	    KFS_LOG_DEBUG("Will retry write after %d secs",
 	                     RETRY_DELAY_SECS);
 	    Sleep(RETRY_DELAY_SECS);
 	    op.seq = nextSeq();
@@ -396,7 +396,7 @@ KfsClient::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t nu
     op.ReleaseContentBuf();
 
     if (numIO >= 0) {
-	COSMIX_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes",
+	KFS_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes",
 	                 fd, numIO);
     }
     return numIO;
@@ -467,11 +467,11 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 
     for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
 	if (retryCount != 0) {
-	    COSMIX_LOG_DEBUG("Will retry write after %d secs",
+	    KFS_LOG_DEBUG("Will retry write after %d secs",
 	                     RETRY_DELAY_SECS);
 	    Sleep(RETRY_DELAY_SECS);
 
-	    COSMIX_LOG_DEBUG("Starting retry sequence...");
+	    KFS_LOG_DEBUG("Starting retry sequence...");
 
 	    // for each op bump the sequence #
 	    for (vector<WritePrepareOp *>::size_type i = 0; i < ops.size(); i++) {
@@ -494,7 +494,7 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 	    continue;
 	}
 	if (numIO < 0) {
-	    COSMIX_LOG_DEBUG("Write failed...chunk = %ld, version = %ld, offset = %ld, bytes = %ld",
+	    KFS_LOG_DEBUG("Write failed...chunk = %ld, version = %ld, offset = %ld, bytes = %ld",
 	                     ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
 	                     ops[0]->numBytes);
 	    assert(numIO != -EBADF);
@@ -528,11 +528,11 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
     }
 
     if (numIO != (ssize_t) numBytes) {
-	COSMIX_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes, was asked %lu bytes",
+	KFS_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes, was asked %lu bytes",
 	                 fd, numIO, numBytes);
     }
 
-    COSMIX_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes",
+    KFS_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes",
                      fd, numIO);
 
     return numIO;
@@ -660,6 +660,7 @@ KfsClient::PushDataForWrite(int fd, WritePrepareOp *op)
     ServerLocation loc;
     TcpSocket *sock;
     vector<ServerLocation>::size_type i;
+    vector<TcpSocket *> targets;
 
     // push the write out to all the servers
     for (i = 0; i < chunk->chunkServerLoc.size(); i++) {
@@ -669,15 +670,16 @@ KfsClient::PushDataForWrite(int fd, WritePrepareOp *op)
 	    op->status = -EHOSTUNREACH;
 	    return op->status;
 	}
-
-	assert(op->contentLength == op->numBytes);
-
-        COSMIX_LOG_DEBUG("%s", op->Show().c_str());
-
-	res = DoOpSend(op, sock);
-	if (res < 0)
-	    return res;
+        targets.push_back(sock);
     }
+    assert(op->contentLength == op->numBytes);
+
+    KFS_LOG_DEBUG("%s", op->Show().c_str());
+
+    res = DoOpSend(op, targets);
+    if (res < 0)
+        return res;
+
     return 0;
 }
 
@@ -709,7 +711,7 @@ KfsClient::IssueWriteCommit(int fd, WritePrepareOp *op, WriteSyncOp **sop,
     }
 
     *sop = new WriteSyncOp(nextSeq(), chunk->chunkId, chunk->chunkVersion, w);
-    COSMIX_LOG_DEBUG("%s", (*sop)->Show().c_str());
+    KFS_LOG_DEBUG("%s", (*sop)->Show().c_str());
 
     res = DoOpSend(*sop, masterSock);
     if (res < 0) {

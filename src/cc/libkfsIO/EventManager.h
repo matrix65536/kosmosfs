@@ -30,6 +30,9 @@
 #include "ITimeout.h"
 #include "NetManager.h"
 
+namespace KFS
+{
+
 ///
 /// \file EventManager.h
 /// \brief EventManager supports execution of time-based events.
@@ -74,7 +77,7 @@ private:
     /// consists of a circular array of "slots".  Slots are a
     /// milli-second apart.  At each timeout, the list of events in
     /// the current slot are signaled.
-    list<EventPtr>	mSlots[MAX_EVENT_SLOTS];
+    std::list<EventPtr>	mSlots[MAX_EVENT_SLOTS];
     
     /// Index into the above array that points to where we are
     /// currently.
@@ -82,7 +85,7 @@ private:
 
     /// Events for which the time of occurence is after the last slot
     /// (i.e., after 20 seconds).
-    list <EventPtr>	mLongtermEvents;
+    std::list <EventPtr>	mLongtermEvents;
 };
 
 ///
@@ -104,5 +107,7 @@ private:
     EventManager		*mEventManager;
 
 };
+
+}
 
 #endif // _LIBKFSIO_EVENTMANAGER_H

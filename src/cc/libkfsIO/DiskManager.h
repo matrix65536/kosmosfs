@@ -27,11 +27,13 @@
 #define _LIBIO_DISK_MANAGER_H
 
 #include <list>
-using std::list;
 
 #include "DiskConnection.h"
 #include "NetManager.h"
 #include "ITimeout.h"
+
+namespace KFS
+{
 
 ///
 /// \file DiskManager.h
@@ -103,7 +105,7 @@ public:
 private:
     DiskManagerTimeoutImpl	*mDiskManagerTimeoutImpl;
     /// list of read/write/sync events that have been scheduled
-    list<DiskEventPtr>		mDiskEvents;
+    std::list<DiskEventPtr>		mDiskEvents;
 
 };
 
@@ -126,5 +128,7 @@ private:
     DiskManager		*mDiskManager;
 
 };
+
+}
 
 #endif // _LIBIO_DISK_MANAGER_H

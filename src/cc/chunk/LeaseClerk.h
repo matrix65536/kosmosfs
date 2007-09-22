@@ -38,6 +38,9 @@
 #include "libkfsIO/Event.h"
 #include "common/kfstypes.h"
 
+namespace KFS
+{
+
 struct LeaseInfo_t {
     int64_t leaseId;
     time_t expires;
@@ -92,5 +95,7 @@ private:
 };
 
 extern LeaseClerk gLeaseClerk;
+
+}
 
 #endif // CHUNKSERVER_LEASECLERK_H

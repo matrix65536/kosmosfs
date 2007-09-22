@@ -27,7 +27,6 @@
 #define CHUNKSERVER_REMOTESYNCSM_H
 
 #include <list>
-using std::list;
 
 #include "libkfsIO/Chunk.h"
 #include "libkfsIO/KfsCallbackObj.h"
@@ -38,6 +37,8 @@ using std::list;
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
 
+namespace KFS
+{
 // State machine that asks a remote server to commit a write
 class RemoteSyncSM : public KfsCallbackObj,
                      public boost::enable_shared_from_this<RemoteSyncSM>
@@ -68,7 +69,7 @@ private:
     ServerLocation mLocation;
 
     /// Queue of outstanding ops sent to remote server(s)
-    list<WriteCommitOp *> mDispatchedOps;
+    std::list<WriteCommitOp *> mDispatchedOps;
 
     /// Assign a sequence # for each op we send to the remote server
     kfsSeq_t mSeqnum;
@@ -81,5 +82,7 @@ private:
 };
 
 typedef boost::shared_ptr<RemoteSyncSM> RemoteSyncSMPtr;
+
+}
 
 #endif // CHUNKSERVER_REMOTESYNCSM_H

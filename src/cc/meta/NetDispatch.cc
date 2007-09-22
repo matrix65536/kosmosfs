@@ -17,9 +17,9 @@
 #include "logger.h"
 #include "LayoutManager.h"
 #include "libkfsIO/Globals.h"
-using namespace libkfsio;
 
 using namespace KFS;
+using namespace KFS::libkfsio;
 
 NetDispatch::NetDispatch()
 {
@@ -117,7 +117,7 @@ NetDispatch::Dispatch()
 		}
 		else {
 			// somehow, occasionally we are getting checkpoint requests here...
-			COSMIX_LOG_DEBUG("Getting an op (%d) with no client",
+			KFS_LOG_DEBUG("Getting an op (%d) with no client",
 					r->op);
 		}
         }

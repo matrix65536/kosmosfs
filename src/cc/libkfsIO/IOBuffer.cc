@@ -28,11 +28,15 @@
 
 #include <iostream>
 #include <algorithm>
-using std::min;
 
 #include "IOBuffer.h"
 #include "Globals.h"
-using namespace libkfsio;
+
+using std::min;
+using std::list;
+
+using namespace KFS;
+using namespace KFS::libkfsio;
 
 // To conserve memory, by default, we allocate IOBufferData in 4K
 // blocks.  However, applications are free to change this default unit

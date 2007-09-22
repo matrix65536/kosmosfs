@@ -31,11 +31,12 @@
 #include <boost/shared_ptr.hpp>
 
 #include <vector>
-using std::vector;
 
 #include "common/log.h"
 #include "common/kfstypes.h"
-using namespace KFS;
+
+namespace KFS
+{
 
 ///
 /// \file Chunk.h
@@ -61,7 +62,7 @@ struct ChunkInfo_t {
     kfsChunkId_t chunkId;
     size_t  chunkSize;
     uint32_t chunkVersion;
-    vector<uint32_t> chunkBlockChecksum;
+    std::vector<uint32_t> chunkBlockChecksum;
 };
 
 ///
@@ -77,7 +78,7 @@ struct ChunkHandle_t {
     }
     ~ChunkHandle_t() {
         if (mFileId != -1) {
-            COSMIX_LOG_DEBUG("Closing fileid: %d", mFileId);
+            KFS_LOG_DEBUG("Closing fileid: %d", mFileId);
             close(mFileId);
         }
         mFileId = -1;
@@ -95,9 +96,6 @@ struct ChunkHandle_t {
 ///
 typedef boost::shared_ptr<ChunkHandle_t> ChunkHandlePtr;
 
-// For each file opened for writing, we need to associate all the
-// streams of data with it in one place.
-// struct FileObject_t; 
-
+}
 
 #endif // _CHUNKSERVER_CHUNK_H

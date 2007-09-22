@@ -228,8 +228,21 @@ minute, the older log/checkpoint files are not immediately deleted.
 There is a cleaner process that runs once an hour which deletes the
 old files.
 
-Finally, the chunkserver also has a directory "kfschunk/stalechunks"
-where it keeps "stale" chunks.  These are chunks for which there is a
-chunk version # mismatch: the version # of the chunk on the
-chunkserver is less than what the metaserver knows is the latest
-version # of that chunk.
+Finally, the chunkserver also has a directory "kfschunk/lost+found"
+where it keeps stale/corrupted chunks:
+
+ - stale chunks: These are chunks for which there is a chunk version #
+   mismatch: the version # of the chunk on the chunkserver is less
+   than what the metaserver knows is the latest version # of that
+   chunk.
+ 
+ - corrupted chunk: These are chunks for which there is a checksum
+   mismatch.  That is, KFS chunkservers compute checksums for a data
+   block on 64KB boundaries; the checksums are computed at the time of
+   writing data to tbe chunk and the checksums are stored in the
+   logs/checkpoint files.  On each read, the checksums are validated.
+   During this validation process, if there is a mismatch, then the
+   chunk is said to be corrupt.  The corrupt chunks are moved to the
+   lost+found directory.  The metaserver is notified of the corrupted
+   chunk.  If the chunk is replicated, the metaserver will trigger
+   re-replication to recover the lost chunk.

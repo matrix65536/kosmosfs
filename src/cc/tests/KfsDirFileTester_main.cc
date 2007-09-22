@@ -39,6 +39,8 @@ using std::cout;
 using std::endl;
 using std::ifstream;
 
+using namespace KFS;
+
 KfsClient *gKfsClient;
 
 int doMkdir(char *dirname);

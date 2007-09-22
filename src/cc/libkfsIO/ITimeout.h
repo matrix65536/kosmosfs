@@ -31,6 +31,9 @@ extern "C" {
 #include <sys/time.h>
 }
 
+namespace KFS
+{
+
 ///
 /// \file ITimeout.h
 /// \brief Define the ITimeout interface.
@@ -103,5 +106,7 @@ protected:
 private:
     struct timeval 	mLastCall;
 };
+
+}
 
 #endif // LIBIO_I_TIMEOUT_H

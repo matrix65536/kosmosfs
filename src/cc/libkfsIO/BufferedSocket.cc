@@ -28,6 +28,9 @@
 
 #include "BufferedSocket.h"
 
+using namespace KFS;
+using std::string;
+
 int
 BufferedSocket::ReadLine(string &result)
 {

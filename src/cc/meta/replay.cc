@@ -50,7 +50,7 @@ Replay::openlog(const string &p)
 		number = 0;
 		path = oplog.logfile(0);
 	} else {
-		COSMIX_LOG_DEBUG("Doing log replay from file: %s", p.c_str());
+		KFS_LOG_DEBUG("Doing log replay from file: %s", p.c_str());
 		string::size_type dot = p.rfind('.');
 		assert(dot != string::npos);
 		number = std::atoi(p.substr(dot + 1).c_str());
@@ -93,7 +93,7 @@ static void
 updateSeed(UniqueID &id, seqid_t seed)
 {
 	if (seed < id.getseed()) {
-		COSMIX_LOG_ERROR("Seed from log: %lld < id's seed: %lld", 
+		KFS_LOG_ERROR("Seed from log: %lld < id's seed: %lld", 
 				seed, id.getseed());
 		panic("Seed", false);
 	}
@@ -117,11 +117,13 @@ replay_create(deque <string> &c)
 	ok = pop_fid(me, "id", c, ok);
 	ok = pop_short(numReplicas, "numReplicas", c, ok);
 	if (ok) {
-		status = metatree.create(parent, myname, &me, numReplicas);
+		// for all creates that were successful during normal operation,
+		// when we replay it should work; so, exclusive = false
+		status = metatree.create(parent, myname, &me, numReplicas, false);
 		if (status == 0)
 			updateSeed(fileID, me);
 	}
-	COSMIX_LOG_DEBUG("Replay create: name=%s, id=%lld", myname.c_str(), me);
+	KFS_LOG_DEBUG("Replay create: name=%s, id=%lld", myname.c_str(), me);
 	return (ok && status == 0);
 }
 
@@ -143,7 +145,7 @@ replay_mkdir(deque <string> &c)
 		if (status == 0)
 			updateSeed(fileID, me);
 	}
-	COSMIX_LOG_DEBUG("Replay mkdir: name=%s, id=%lld", myname.c_str(), me);
+	KFS_LOG_DEBUG("Replay mkdir: name=%s, id=%lld", myname.c_str(), me);
 	return (ok && status == 0);
 }
 

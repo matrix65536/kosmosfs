@@ -58,7 +58,7 @@ ChunkServer::ChunkServer(NetConnectionPtr &conn) :
 
 ChunkServer::~ChunkServer()
 {
-	COSMIX_LOG_DEBUG("Deleting %p", this);
+	KFS_LOG_DEBUG("Deleting %p", this);
 
         if (mNetConnection)
                 mNetConnection->Close();
@@ -122,7 +122,7 @@ ChunkServer::HandleHello(int code, void *data)
 		break;
 
 	 case EVENT_NET_ERROR:
-		COSMIX_LOG_DEBUG("Closing connection");
+		KFS_LOG_DEBUG("Closing connection");
 		mDown = true;
 		gNetDispatch.GetChunkServerFactory()->RemoveServer(this);
 		break;
@@ -173,7 +173,7 @@ ChunkServer::HandleRequest(int code, void *data)
 		break;
 
 	case EVENT_NET_ERROR:
-		COSMIX_LOG_DEBUG("Chunk server is down...");
+		KFS_LOG_DEBUG("Chunk server is down...");
 
 		StopTimer();
 		FailDispatchedOps();
@@ -254,7 +254,7 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
         // We should only get a HELLO message here; anything
         // else is bad.
         if (ParseCommand(buf.get(), msgLen, &op) != 0) {
-            COSMIX_LOG_DEBUG("Aye?: %s", buf.get());
+            KFS_LOG_DEBUG("Aye?: %s", buf.get());
             iobuf->Consume(msgLen);
             // got a bogus command
             return -1;
@@ -262,7 +262,7 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 
         // we really ought to get only hello here
         if (op->op != META_HELLO) {
-            COSMIX_LOG_DEBUG("Only  need hello...but: %s", buf.get());
+            KFS_LOG_DEBUG("Only  need hello...but: %s", buf.get());
             iobuf->Consume(msgLen);
             delete op;
             // got a bogus command
@@ -272,7 +272,7 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 
         helloOp = static_cast<MetaHello *> (op);
 
-        COSMIX_LOG_DEBUG("New server: \n%s", buf.get());
+        KFS_LOG_DEBUG("New server: \n%s", buf.get());
         op->clnt = this;
         helloOp->server = shared_from_this();
         // make sure we have the chunk ids...
@@ -301,13 +301,13 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
                 ist >> c.chunkId;
                 ist >> c.chunkVersion;
                 helloOp->chunks.push_back(c);
-                // COSMIX_LOG_DEBUG("Server has chunk: %lld", chunkId);
+                // KFS_LOG_DEBUG("Server has chunk: %lld", chunkId);
             }
         } else {
             // Message is ready to be pushed down.  So remove it.
             iobuf->Consume(msgLen);
         }
-        COSMIX_LOG_DEBUG("sending the new server request to be added...");
+        KFS_LOG_DEBUG("sending the new server request to be added...");
         // send it on its merry way
         submit_request(op);
         return 0;
@@ -334,11 +334,16 @@ ChunkServer::HandleCmd(IOBuffer *iobuf, int msgLen)
         if (ParseCommand(buf.get(), msgLen, &op) != 0) {
             return -1;
         }
+	if (op->op == META_CHUNK_CORRUPT) {
+		MetaChunkCorrupt *ccop = static_cast<MetaChunkCorrupt *>(op);
+
+		ccop->server = shared_from_this();
+	}
         op->clnt = this;
         submit_request(op);
     
         if (iobuf->BytesConsumable() > 0) {
-                COSMIX_LOG_DEBUG("More command data likely available: ");
+                KFS_LOG_DEBUG("More command data likely available: ");
         }
         return 0;
 }
@@ -380,7 +385,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
             assert(!"Unable to find command for a response");
             return -1;
         }
-        // COSMIX_LOG_DEBUG("Got response for cseq=%d", cseq);
+        // KFS_LOG_DEBUG("Got response for cseq=%d", cseq);
 
         submittedOp = static_cast <MetaChunkRequest *> (op);
         submittedOp->status = status;
@@ -397,7 +402,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
         ResumeOp(op);
     
         if (iobuf->BytesConsumable() > 0) {
-                COSMIX_LOG_DEBUG("More command data likely available for chunk: ");
+                KFS_LOG_DEBUG("More command data likely available for chunk: ");
         }
         return 0;
 }
@@ -456,7 +461,7 @@ ChunkServer::ResumeOp(MetaRequest *op)
 		// This op is internally generated.  We need to notify
 		// the layout manager of this op's completion.  So, send
 		// it there.
-		COSMIX_LOG_DEBUG("Meta chunk replicate finished with status: %d",
+		KFS_LOG_DEBUG("Meta chunk replicate finished with status: %d",
 				submittedOp->status);
 		submit_request(submittedOp);
 		// the op will get nuked after it is processed
@@ -486,13 +491,13 @@ ChunkServer::ParseResponse(char *buf, int bufLen,
         const char separator = ':';
         string respOk;
 
-        // COSMIX_LOG_DEBUG("Got chunk-server-response: %s", buf);
+        // KFS_LOG_DEBUG("Got chunk-server-response: %s", buf);
 
         ist >> respOk;
         // Response better start with OK
         if (respOk.compare("OK") != 0) {
 
-                COSMIX_LOG_DEBUG("Didn't get an OK: instead, %s",
+                KFS_LOG_DEBUG("Didn't get an OK: instead, %s",
                                  respOk.c_str());
 
                 return;
@@ -606,7 +611,7 @@ ChunkServer::Heartbeat()
 
 	if (mHeartbeatSent) {
 		// If a request is outstanding, don't send one more
-		COSMIX_LOG_DEBUG("Skipping send of heartbeat...");
+		KFS_LOG_DEBUG("Skipping send of heartbeat...");
 		return;
 	}
 
