@@ -49,13 +49,24 @@ void libkfsio::SetIOBufferSize(uint32_t bufsz)
     IOBUFSIZE = bufsz;
 }
 
+IOBufferData::IOBufferData(uint32_t bufsz)
+{
+    // cout << "Allocating: " << this << endl;
+    Init(bufsz);
+}
+
 IOBufferData::IOBufferData()
 {
     // cout << "Allocating: " << this << endl;
+    Init(IOBUFSIZE);
+}
 
-    mData = new char [IOBUFSIZE];
+void
+IOBufferData::Init(uint32_t bufsz)
+{
+    mData = new char [bufsz];
     mStart = mData;
-    mEnd = mStart + IOBUFSIZE;
+    mEnd = mStart + bufsz;
     mProducer = mConsumer = mData;
 }
 

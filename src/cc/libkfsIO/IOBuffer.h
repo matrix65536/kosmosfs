@@ -56,6 +56,10 @@ namespace KFS
 class IOBufferData {
 public:
     IOBufferData();
+
+    /// Create an IOBufferData blob with a backing buffer of the specified size.
+    IOBufferData(uint32_t bufsz);
+    
     ~IOBufferData();
 
     ///
@@ -134,6 +138,8 @@ public:
     /// Returns the # of bytes available for consumption.
     int BytesConsumable() { return mProducer - mConsumer; }
 
+    /// Return the space available in the buffer
+    size_t SpaceAvailable() { return mEnd - mProducer; }
     int IsFull() { return mProducer == mEnd; }
     int IsEmpty() { return mProducer == mConsumer; }
 
@@ -144,6 +150,10 @@ private:
     char		*mStart, *mEnd;
     /// Pointers into mData that correspond to producer/consumer
     char		*mProducer, *mConsumer;
+
+    /// Allocate memory and init the pointers.
+    void		Init(uint32_t bufsz);
+    
 };
 
 ///

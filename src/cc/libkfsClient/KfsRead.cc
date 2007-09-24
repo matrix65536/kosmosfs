@@ -369,7 +369,8 @@ KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     while (numRead < numAvail) {
 	ReadOp *op = new ReadOp(nextSeq(), chunk->chunkId, chunk->chunkVersion);
 
-	op->numBytes = min(MIN_BYTES_PIPELINE_IO, numAvail - numRead);
+	// op->numBytes = min(MIN_BYTES_PIPELINE_IO, numAvail - numRead);
+        op->numBytes = min(KFS::CHUNKSIZE, numAvail - numRead);
 	assert(op->numBytes > 0);
 
 	op->offset = pos->chunkOffset + numRead;
@@ -439,9 +440,8 @@ KfsClient::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
     ReadOp *op;
     bool leaseExpired = false;
 
-    assert(ops.size() >= 2);
-
-    minOps = min((size_t) 8, ops.size());
+    // if we are readingin 64K blocks, plumb with a 1MB
+    minOps = min((size_t) 16, ops.size());
     // plumb the pipe with a few ops
     for (next = 0; next < minOps; ++next) {
         op = ops[next];

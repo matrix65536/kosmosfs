@@ -87,13 +87,13 @@ namespace KFS
 	// Given a chunk-id, where is stored and who has the lease(s)
 	struct ChunkPlacementInfo {
 		ChunkPlacementInfo() : 
-			fid(-1), isBeingReplicated(false) { }
+			fid(-1), ongoingReplications(0) { }
 		// For cross-validation, we store the fid here.  This
 		// is also useful during re-replication: given a chunk, we
 		// can get its fid and from all the attributes of the file
 		fid_t fid;
-		/// is this chunk being (re) replicated now?
-		bool isBeingReplicated;
+		/// is this chunk being (re) replicated now?  if so, how many
+		int ongoingReplications;
 		std::vector<ChunkServerPtr> chunkServers;
 		std::vector<LeaseInfo> chunkLeases;
 	};
@@ -103,9 +103,9 @@ namespace KFS
 	typedef std::map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
 	typedef std::map <chunkId_t, ChunkPlacementInfo >::iterator CSMapIter;
 	
-	// set of chunks whose replication needs checking
-	typedef std::set <chunkId_t> CRCheckSet;
-	typedef std::set <chunkId_t>::iterator CRCheckSetIter;
+	// candidate set of chunks whose replication needs checking
+	typedef std::set <chunkId_t> CRCandidateSet;
+	typedef std::set <chunkId_t>::iterator CRCandidateSetIter;
 
         ///
         /// LayoutManager is responsible for write allocation:
@@ -298,8 +298,8 @@ namespace KFS
                 /// Mapping from a chunk to its location(s).
                 CSMap mChunkToServerMap;
 
-                /// Set of chunks whose replication needs checking
-                CRCheckSet mChunkReplicationCheckSet;
+                /// Candidate set of chunks whose replication needs checking
+                CRCandidateSet mChunkReplicationCandidates;
 
 		/// Counters to track chunk replications
 		Counter *mOngoingReplicationStats;
@@ -316,26 +316,42 @@ namespace KFS
 		void FindCandidateServers(std::vector<ChunkServerPtr> &result,
 					const std::vector<ChunkServerPtr> &excludes);
 
+		/// Helper function that takes a set of servers and sorts
+		/// them by space.  The list of servers returned is
+		/// ordered on decreasing space availability.
+		/// @param[in/out] servers  The set of servers we want sorted
+		void SortServersBySpace(std::vector<ChunkServerPtr> &servers);
+
 		/// Check the # of copies for the chunk and return true if the
-		/// # of copies is less than 3.  We also don't replicate a chunk
+		/// # of copies is less than targeted amount.  We also don't replicate a chunk
 		/// if it is currently being written to (i.e., if a write lease
 		/// has been issued).
 		/// @param[in] chunkId   The id of the chunk which we are checking
 		/// @param[in] clli  The lease/location information about the chunk.
-		/// @param[out] numReplicas  The target # of replicas for the chunk
+		/// @param[out] extraReplicas  The target # of additional replicas for the chunk
 		/// @retval true if the chunk is to be replicated; false otherwise
-		bool ChunkNeedsReplication(chunkId_t chunkId, 
+		bool CanReplicateChunkNow(chunkId_t chunkId, 
 				ChunkPlacementInfo &clli,
-				int16_t &numReplicas);
+				int &extraReplicas);
 
 		/// Replicate a chunk.  This involves finding a new location for
 		/// the chunk that is different from the existing set of replicas
 		/// and asking the chunkserver to get a copy.
 		/// @param[in] chunkId   The id of the chunk which we are checking
 		/// @param[in] clli  The lease/location information about the chunk.
-		/// @param[in] numReplicas  The target # of replicas for the chunk
+		/// @param[in] extraReplicas  The target # of additional replicas for the chunk
 		void ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
-				int16_t numReplicas);
+				int extraReplicas);
+
+		/// There are more replicas of a chunk than the requested amount.  So,
+		/// delete the extra replicas and reclaim space.  When deleting the addtional
+		/// copies, find the servers that are low on space and delete from there.
+		/// As part of deletion, we update our mapping of where the chunk is stored.
+		/// @param[in] chunkId   The id of the chunk which we are checking
+		/// @param[in] clli  The lease/location information about the chunk.
+		/// @param[in] extraReplicas  The # of replicas that need to be deleted
+		void DeleteAddlChunkReplicas(chunkId_t chunkId, ChunkPlacementInfo &clli,
+				uint32_t extraReplicas);
 
 		/// Return true if c is a server in mChunkServers[].
 		bool ValidServer(ChunkServer *c);
