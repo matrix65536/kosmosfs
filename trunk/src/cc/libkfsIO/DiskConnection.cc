@@ -31,6 +31,7 @@
 using std::deque;
 using std::string;
 using std::list;
+using std::min;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -89,7 +90,7 @@ DiskConnection::Read(off_t offset, size_t numBytes)
 {
     IOBufferDataPtr data;
     DiskEventPtr event;
-    int bytesPerRead = 4096, res;
+    int bytesPerRead = 65536, res;
     size_t nRead;
     DiskIORequest r(OP_READ, offset, numBytes);
 
@@ -98,14 +99,12 @@ DiskConnection::Read(off_t offset, size_t numBytes)
     if (numBytes == 0)
         return 0;
 
-    // break the read down into a bunch of 4KB reads.
     for (nRead = 0; nRead < numBytes; nRead += bytesPerRead) {
+        // XXX
+        // data.reset(new IOBufferData(65536));
         data.reset(new IOBufferData());
 
-        bytesPerRead = 4096;
-
-        if (bytesPerRead + nRead > numBytes)
-            bytesPerRead = numBytes - nRead;
+        bytesPerRead = min(data->SpaceAvailable(), numBytes - nRead);
 
         if (bytesPerRead <= 0)
             break;

@@ -87,7 +87,7 @@ struct ChunkBuffer {
     // obviates the need to do read-ahead :-)
     static const size_t ONE_MB = 1 << 20;
     // static const size_t BUF_SIZE =
-    // KFS::CHUNKSIZE < 4 * ONE_MB ? KFS::CHUNKSIZE : 4 * ONE_MB;
+    // KFS::CHUNKSIZE < 16 * ONE_MB ? KFS::CHUNKSIZE : 16 * ONE_MB;
     static const size_t BUF_SIZE = KFS::CHUNKSIZE;
 
     ChunkBuffer():chunkno(-1), start(0), length(0), dirty(false) { }

@@ -81,12 +81,11 @@ ChunkManager::ChunkManager()
 
 ChunkManager::~ChunkManager()
 {
-    CMI iter;
     ChunkInfoHandle_t *cih;
 
     mChunkBaseDir = NULL;
     
-    for (iter = mChunkTable.begin(); iter != mChunkTable.end(); ++iter) {
+    for (CMI iter = mChunkTable.begin(); iter != mChunkTable.end(); ++iter) {
         cih = iter->second;
         delete cih;
     }
@@ -110,13 +109,12 @@ ChunkManager::AllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId,
     string chunkPathname;
     int fd;
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
     mIsChunkTableDirty = true;
 
     chunkPathname = MakeChunkPathname(chunkId);
 
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry != mChunkTable.end()) {
         KFS_LOG_DEBUG("Chunk %s already exists; changing version # to %ld",
                          chunkPathname.c_str(), chunkVersion);
@@ -150,9 +148,8 @@ ChunkManager::DeleteChunk(kfsChunkId_t chunkId)
 {
     string chunkPathname;
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry == mChunkTable.end()) 
         return -EBADF;
 
@@ -174,9 +171,8 @@ ChunkManager::StaleChunk(kfsChunkId_t chunkId)
 {
     string chunkPathname, staleChunkPathname;
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry == mChunkTable.end()) 
         return -EBADF;
 
@@ -201,15 +197,14 @@ ChunkManager::TruncateChunk(kfsChunkId_t chunkId, size_t chunkSize)
 {
     string chunkPathname;
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
     int res;
     uint32_t lastChecksumBlock;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
     // the truncated size should not exceed chunk size.
     if (chunkSize > KFS::CHUNKSIZE)
         return -EINVAL;
 
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry == mChunkTable.end())
         return -EBADF;
 
@@ -242,14 +237,13 @@ ChunkManager::ChangeChunkVers(kfsFileId_t fileId,
 {
     string chunkPathname;
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
-    chunkPathname = MakeChunkPathname(chunkId);
-
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry == mChunkTable.end()) {
         return -1;
     }
+
+    chunkPathname = MakeChunkPathname(chunkId);
 
     mIsChunkTableDirty = true;
 
@@ -266,9 +260,8 @@ void
 ChunkManager::ReplicationDone(kfsChunkId_t chunkId)
 {
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry == mChunkTable.end()) {
         return;
     }
@@ -325,14 +318,13 @@ ChunkManager::OpenChunk(kfsChunkId_t chunkId,
     string chunkPathname;
     int fd;
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
-    chunkPathname = MakeChunkPathname(chunkId);
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry == mChunkTable.end()) {
         KFS_LOG_DEBUG("No such chunk: %s", chunkPathname.c_str());
         return -EBADF;
     }
+    chunkPathname = MakeChunkPathname(chunkId);
 
     cih = tableEntry->second;
     if (cih->chunkHandle->mFileId < 0) {
@@ -360,9 +352,8 @@ void
 ChunkManager::CloseChunk(kfsChunkId_t chunkId)
 {
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry == mChunkTable.end()) {
         return;
     }
@@ -423,7 +414,7 @@ ChunkManager::ReadChunk(ReadOp *op)
     // schedule a read based on the chunk size
     if (op->offset >= (off_t) cih->chunkInfo.chunkSize) {
         op->numBytesIO = 0;
-    } else if (cih->chunkInfo.chunkSize < op->offset + op->numBytes) {
+    } else if (op->offset + op->numBytes > cih->chunkInfo.chunkSize) {
         op->numBytesIO = cih->chunkInfo.chunkSize - op->offset;
     } else {
         op->numBytesIO = op->numBytes;
@@ -435,10 +426,18 @@ ChunkManager::ReadChunk(ReadOp *op)
     // for checksumming to work right, reads should be in terms of
     // checksum-blocks.
     offset = OffsetToChecksumBlockStart(op->offset);
-    numBytesIO = CHECKSUM_BLOCKSIZE;
-        
+
+    numBytesIO = (op->numBytesIO / CHECKSUM_BLOCKSIZE) * CHECKSUM_BLOCKSIZE;
+    if (op->numBytesIO % CHECKSUM_BLOCKSIZE)
+        numBytesIO += CHECKSUM_BLOCKSIZE;
+
+    // Make sure we don't try to read past EOF; the checksumming will
+    // do the necessary zero-padding. 
+    if (offset + numBytesIO > cih->chunkInfo.chunkSize)
+        numBytesIO = cih->chunkInfo.chunkSize - offset;
+    
     if ((res = op->diskConnection->Read(offset, numBytesIO)) < 0)
-        return -1;
+        return -EIO;
 
     // read was successfully scheduled
     return 0;
@@ -554,8 +553,8 @@ ChunkManager::WriteChunk(WriteOp *op)
 
     op->diskConnection.reset(d);
 
-    KFS_LOG_DEBUG("Checksum for chunk: %ld, offset = %ld, bytes = %ld, cksum = %u",
-                     op->chunkId, op->offset, op->numBytesIO, op->checksums[0]);
+    KFS_LOG_DEBUG("Checksum for chunk: %ld, offset = %ld, bytes = %ld, # of cksums = %u",
+                  op->chunkId, op->offset, op->numBytesIO, op->checksums.size());
 
     return op->diskConnection->Write(op->offset, op->numBytesIO, op->dataBuf);
 }
@@ -608,25 +607,40 @@ ChunkManager::ReadChunkDone(ReadOp *op)
 
     ZeroPad(op->dataBuf);
 
-    assert(op->dataBuf->BytesConsumable() == (int) CHECKSUM_BLOCKSIZE);
+    assert(op->dataBuf->BytesConsumable() >= (int) CHECKSUM_BLOCKSIZE);
 
-    vector<uint32_t>::size_type checksumBlock = OffsetToChecksumBlockStart(op->offset);
-    uint32_t checksum = ComputeBlockChecksum(op->dataBuf, CHECKSUM_BLOCKSIZE);
-    
     // either nothing to verify or it better match
-    if ((checksumBlock > cih->chunkInfo.chunkBlockChecksum.size()) ||
-        (cih->chunkInfo.chunkBlockChecksum[checksumBlock] == 0) ||
-        (checksum == cih->chunkInfo.chunkBlockChecksum[checksumBlock])) {
+
+    bool mismatch = false;
+
+    // figure out the block we are starting from and grab all the checksums
+    vector<uint32_t>::size_type i, checksumBlock = OffsetToChecksumBlockStart(op->offset);
+    vector<uint32_t> checksums = ComputeChecksums(op->dataBuf, op->dataBuf->BytesConsumable());
+
+    for (i = 0; i < checksums.size() &&
+             checksumBlock < cih->chunkInfo.chunkBlockChecksum.size(); 
+         checksumBlock++, i++) {
+        if ((cih->chunkInfo.chunkBlockChecksum[checksumBlock] == 0) ||
+            (checksums[i] == cih->chunkInfo.chunkBlockChecksum[checksumBlock])) {
+            continue;
+        }
+        mismatch = true;
+        break;
+    }
+
+    if (!mismatch) {
         // for checksums to verify, we did reads in multiples of
         // checksum block sizes.  so, get rid of the extra
         AdjustDataRead(op);
         return;
     }
 
+    // die ("checksum mismatch");
+
     KFS_LOG_ERROR("Checksum mismatch for chunk=%ld, offset=%ld, bytes = %ld: expect: %u, computed: %u ",
                   op->chunkId, op->offset, op->numBytesIO,
                   cih->chunkInfo.chunkBlockChecksum[checksumBlock],
-                  checksum);
+                  checksums[i]);
 
     op->status = -KFS::EBADCKSUM;
 
@@ -637,6 +651,8 @@ ChunkManager::ReadChunkDone(ReadOp *op)
     // Take out the chunk from our side
     StaleChunk(op->chunkId);
 }
+
+
 
 void
 ChunkManager::NotifyMetaCorruptedChunk(kfsChunkId_t chunkId)
@@ -661,7 +677,11 @@ ChunkManager::NotifyMetaCorruptedChunk(kfsChunkId_t chunkId)
 void
 ChunkManager::ZeroPad(IOBuffer *buffer)
 {
-    int numToZero = CHECKSUM_BLOCKSIZE - buffer->BytesConsumable();
+    int bytesFilled = buffer->BytesConsumable();
+    if ((bytesFilled % CHECKSUM_BLOCKSIZE) == 0)
+        return;
+
+    int numToZero = CHECKSUM_BLOCKSIZE - (bytesFilled % CHECKSUM_BLOCKSIZE);
     if (numToZero > 0) {
         // pad with 0's
         buffer->ZeroFill(numToZero);
@@ -697,10 +717,9 @@ ChunkManager::SetupDiskConnection(kfsChunkId_t chunkId,
                                   KfsOp *op)
 {
     ChunkInfoHandle_t *cih;
-    CMI tableEntry;
     DiskConnection *diskConnection;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry == mChunkTable.end()) {
         return NULL;
     }
@@ -730,9 +749,10 @@ ChunkManager::CancelChunkOp(KfsCallbackObj *cont, kfsChunkId_t chunkId)
 void
 ChunkManager::Checkpoint()
 {
-    CMI iter;
     ChunkInfoHandle_t *cih;
     CheckpointOp *cop;
+    // on the macs, i can't declare CMI iter;
+    CMI iter = mChunkTable.begin();
 
     if (!mIsChunkTableDirty)
         return;
@@ -782,7 +802,7 @@ ChunkManager::Restart()
     bool found;
     struct stat buf;
     struct dirent **namelist;
-    CMI iter;
+    CMI iter = mChunkTable.begin();
     vector<kfsChunkId_t> orphans;
     vector<kfsChunkId_t>::size_type j;
 
@@ -946,12 +966,11 @@ ChunkManager::ReplayChangeChunkVers(kfsFileId_t fileId, kfsChunkId_t chunkId,
 void
 ChunkManager::ReplayDeleteChunk(kfsChunkId_t chunkId)
 {
-    CMI tableEntry;
     ChunkInfoHandle_t *cih;
+    CMI tableEntry = mChunkTable.find(chunkId);
 
     mIsChunkTableDirty = true;
 
-    tableEntry = mChunkTable.find(chunkId);
     if (tableEntry != mChunkTable.end()) {
         cih = tableEntry->second;
         mUsedSpace -= cih->chunkInfo.chunkSize;
@@ -1013,11 +1032,10 @@ ChunkManager::ReplayTruncateDone(kfsChunkId_t chunkId, size_t chunkSize)
 void
 ChunkManager::GetHostedChunks(vector<ChunkInfo_t> &result)
 {
-    CMI iter;
     ChunkInfoHandle_t *cih;
 
     // walk thru the table and pick up the chunk-ids
-    for (iter = mChunkTable.begin(); iter != mChunkTable.end(); ++iter) {
+    for (CMI iter = mChunkTable.begin(); iter != mChunkTable.end(); ++iter) {
         cih = iter->second;
         result.push_back(cih->chunkInfo);
     }
@@ -1026,9 +1044,8 @@ ChunkManager::GetHostedChunks(vector<ChunkInfo_t> &result)
 int
 ChunkManager::GetChunkInfoHandle(kfsChunkId_t chunkId, ChunkInfoHandle_t **cih)
 {
-    CMI iter;
+    CMI iter = mChunkTable.find(chunkId);
 
-    iter = mChunkTable.find(chunkId);
     if (iter == mChunkTable.end())
         return -EBADF;
 

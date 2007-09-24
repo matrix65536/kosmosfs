@@ -118,12 +118,30 @@ LayoutManager::AddNewServer(MetaHello *r)
 		if (chunk != v.end()) {
 			MetaChunkInfo *mci = *chunk;
 			if (mci->chunkVersion <= r->chunks[i].chunkVersion) {
+				// This chunk is non-stale.  Verify that there are
+				// sufficient copies; if there are too many, nuke some.
+				ChangeChunkReplication(r->chunks[i].chunkId);
+
 				res = UpdateChunkToServerMapping(r->chunks[i].chunkId, 
 								s.get());
 				assert(res >= 0);
+
 				if (mci->chunkVersion < r->chunks[i].chunkVersion) {
 					// version #'s differ.  have the chunkserver reset
 					// to what the metaserver has.
+					// XXX: This is all due to the issue with not logging
+					// the version # that the metaserver is issuing.  What is going
+					// on here is that, 
+					//  -- client made a request
+					//  -- metaserver bumped the version; notified the chunkservers
+					//  -- the chunkservers write out the version bump on disk
+					//  -- the metaserver gets ack; writes out the version bump on disk
+					//  -- and then notifies the client
+					// Now, if the metaserver crashes before it writes out the
+					// version bump, it is possible that some chunkservers did the
+					// bump, but not the metaserver.  So, fix up.  To avoid other whacky
+					// scenarios, we increment the chunk version # by the incarnation stuff
+					// to avoid reissuing the same version # multiple times.
 					s->NotifyChunkVersChange(r->chunks[i].fileId,
 							r->chunks[i].chunkId,
 							mci->chunkVersion);
@@ -151,10 +169,10 @@ LayoutManager::AddNewServer(MetaHello *r)
 
 class MapPurger {
 	CSMap &cmap;
-	CRCheckSet &crset;
+	CRCandidateSet &crset;
 	const ChunkServer *target;
 public:
-	MapPurger(CSMap &m, CRCheckSet &c, const ChunkServer *t):
+	MapPurger(CSMap &m, CRCandidateSet &c, const ChunkServer *t):
 		cmap(m), crset(c), target(t) { }
 	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
 		ChunkPlacementInfo c = p.second;
@@ -183,7 +201,7 @@ LayoutManager::ServerDown(ChunkServer *server)
 	server->FailPendingOps();
 
 	mChunkServers.erase(i);
-	MapPurger purge(mChunkToServerMap, mChunkReplicationCheckSet, server);
+	MapPurger purge(mChunkToServerMap, mChunkReplicationCandidates, server);
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
 }
 
@@ -240,6 +258,29 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 		result.push_back(mChunkServers[ss[i].serverIdx]);
 	}
 }
+
+void
+LayoutManager::SortServersBySpace(vector<ChunkServerPtr> &servers)
+{
+	vector<ServerSpace> ss;
+	vector<ChunkServerPtr> temp;
+
+	ss.resize(servers.size());
+	temp.resize(servers.size());
+
+	for (vector<ChunkServerPtr>::size_type i = 0; i < servers.size(); i++) {
+		ss[i].serverIdx = i;
+		ss[i].availSpace = servers[i]->GetAvailSpace();
+		ss[i].usedSpace = servers[i]->GetUsedSpace();
+		temp[i] = servers[i];
+	}
+
+	sort(ss.begin(), ss.end());
+	for (vector<ChunkServerPtr>::size_type i = 0; i < servers.size(); i++) {
+		servers[i] = temp[ss[i].serverIdx];
+	}
+}
+
 
 /// 
 /// The algorithm for picking a set of servers to hold a chunk is: (1) pick
@@ -756,7 +797,7 @@ LayoutManager::LeaseCleanup(chunkId_t chunkId, ChunkPlacementInfo &v)
 
 void
 LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
-				int16_t numReplicas)
+				int extraReplicas)
 {
 	// find a place
 	vector<ChunkServerPtr> candidates;
@@ -782,8 +823,7 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 	mOngoingReplicationStats->Update(1);
 
 	MetaChunkInfo *mci = *chunk;
-	uint32_t numCopies = min((size_t) numReplicas - clli.chunkServers.size(), 
-				candidates.size());
+	uint32_t numCopies = min((size_t) extraReplicas, candidates.size());
 
 	for (uint32_t i = 0; i < numCopies; i++) {
 		c = candidates[i];
@@ -800,10 +840,11 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 	}
 }
 
+
 bool
-LayoutManager::ChunkNeedsReplication(chunkId_t chunkId, 
+LayoutManager::CanReplicateChunkNow(chunkId_t chunkId, 
 				ChunkPlacementInfo &c,
-				int16_t &numReplicas)
+				int &extraReplicas)
 {
 	vector<LeaseInfo>::iterator l;
 
@@ -814,22 +855,25 @@ LayoutManager::ChunkNeedsReplication(chunkId_t chunkId,
 
 	if (l != c.chunkLeases.end())
 		return false;
-
-	// Can't re-replicate a chunk if we don't have a copy!
+	
+	extraReplicas = 0;
+	// Can't re-replicate a chunk if we don't have a copy! so,
+	// take out this chunk from the candidate set.
 	if (c.chunkServers.size() == 0)
-		return false;
+		return true;
 
 	MetaFattr *fa = metatree.getFattr(c.fid);
 	if (fa == NULL)
-		return false;
-
-	if (c.chunkServers.size() < fa->numReplicas) {
-		// Need to re-replicate this chunk
-		numReplicas = fa->numReplicas;
+		// No file attr.  So, take out this chunk
+		// from the candidate set.
 		return true;
-	}
 
-	return false;
+	// May need to re-replicate this chunk: 
+	//    - extraReplicas > 0 means make extra copiles; 
+	//    - extraReplicas == 0, take out this chunkid from the candidate set
+	//    - extraReplicas < 0, means we got too many copies; delete some
+	extraReplicas = fa->numReplicas - c.chunkServers.size();
+	return true;
 }
 
 void
@@ -843,17 +887,17 @@ LayoutManager::ChunkReplicationChecker()
 	// There is a set of chunks that are affected: their server went down
 	// or there is a change in their degree of replication.  in either
 	// case, walk this set of chunkid's and work on their replication amount.
-	if (mChunkReplicationCheckSet.size() == 0)
+	if (mChunkReplicationCandidates.size() == 0)
 		return;
 	
 	CSMapIter iter;
 	chunkId_t chunkId;
-	CRCheckSet delset;
-	int16_t numReplicas;
+	CRCandidateSet delset;
+	int extraReplicas;
 
-	for (CRCheckSetIter citer = mChunkReplicationCheckSet.begin(); 
+	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin(); 
 		mNumOngoingReplications <= MAX_CONCURRENT_REPLICATIONS &&
-		citer != mChunkReplicationCheckSet.end(); ++citer) {
+		citer != mChunkReplicationCandidates.end(); ++citer) {
 		chunkId = *citer;
 
         	iter = mChunkToServerMap.find(chunkId);
@@ -861,24 +905,30 @@ LayoutManager::ChunkReplicationChecker()
 			delset.insert(chunkId);
 			continue;
 		}
-		if (iter->second.isBeingReplicated)
+		if (iter->second.ongoingReplications > 0)
 			continue;
 
 		KFS_LOG_DEBUG("Checking replication level for chunk: %ld", chunkId);
 
-		if (ChunkNeedsReplication(iter->first, iter->second, numReplicas)) {
-			ReplicateChunk(iter->first, iter->second, numReplicas);
-			iter->second.isBeingReplicated = true;
+		if (!CanReplicateChunkNow(iter->first, iter->second, extraReplicas))
+			continue;
+
+		if (extraReplicas > 0) {
+			ReplicateChunk(iter->first, iter->second, extraReplicas);
+			iter->second.ongoingReplications += extraReplicas;
 			mNumOngoingReplications++;
+		} else if (extraReplicas == 0) {
+			delset.insert(chunkId);
 		} else {
+			DeleteAddlChunkReplicas(iter->first, iter->second, -extraReplicas);
 			delset.insert(chunkId);
 		}
 	}
 	
 	if (delset.size() > 0) {
-		for (CRCheckSetIter citer = delset.begin(); 
+		for (CRCandidateSetIter citer = delset.begin(); 
 			citer != delset.end(); ++citer) {
-			mChunkReplicationCheckSet.erase(*citer);
+			mChunkReplicationCandidates.erase(*citer);
 		}
 	}
 }
@@ -893,10 +943,17 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	// Book-keeping....
 	iter = mChunkToServerMap.find(req->chunkId);
 	if (iter != mChunkToServerMap.end()) {
-		iter->second.isBeingReplicated = false;
+		iter->second.ongoingReplications--;
+		if (iter->second.ongoingReplications < 0)
+			// sanity...
+			iter->second.ongoingReplications = 0;
 	}
 
-	mNumOngoingReplications--;
+	// if all the replications for this chunk are done,
+	// then update the global counter.
+	if (iter->second.ongoingReplications == 0)
+		mNumOngoingReplications--;
+
 	if (mNumOngoingReplications < 0)
 		mNumOngoingReplications = 0;
 
@@ -909,8 +966,6 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	}
 
 	// replication succeeded: book-keeping
-	mChunkReplicationCheckSet.erase(req->chunkId);
-
 	// validate that the server got the latest copy of the chunk
 	vector<MetaChunkInfo *> v;
 	vector<MetaChunkInfo *>::iterator chunk;
@@ -940,8 +995,33 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 
 }
 
+//
+// To delete additional copies of a chunk, find the servers that have the least
+// amount of space and delete the chunk from there.
+//
+void
+LayoutManager::DeleteAddlChunkReplicas(chunkId_t chunkId, ChunkPlacementInfo &clli,
+				uint32_t extraReplicas)
+{
+	vector<ChunkServerPtr> servers = clli.chunkServers;
+	uint32_t numReplicas = servers.size() - extraReplicas;
+
+	// We get servers sorted by decreasing amount of space; so the candidates
+	// we want to delete are at the end
+	SortServersBySpace(servers);
+
+	clli.chunkServers = servers;
+	clli.chunkServers.resize(numReplicas);
+	mChunkToServerMap[chunkId] = clli;
+
+	KFS_LOG_INFO("Deleting extra replicas (%d) of chunk: %ld", extraReplicas, chunkId);
+
+	// The first N are what we want to keep; the rest should go.
+	for_each(servers.begin() + numReplicas, servers.end(), ChunkDeletor(chunkId));
+}
+
 void
 LayoutManager::ChangeChunkReplication(chunkId_t chunkId)
 {
-	mChunkReplicationCheckSet.insert(chunkId);
+	mChunkReplicationCandidates.insert(chunkId);
 }

@@ -52,8 +52,8 @@ LeaseClerk::RegisterLease(kfsChunkId_t chunkId, int64_t leaseId)
     time_t now = time(0);
     LeaseInfo_t lease;
     // Get rid of the old lease if we had one
-    LeaseMapIter iter;
-    iter = mLeases.find(chunkId);
+    LeaseMapIter iter = mLeases.find(chunkId);
+
     if (iter != mLeases.end()) {
         lease = iter->second;
         lease.timer->Cancel();
@@ -74,9 +74,7 @@ LeaseClerk::RegisterLease(kfsChunkId_t chunkId, int64_t leaseId)
 void
 LeaseClerk::UnRegisterLease(kfsChunkId_t chunkId)
 {
-    LeaseMapIter iter;
-
-    iter = mLeases.find(chunkId);
+    LeaseMapIter iter = mLeases.find(chunkId);
     if (iter != mLeases.end()) {
         mLeases.erase(iter);
     }
@@ -88,9 +86,8 @@ LeaseClerk::UnRegisterLease(kfsChunkId_t chunkId)
 void
 LeaseClerk::DoingWrite(kfsChunkId_t chunkId)
 {
-    LeaseMapIter iter;
+    LeaseMapIter iter = mLeases.find(chunkId);
 
-    iter = mLeases.find(chunkId);
     if (iter == mLeases.end())
         return;
 
@@ -103,9 +100,8 @@ LeaseClerk::DoingWrite(kfsChunkId_t chunkId)
 bool
 LeaseClerk::IsLeaseValid(kfsChunkId_t chunkId)
 {
-    LeaseMapIter iter;
+    LeaseMapIter iter = mLeases.find(chunkId);
 
-    iter = mLeases.find(chunkId);
     if (iter == mLeases.end())
         return false;
 
@@ -120,9 +116,8 @@ LeaseClerk::IsLeaseValid(kfsChunkId_t chunkId)
 void
 LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
 {
-    LeaseMapIter iter;
+    LeaseMapIter iter = mLeases.find(chunkId);
 
-    iter = mLeases.find(chunkId);
     if (iter == mLeases.end())
         return;
 
@@ -142,7 +137,7 @@ LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
 int
 LeaseClerk::HandleEvent(int code, void *data)
 {
-    LeaseMapIter iter;
+    LeaseMapIter iter = mLeases.begin();
     LeaseInfo_t lease;
     LeaseRenewOp *op;
     kfsChunkId_t chunkId;
@@ -203,12 +198,11 @@ LeaseClerk::HandleEvent(int code, void *data)
 void
 LeaseClerk::CleanupExpiredLeases()
 {
-    LeaseMapIter curr;
     time_t now = time(0);
 
     // Unfortunately, can't do: mLeases.erase(remove_if()).  This is
     // because remove_if() will reorder things and you can't do on a map.
-    for (curr = mLeases.begin(); curr != mLeases.end(); ) {
+    for (LeaseMapIter curr = mLeases.begin(); curr != mLeases.end(); ) {
         // messages could be in-flight...so wait for a full
         // lease-interval before discarding dead leases
         if (now - curr->second.expires > LEASE_INTERVAL_SECS) {

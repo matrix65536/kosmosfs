@@ -211,10 +211,17 @@ DiskManager::Sync(DiskConnection *conn, int fd,
 
     // schedule a datasync request
     aio_cb->aio_fildes = fd;
+#if defined (__APPLE__)
+    if (aio_fsync(O_SYNC, aio_cb) < 0) {
+        perror("aio_sync: ");
+        return -1;
+    }
+#else
     if (aio_fsync(O_DSYNC, aio_cb) < 0) {
         perror("aio_sync: ");
         return -1;
     }
+#endif
     mDiskEvents.push_back(event);
     resultEvent = event;
 

@@ -62,9 +62,7 @@ LeaseClerk::UnRegisterLease(kfsChunkId_t chunkId)
 bool
 LeaseClerk::IsLeaseValid(kfsChunkId_t chunkId)
 {
-    LeaseMapIter iter;
-
-    iter = mLeases.find(chunkId);
+    LeaseMapIter iter = mLeases.find(chunkId);
     if (iter == mLeases.end())
         return false;
 
@@ -80,9 +78,7 @@ LeaseClerk::IsLeaseValid(kfsChunkId_t chunkId)
 bool
 LeaseClerk::ShouldRenewLease(kfsChunkId_t chunkId)
 {
-    LeaseMapIter iter;
-
-    iter = mLeases.find(chunkId);
+    LeaseMapIter iter = mLeases.find(chunkId);
     assert(iter != mLeases.end());
     if (iter == mLeases.end()) {
         return true;
@@ -98,9 +94,7 @@ LeaseClerk::ShouldRenewLease(kfsChunkId_t chunkId)
 int
 LeaseClerk::GetLeaseId(kfsChunkId_t chunkId, int64_t &leaseId)
 {
-    LeaseMapIter iter;
-
-    iter = mLeases.find(chunkId);
+    LeaseMapIter iter = mLeases.find(chunkId);
     if (iter == mLeases.end()) {
         return -1;
     }
@@ -112,9 +106,7 @@ LeaseClerk::GetLeaseId(kfsChunkId_t chunkId, int64_t &leaseId)
 void
 LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
 {
-    LeaseMapIter iter;
-
-    iter = mLeases.find(chunkId);
+    LeaseMapIter iter = mLeases.find(chunkId);
     if (iter == mLeases.end())
         return;
 

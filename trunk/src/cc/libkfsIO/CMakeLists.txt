@@ -9,7 +9,8 @@ set_target_properties (kfsIO-shared PROPERTIES OUTPUT_NAME "kfsIO")
 set_target_properties (kfsIO PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties (kfsIO-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-add_dependencies (kfsIO common)
+add_dependencies (kfsIO kfsCommon)
+add_dependencies (kfsIO-shared kfsCommon-shared)
 target_link_libraries (kfsIO rt)
 target_link_libraries (kfsIO-shared rt)
 #

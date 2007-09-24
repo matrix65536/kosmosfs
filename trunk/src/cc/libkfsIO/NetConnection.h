@@ -135,7 +135,7 @@ public:
 
     /// Close the connection.
     void Close() {
-        KFS_LOG_DEBUG("Closing socket: %d", mSock->GetFd());
+        // KFS_LOG_DEBUG("Closing socket: %d", mSock->GetFd());
         mSock->Close();
     }
     
