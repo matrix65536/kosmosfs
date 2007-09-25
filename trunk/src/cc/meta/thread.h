@@ -86,6 +86,11 @@ public:
 		int UNUSED_ATTR status = pthread_cancel(thread);
 		assert(status == 0);
 	}
+	void join()
+	{
+		int UNUSED_ATTR status = pthread_join(thread, NULL);
+		assert(status == 0);
+	}
 };
 
 }
