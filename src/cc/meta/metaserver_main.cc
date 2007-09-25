@@ -78,11 +78,19 @@ main(int argc, char **argv)
     
         gNetDispatch.Start(gClientPort, gChunkServerPort);
 
-        // block the main thread without consuming too much CPU
         while (1) {
+		struct timeval timeout;
+
+		timeout.tv_sec = 5;
+		timeout.tv_usec = 0;
+
                 FD_ZERO(&rfds);
                 FD_SET(0, &rfds);
-                select(1, &rfds, NULL, NULL, NULL);
+                select(1, &rfds, NULL, NULL, &timeout);
+        	// block the main thread without consuming too much CPU
+		// if the net dispatch thread has gotten going, this method 
+		// never returns
+		gNetDispatch.WaitToFinish();
         }
         
 

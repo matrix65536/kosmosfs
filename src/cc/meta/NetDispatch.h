@@ -43,6 +43,11 @@ namespace KFS
         NetDispatch();
         ~NetDispatch();
         void Start(int clientAcceptPort, int chunkServerAcceptPort);
+	//!< Call this method to prevent spinning: the main thread
+	//!< calls this method and pauses.
+	void WaitToFinish() {
+		mWorker.join();
+	}
         //!< Dispatch the results of RPC requests that have finished execution.
         //!< Also, dispatch layout related RPCs to chunk servers.
         void Dispatch();
