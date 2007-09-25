@@ -55,7 +55,7 @@
   <!--                                                                    -->
   <!-- ================================================================== -->
   <target name="jar" depends="compile">
-    <jar jarfile="${build.dir}/${name}.jar"
+    <jar jarfile="${build.dir}/${name}-${version}.jar"
          basedir="${build.classes}">
       <manifest>
         <section name="org/kosmos">

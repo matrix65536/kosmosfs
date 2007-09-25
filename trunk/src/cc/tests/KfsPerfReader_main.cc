@@ -28,6 +28,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <fstream>
+#include <boost/scoped_array.hpp>
 #include "libkfsClient/KfsClient.h"
 
 using std::cout;
@@ -119,9 +120,11 @@ long
 doRead(const string &filename, int numMBytes, int readSizeBytes)
 {
     const int mByte = 1024 * 1024;
-    char dataBuf[mByte];
+    boost::scoped_array<char> dataBuf;
     int res, bytesRead = 0, nMBytes = 0, fd;
     long nread = 0;
+
+    dataBuf.reset(new char [mByte]);
 
     if (readSizeBytes > mByte) {
         cout << "Setting read size to: " << mByte << endl;
@@ -136,7 +139,7 @@ doRead(const string &filename, int numMBytes, int readSizeBytes)
 
     for (nMBytes = 0; nMBytes < numMBytes; nMBytes++) {
         for (bytesRead = 0; bytesRead < mByte; bytesRead += readSizeBytes) {
-            res = gKfsClient->Read(fd, dataBuf, readSizeBytes);
+            res = gKfsClient->Read(fd, dataBuf.get(), readSizeBytes);
             if (res != readSizeBytes)
                 return (bytesRead + nMBytes * 1024 * 1024);
             nread += readSizeBytes;
@@ -147,4 +150,3 @@ doRead(const string &filename, int numMBytes, int readSizeBytes)
 
     return nread;
 }
-    

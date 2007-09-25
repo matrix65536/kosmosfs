@@ -1,10 +1,10 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
-// Created 2006/06/23
+// Created 2007/09/24
 // Author: Sriram Rao (Kosmix Corp.) 
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2007 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -20,8 +20,8 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 //
-// \brief Tool that copies a file/directory from a KFS path to another
-// KFS path.  This does the analogous of "cp -r".
+// \brief Tool that renames a file/directory from a KFS path to another
+// KFS path.  This does the analogous of "mv".
 //
 //----------------------------------------------------------------------------
 
@@ -54,17 +54,17 @@ KfsClient *gKfsClient;
 bool doMkdirs(const char *path);
 
 //
-// Given a file defined by a KFS srcPath, copy it to KFS as defined by
+// Given a file defined by a KFS srcPath, move it to KFS as defined by
 // dstPath
 //
-int CopyFile(const string &srcPath, const string &dstPath);
+int MoveFile(const string &srcPath, const string &dstPath);
 
 // Given a srcDirname, copy it to dirname.  Dirname will be created
 // if it doesn't exist.  
-void CopyDir(const string &srcDirname, string dstDirname);
+void MoveDir(const string &srcDirname, string dstDirname);
 
 // Guts of the work
-int CopyFile2(string srcfilename, string dstfilename);
+int MoveFile2(string srcfilename, string dstfilename);
 
 int
 main(int argc, char **argv)
@@ -120,15 +120,15 @@ main(int argc, char **argv)
     }
 
     if (!S_ISDIR(statInfo.st_mode)) {
-	CopyFile(srcPath, dstPath);
+	MoveFile(srcPath, dstPath);
 	exit(0);
     }
 
-    CopyDir(srcPath, dstPath);
+    MoveDir(srcPath, dstPath);
 }
 
 int
-CopyFile(const string &srcPath, const string &dstPath)
+MoveFile(const string &srcPath, const string &dstPath)
 {
     string filename;
     string::size_type slash = srcPath.rfind('/');
@@ -165,11 +165,11 @@ CopyFile(const string &srcPath, const string &dstPath)
 
     // kfs side is a directory
     if (S_ISDIR(statInfo.st_mode)) {
-	return CopyFile2(srcPath, kfsParentDir + "/" + filename);
+	return MoveFile2(srcPath, kfsParentDir + "/" + filename);
     }
     
     if (S_ISREG(statInfo.st_mode)) {
-	return CopyFile2(srcPath, dstPath);
+	return MoveFile2(srcPath, dstPath);
     }
     
     // need to make the kfs dir
@@ -178,7 +178,7 @@ CopyFile(const string &srcPath, const string &dstPath)
 }
 
 void
-CopyDir(const string &srcDirname, string dstDirname)
+MoveDir(const string &srcDirname, string dstDirname)
 {
     vector<KfsFileAttr> fileInfo;
     vector<KfsFileAttr>::size_type i;
@@ -199,58 +199,28 @@ CopyDir(const string &srcDirname, string dstDirname)
             if ((fileInfo[i].filename == ".") ||
                 (fileInfo[i].filename == ".."))
                 continue;
-	    CopyDir(srcDirname + "/" + fileInfo[i].filename, 
+	    MoveDir(srcDirname + "/" + fileInfo[i].filename, 
                     dstDirname + "/" + fileInfo[i].filename);
         } else {
-            CopyFile2(srcDirname + "/" + fileInfo[i].filename,
+            MoveFile2(srcDirname + "/" + fileInfo[i].filename,
 		      dstDirname + "/" + fileInfo[i].filename);
         }
     }
+    gKfsClient->Rmdir(srcDirname.c_str());
 }
 
 //
-// Guts of the work to copy the file.
+// Guts of the work to move the file.
 //
 int
-CopyFile2(string srcfilename, string dstfilename)
+MoveFile2(string srcfilename, string dstfilename)
 {
-    const int bufsize = 65536;
-    char kfsBuf[bufsize];
-    int srcfd, dstfd, nRead, toRead;
-    long long n = 0;
     int res;
 
-    cout << "In copyfile2: " << srcfilename << "->" << dstfilename << endl;
-
-    srcfd = gKfsClient->Open(srcfilename.c_str(), O_RDONLY);
-    if (srcfd < 0) {
-        cout << "Unable to open: " << srcfilename.c_str() << endl;
-	exit(0);
+    if ((res = gKfsClient->Rename(srcfilename.c_str(), dstfilename.c_str())) < 0) {
+        cout << "Rename failed: " << ErrorCodeToStr(res) << endl;
+        exit(-1);
     }
-
-    dstfd = gKfsClient->Create((char *) dstfilename.c_str());
-    if (dstfd < 0) {
-        cout << "Create " << dstfilename << " failed: " << dstfd << endl;
-	exit(0);
-    }
-
-    while (1) {
-	toRead = bufsize;
-	nRead = gKfsClient->Read(srcfd, kfsBuf, toRead);
-	if (nRead <= 0)
-	    break;
-
-        // write it out
-        res = gKfsClient->Write(dstfd, kfsBuf, nRead);
-        if (res < 0) {
-            cout << "Write failed with error code: " << res << endl;
-            exit(0);
-        }
-        n += nRead;
-    }
-    gKfsClient->Close(srcfd);
-    gKfsClient->Close(dstfd);
-
     return 0;
 }
 

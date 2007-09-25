@@ -11,6 +11,7 @@ KfsCat
 KfsChangeReplication
 KfsLs
 KfsMkdir
+KfsMv
 KfsPing
 KfsPut
 KfsRm
