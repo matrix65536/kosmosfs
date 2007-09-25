@@ -1,11 +1,12 @@
 #
-# $Id: //depot/SOURCE/OPENSOURCE/kfs/src/cc/access/kfs_setup.py#1 $
+# $Id$
 #
 # Use the distutils setup function to build and install the KFS module.
 # Execute this as:
 #  python kfs_setup.py ~/code/kfs/build/lib/ build
 # and this will build kfs.so in ./build/.../kfs.so
-# This needs to be installed /usr/lib64/python/site-packages
+# This needs to be installed /usr/lib64/python/site-packages or in an
+# alternate location; see COMPILING for instructions
 # In addition, ~/code/kfs/build/lib needs to be in the LD_LIBRARY_PATH
 # After installation, python apps can access kfs.
 #
@@ -24,5 +25,4 @@ kfsext = Extension('kfs',
 setup(name = "kfs", version = "0.1",
 	description="KFS client module",
 	author="Blake Lewis",
-      	maintainer="Sriram Rao",
 	ext_modules = [kfsext])

@@ -209,8 +209,11 @@ KfsClient::FlushBuffer(int fd)
 
     if (cb->dirty) {
 	numIO = WriteToServer(fd, cb->start, cb->buf, cb->length);
-	if (numIO >= 0)
+	if (numIO >= 0) {
 	    cb->dirty = false;
+            // we just flushed the buffer...so, there is no data in it
+            cb->length = 0;
+        }
     }
     return numIO;
 }

@@ -587,15 +587,6 @@ KfsClient::Open(const char *pathname, int openMode, int numReplicas)
     if (filename.size() >= MAX_FILENAME_LEN)
 	return -ENAMETOOLONG;
 
-    // avoid unnecesary lookups
-    int fte = LookupFileTableEntry(parentFid, filename.c_str());
-
-    // XXX: Mode compatibility...
-    // XXX: Or should I just give you a new entry???
-
-    if (fte >= 0)
-	return fte;
-
     LookupOp op(nextSeq(), parentFid, filename.c_str());
     (void)DoMetaOpWithRetry(&op);
 
@@ -611,7 +602,7 @@ KfsClient::Open(const char *pathname, int openMode, int numReplicas)
             return -EEXIST;
     }
 
-    fte = ClaimFileTableEntry(parentFid, filename.c_str());
+    int fte = ClaimFileTableEntry(parentFid, filename.c_str());
     if (fte < 0)		// Too many open files
 	return fte;
 
@@ -922,8 +913,10 @@ KfsClient::AllocChunk(int fd)
 
     FdPos(fd)->ResetServers();
     // for writes, [0] is the master; that is the preferred server
-    if (op.chunkServers.size() > 0)
+    if (op.chunkServers.size() > 0) {
         FdPos(fd)->SetPreferredServer(op.chunkServers[0]);
+        SizeChunk(fd);
+    }
 
     KFS_LOG_DEBUG("Fileid: %ld, chunk : %ld, version: %ld, hosted on:",
                      fa->fileId, chunk.chunkId, chunk.chunkVersion);
@@ -1427,6 +1420,8 @@ KfsClient::SizeChunk(int fd)
     ChunkAttr *chunk = GetCurrChunk(fd);
 
     assert(FdPos(fd)->preferredServer != NULL);
+    if (FdPos(fd)->preferredServer == NULL)
+        return -EHOSTUNREACH;
 
     SizeOp op(nextSeq(), chunk->chunkId, chunk->chunkVersion);
     (void)DoOpCommon(&op, FdPos(fd)->preferredServer);
