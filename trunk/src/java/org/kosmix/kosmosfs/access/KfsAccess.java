@@ -58,7 +58,7 @@ public class KfsAccess
     short setReplication(String path, int numReplicas);
 
     private final static native
-    int create(String path, int numReplicas);
+    int create(String path, int numReplicas, boolean exclusive);
 
     private final static native
     int remove(String path);
@@ -132,6 +132,15 @@ public class KfsAccess
         return readdir(path);
     }
 
+    public KfsOutputChannel kfs_append(String path)
+    {
+        // when you open a previously existing file, the # of replicas is ignored
+        int fd = open(path, "a", 1);
+        if (fd < 0)
+            return null;
+        return new KfsOutputChannel(fd);
+    }
+
     public KfsOutputChannel kfs_create(String path)
     {
         return kfs_create(path, 1);
@@ -139,12 +148,27 @@ public class KfsAccess
 
     public KfsOutputChannel kfs_create(String path, int numReplicas)
     {
-        int fd = create(path, numReplicas);
+        return kfs_create(path, numReplicas, false);
+    }
+
+    // if exclusive is specified, then create will succeed only if the
+    // doesn't already exist
+    public KfsOutputChannel kfs_create(String path, int numReplicas, boolean exclusive)
+    {
+        int fd = create(path, numReplicas, exclusive);
         if (fd < 0)
             return null;
         return new KfsOutputChannel(fd);
     }
-    
+
+    public KfsInputChannel kfs_open(String path)
+    {
+        int fd = open(path, "r", 1);
+        if (fd < 0)
+            return null;
+        return new KfsInputChannel(fd);
+    }
+
     public int kfs_remove(String path)
     {
         return remove(path);
@@ -160,15 +184,6 @@ public class KfsAccess
     public int kfs_rename(String oldpath, String newpath, boolean overwrite)
     {
         return rename(oldpath, newpath, overwrite);
-    }
-
-    // XXX: Since KFS supports append, we need open to take a mode as argument.
-    public KfsInputChannel kfs_open(String path)
-    {
-        int fd = open(path, "r", 1);
-        if (fd < 0)
-            return null;
-        return new KfsInputChannel(fd);
     }
 
     public boolean kfs_exists(String path)

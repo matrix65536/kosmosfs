@@ -316,7 +316,7 @@ KfsClient::ZeroFillBuf(int fd, char *buf, size_t numBytes)
     // Fill in 0's based on space in the buffer....
     numIO = min(numIO, numBytes);
 
-    // KFS_LOG_DEBUG("Zero-filling %d bytes", numIO);
+    // KFS_LOG_DEBUG("Zero-filling %d bytes for read @ %ld", numIO, mFileTable[fd]->currPos.chunkOffset);
 
     memset(buf, 0, numIO);
     return numIO;

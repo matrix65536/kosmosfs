@@ -55,7 +55,7 @@ directory: ~/code/kfs.  We assume that you want to build the source in
 There are two parts to compiling the source:
  - Build the C++ side to get the metaserver/chunkserver binaries, tools, and
  the C++ client library.
- - Build the Java side to get a kfs.jar file which contains the
+ - Build the Java side to get a kfs-0.1.jar file which contains the
  wrapper calls to native C++ via JNI; this allows Java apps to access
  files stored in KFS.
 
@@ -81,7 +81,7 @@ At the end of the last step, you will have the following hierarchy:
 
  *  ~/code/kfs/build/bin -- This will contain the binaries
      *  ~/code/kfs/build/bin/tools -- This will contain the various KFS
-      utilities that are equivalent to the *nix commands such as,  cp, mv, rename etc.
+      utilities that are equivalent to the *nix commands such as, cp, mv, mkdir, rmdir etc.
      *  ~/code/kfs/build/bin/tests -- This contains simple unit-test programs 
       to make/remove directories, read/write files, etc.
 

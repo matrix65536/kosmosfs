@@ -46,7 +46,7 @@ modified.  Two sample programs are included in the package.
 Each program shows how to use the client-side API.  The KFS client
 library API is defined in:
  - C++: ~/code/kfs/src/cc/libkfsClient/KfsClient.h
- - Java: ~/code/kfs/src/java/org/kosmos/access/KfsAccess.java
+ - Java: ~/code/kfs/src/java/org/kosmix/kosmosfs/access/KfsAccess.java
 
 NOTE: For Java applications, we use the JNI interface to get at the
 C++ KFS client library code from Java applications.
@@ -57,8 +57,8 @@ LINKING
 After KFS client library are integrated with your applications, you
 will need to perform the following steps to link the application:
  - C++: link with ~/code/kfs/build/lib-static/libkfsClient.a
- - Java: Add ~/code/kfs/build/KosmosFS.jar to your CLASSPATH; also
- ~/code/kfs/build/lib-static/o should be in your LD_LIBRARY_PATH
+ - Java: Add ~/code/kfs/build/kfs-0.1.jar to your CLASSPATH; also
+ ~/code/kfs/build/lib/ should be in your LD_LIBRARY_PATH
 
 HOW DOES IT WORK
 ================
