@@ -341,10 +341,12 @@ ChunkServer::HandleCmd(IOBuffer *iobuf, int msgLen)
 	}
         op->clnt = this;
         submit_request(op);
-    
+
+	/*
         if (iobuf->BytesConsumable() > 0) {
                 KFS_LOG_DEBUG("More command data likely available: ");
         }
+	*/
         return 0;
 }
 
@@ -766,14 +768,14 @@ ChunkServer::Ping(string &result)
 
 	if (mTotalSpace < (1L << 30)) {
 		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
-	    		<< ", t=" << convertToMB(mTotalSpace) 
-			<< "(MB), u=" << convertToMB(mUsedSpace)
-	    		<< "(MB), a=" << convertToMB(mAllocSpace) << "(MB)\t";
+	    		<< ", total=" << convertToMB(mTotalSpace) 
+			<< "(MB), used=" << convertToMB(mUsedSpace)
+			<< "(MB), util=" << GetSpaceUtilization() * 100.0 << "% \t";
 	} else {
 		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
 	    		<< ", t=" << convertToGB(mTotalSpace) 
 			<< "(GB), u=" << convertToGB(mUsedSpace)
-	    		<< "(GB), a=" << convertToGB(mAllocSpace) << "(GB)\t";
+			<< "(GB), util=" << GetSpaceUtilization() * 100.0 << "% \t";
 	}
 	result += ost.str();
 }

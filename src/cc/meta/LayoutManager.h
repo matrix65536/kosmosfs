@@ -316,11 +316,23 @@ namespace KFS
 		void FindCandidateServers(std::vector<ChunkServerPtr> &result,
 					const std::vector<ChunkServerPtr> &excludes);
 
+		/// Helper function to generate candidate servers from
+		/// the specified set of sources for hosting a chunk.  
+		/// The list of servers returned is
+		/// ordered in decreasing space availability.
+		/// @param[out] result  The set of available servers
+		/// @param[in] sources  The set of possible source servers 
+		/// @param[in] excludes  The set of servers to exclude from
+		void FindCandidateServers(std::vector<ChunkServerPtr> &result,
+					const std::vector<ChunkServerPtr> &sources,
+					const std::vector<ChunkServerPtr> &excludes);
+
 		/// Helper function that takes a set of servers and sorts
-		/// them by space.  The list of servers returned is
-		/// ordered on decreasing space availability.
+		/// them by space utilization.  The list of servers returned is
+		/// ordered on increasing space utilization (i.e., decreasing 
+		/// space availability).
 		/// @param[in/out] servers  The set of servers we want sorted
-		void SortServersBySpace(std::vector<ChunkServerPtr> &servers);
+		void SortServersByUtilization(vector<ChunkServerPtr> &servers);
 
 		/// Check the # of copies for the chunk and return true if the
 		/// # of copies is less than targeted amount.  We also don't replicate a chunk
@@ -352,6 +364,18 @@ namespace KFS
 		/// @param[in] extraReplicas  The # of replicas that need to be deleted
 		void DeleteAddlChunkReplicas(chunkId_t chunkId, ChunkPlacementInfo &clli,
 				uint32_t extraReplicas);
+
+		/// Helper function to check set membership.
+		/// @param[in] hosters  Set of servers hosting a chunk
+		/// @param[in] server   The server we want to check for membership in hosters.
+		/// @retval true if server is a member of the set of hosters; 
+		///         false otherwise
+		bool IsChunkHostedOnServer(const vector<ChunkServerPtr> &hosters,
+						const ChunkServerPtr &server);
+
+		/// Periodically, rebalance servers by moving chunks around from
+		/// "over utilized" servers to "under utilized" servers.
+		void RebalanceServers();
 
 		/// Return true if c is a server in mChunkServers[].
 		bool ValidServer(ChunkServer *c);

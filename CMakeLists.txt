@@ -51,11 +51,15 @@ find_package(Boost REQUIRED)
 # Find the path to libfuse.so
 #
 
-IF (EXISTS "/lib64/libfuse.so")
-   SET(Fuse_LIBRARY_DIR "/lib64")
-ELSE (EXISTS "/lib64/libfuse.so")
-   SET(Fuse_LIBRARY_DIR "")
-ENDIF (EXISTS "/lib64/libfuse.so")
+# IF (EXISTS "/lib64/libfuse.so")
+#   SET(Fuse_LIBRARY_DIR "/lib64")
+# ELSE (EXISTS "/lib64/libfuse.so")
+#   SET(Fuse_LIBRARY_DIR "")
+# ENDIF (EXISTS "/lib64/libfuse.so")
+
+
+# Fill in the path to fuse library
+SET(Fuse_LIBRARY_DIR "")
 
 # include dirs
 include_directories( ${Boost_INCLUDE_DIRS} src/cc)

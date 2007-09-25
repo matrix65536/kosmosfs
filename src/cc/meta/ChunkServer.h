@@ -240,6 +240,15 @@ namespace KFS
                         return mUsedSpace;
                 }
 
+		/// Return an estimate of disk space utilization on this server.
+		/// The estimate is between [0..1]
+		float GetSpaceUtilization() {
+			if (mTotalSpace == 0)
+				return 0.0;
+			return (float) mUsedSpace / (float) mTotalSpace;
+
+		}
+
 		bool IsDown() {
 			return mDown;
 		}

@@ -48,6 +48,18 @@ using namespace KFS::libkfsio;
 LayoutManager KFS::gLayoutManager;
 const int MAX_CONCURRENT_REPLICATIONS = 10;
 
+///
+/// For disk space utilization balancing, we say that a server
+/// is "under utilized" if is below 20% full; we say that a server
+/// is "over utilized" if it is above 80% full.  For rebalancing, we
+/// move data from servers that are over-utilized to servers that are
+/// under-utilized.  These #'s are intentionally set conservatively; we
+/// don't want the system to constantly move stuff between nodes when
+/// there isn't much to be gained by it.
+///
+const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.2;
+const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.8;
+
 
 /// Helper functor that can be used to find a chunkid from a vector
 /// of meta chunk info's.
@@ -221,6 +233,16 @@ struct ServerSpace {
 	}
 };
 
+struct ServerSpaceUtil {
+	uint32_t serverIdx;
+	float utilization;
+
+	// sort in increasing order of space utilization
+	bool operator < (const ServerSpaceUtil &other) const {
+		return utilization < other.utilization;
+	}
+};
+
 void
 LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 				const vector<ChunkServerPtr> &excludes)
@@ -228,15 +250,26 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 	if (mChunkServers.size() < 1)
 		return;
 
+	FindCandidateServers(result, mChunkServers, excludes);
+}
+
+void
+LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
+				const vector<ChunkServerPtr> &sources,
+				const vector<ChunkServerPtr> &excludes)
+{
+	if (sources.size() < 1)
+		return;
+
 	vector<ServerSpace> ss;
 	ChunkServerPtr c;
 	vector<ChunkServerPtr>::size_type i, j;
 	vector<ChunkServerPtr>::const_iterator iter;
 
-	ss.resize(mChunkServers.size());
+	ss.resize(sources.size());
 
-	for (i = 0, j = 0; i < mChunkServers.size(); i++) {
-		c = mChunkServers[i];
+	for (i = 0, j = 0; i < sources.size(); i++) {
+		c = sources[i];
 		if (c->GetAvailSpace() < CHUNKSIZE) {
 			continue;
 		}
@@ -255,14 +288,14 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 
 	result.reserve(ss.size());
 	for (i = 0; i < ss.size(); ++i) {
-		result.push_back(mChunkServers[ss[i].serverIdx]);
+		result.push_back(sources[ss[i].serverIdx]);
 	}
 }
 
 void
-LayoutManager::SortServersBySpace(vector<ChunkServerPtr> &servers)
+LayoutManager::SortServersByUtilization(vector<ChunkServerPtr> &servers)
 {
-	vector<ServerSpace> ss;
+	vector<ServerSpaceUtil> ss;
 	vector<ChunkServerPtr> temp;
 
 	ss.resize(servers.size());
@@ -270,8 +303,7 @@ LayoutManager::SortServersBySpace(vector<ChunkServerPtr> &servers)
 
 	for (vector<ChunkServerPtr>::size_type i = 0; i < servers.size(); i++) {
 		ss[i].serverIdx = i;
-		ss[i].availSpace = servers[i]->GetAvailSpace();
-		ss[i].usedSpace = servers[i]->GetUsedSpace();
+		ss[i].utilization = servers[i]->GetSpaceUtilization();
 		temp[i] = servers[i];
 	}
 
@@ -887,8 +919,6 @@ LayoutManager::ChunkReplicationChecker()
 	// There is a set of chunks that are affected: their server went down
 	// or there is a change in their degree of replication.  in either
 	// case, walk this set of chunkid's and work on their replication amount.
-	if (mChunkReplicationCandidates.size() == 0)
-		return;
 	
 	CSMapIter iter;
 	chunkId_t chunkId;
@@ -931,6 +961,9 @@ LayoutManager::ChunkReplicationChecker()
 			mChunkReplicationCandidates.erase(*citer);
 		}
 	}
+
+	// If some servers are more loaded (space-wise) than others, move stuff around
+	RebalanceServers();
 }
 
 void
@@ -1006,9 +1039,9 @@ LayoutManager::DeleteAddlChunkReplicas(chunkId_t chunkId, ChunkPlacementInfo &cl
 	vector<ChunkServerPtr> servers = clli.chunkServers;
 	uint32_t numReplicas = servers.size() - extraReplicas;
 
-	// We get servers sorted by decreasing amount of space; so the candidates
+	// We get servers sorted by increasing amount of space utilization; so the candidates
 	// we want to delete are at the end
-	SortServersBySpace(servers);
+	SortServersByUtilization(servers);
 
 	clli.chunkServers = servers;
 	clli.chunkServers.resize(numReplicas);
@@ -1024,4 +1057,122 @@ void
 LayoutManager::ChangeChunkReplication(chunkId_t chunkId)
 {
 	mChunkReplicationCandidates.insert(chunkId);
+}
+
+//
+// Check if the server is part of the set of the servers hosting the chunk
+//
+bool
+LayoutManager::IsChunkHostedOnServer(const vector<ChunkServerPtr> &hosters,
+					const ChunkServerPtr &server)
+{
+	vector<ChunkServerPtr>::const_iterator iter;
+	iter = find(hosters.begin(), hosters.end(), server);
+	return iter != hosters.end();
+}
+
+//
+// Periodically, if we find that some chunkservers have LOT (> 80% free) of space
+// and if others are loaded (i.e., < 30% free space), move chunks around.  This
+// helps with keeping better disk space utilization (and maybe load).
+//
+void
+LayoutManager::RebalanceServers()
+{
+	if ((mNumOngoingReplications > MAX_CONCURRENT_REPLICATIONS) ||
+		(InRecovery())) {
+		return;
+	}
+
+	vector<ChunkServerPtr> servers = mChunkServers;
+	vector<ChunkServerPtr> loadedServers, nonloadedServers;
+	int extraReplicas;
+
+	// We get servers sorted by increasing amount of space utilization
+	SortServersByUtilization(servers);
+
+	// If things are somewhat utilized, don't mess...
+	if ((servers.back()->GetSpaceUtilization() < MAX_SERVER_SPACE_UTIL_THRESHOLD) ||
+		(servers.front()->GetSpaceUtilization() > MIN_SERVER_SPACE_UTIL_THRESHOLD))
+		return;
+
+	for (uint32_t i = 0; i < servers.size(); i++) {
+		if (servers[i]->GetSpaceUtilization() < MIN_SERVER_SPACE_UTIL_THRESHOLD)
+			nonloadedServers.push_back(servers[i]);
+		else if (servers[i]->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD)
+			loadedServers.push_back(servers[i]);
+	}
+
+	for (CSMapIter iter = mChunkToServerMap.begin();
+		iter != mChunkToServerMap.end(); iter++) {
+		chunkId_t chunkId = iter->first;
+		ChunkPlacementInfo &clli = iter->second;
+
+		if (mNumOngoingReplications > MAX_CONCURRENT_REPLICATIONS)
+			break;
+
+		// If this chunk is already being replicated or it is busy, skip
+		if ((clli.ongoingReplications > 0) ||
+			(!CanReplicateChunkNow(chunkId, clli, extraReplicas)))
+				continue;
+
+		// if we got too many copies of this chunk, don't bother
+		if (extraReplicas < 0)
+			continue;
+
+		// chunk could be moved around if it is hosted on a loaded server
+		bool canMoveChunk = false;
+		for (uint32_t i = 0; i < loadedServers.size(); i++) {
+			if (IsChunkHostedOnServer(clli.chunkServers, loadedServers[i])) {
+				canMoveChunk = true;
+				break;
+			}
+		}
+
+		if (!canMoveChunk)
+			continue;
+
+		// find candidates
+		FindCandidateServers(servers, nonloadedServers, clli.chunkServers);
+
+		if (servers.size() == 0)
+			// no candidates :-(
+			continue;
+		// get the chunk version
+		vector<MetaChunkInfo *> v;
+		vector<MetaChunkInfo *>::iterator chunk;
+
+		metatree.getalloc(clli.fid, v);
+		chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(chunkId));
+		if (chunk == v.end())
+			continue;
+		MetaChunkInfo *mci = *chunk;
+
+		clli.ongoingReplications++;
+		mNumOngoingReplications++;
+
+		// add this chunk to the target set of chunkIds that we are tracking
+		// for replication status change
+		ChangeChunkReplication(chunkId);
+		uint32_t numCopies = min(servers.size(), clli.chunkServers.size());
+
+		for (uint32_t i = 0; i < numCopies; i++) {
+			assert(!IsChunkHostedOnServer(clli.chunkServers, servers[i]));
+			if (IsChunkHostedOnServer(clli.chunkServers, servers[i])) {
+				string s = servers[i]->GetServerLocation().ToString();
+				KFS_LOG_DEBUG("ERROR Chunk (%ld) can't be moved as it is already hosted on %s",
+						chunkId, s.c_str());
+				continue;
+			}
+
+			string s = clli.chunkServers[i]->GetServerLocation().ToString();
+			string d = servers[i]->GetServerLocation().ToString();
+
+			KFS_LOG_INFO("Trying to move chunk(%ld): from %s to %s", chunkId,
+				s.c_str(), d.c_str());
+
+			servers[i]->ReplicateChunk(clli.fid, chunkId, mci->chunkVersion,
+					clli.chunkServers[i]->GetServerLocation());
+		}
+	}
 }
