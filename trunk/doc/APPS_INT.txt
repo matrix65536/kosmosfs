@@ -60,6 +60,11 @@ will need to perform the following steps to link the application:
  - Java: Add ~/code/kfs/build/kfs-0.1.jar to your CLASSPATH; also
  ~/code/kfs/build/lib/ should be in your LD_LIBRARY_PATH
 
+  NOTE: ~/code/kfs/build/lib will, by default, contain libraries built
+  with "Debug" option.  This library code in this mode is "very
+  chatty".  Hence, it is recommended that you use the libraries built
+  with "Release" option with your applications (such as, ~/code/kfs/build/release/...).
+
 HOW DOES IT WORK
 ================
 
