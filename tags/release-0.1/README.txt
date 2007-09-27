@@ -29,7 +29,7 @@
 Welcome to the Kosmos File System (KFS)!  The doc directory has files that
 you should read before deploying KFS:
 
- - doc/COPYING : Contains the Gnu Public License information.
+ - LICENSE.txt : Contains the Apache 2.0 license terms.
 
  - doc/INTRO.txt: Describes what KFS is about and the set of features
  that are currently implemented.
@@ -62,7 +62,7 @@ DIRECTORY ORGANIZATION
                   |
                   |---> access          (Java/Python glue code)
                   |---> meta            (meta server code)
-                  |---> ChunkServer     (chunk server code)
+                  |---> chunk           (chunk server code)
                   |---> libkfsClient    (client library code)
                   |---> libkfsIO        (IO library used by KFS)
                   |---> common          (common declarations)
@@ -70,7 +70,7 @@ DIRECTORY ORGANIZATION
                   |---> tools           (KFS tools)
            |
            |----> java
-                  |---> org/kosmos/access: Java wrappers to call KFS-JNI code
+                  |---> org/kosmix/kosmosfs/access: Java wrappers to call KFS-JNI code
            |                  
            |----> python
                   |---> tests           (Python test scripts)
