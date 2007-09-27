@@ -72,14 +72,8 @@ Type: <tool name> -h to see the list of options for that tool.
 FILE SYSTEM TOOLS
 =================
 
-A basic suite of tools for manipulating the KFS directory tree are
-included in the package:
- - KfsMkdir, KfsRmdir, KfsRm
- - KfsCp, KfsMv
- - KfsLs
+To manipulate the KFS directory tree, KfsShell tool is provided.
+This tool provides a basic set of filesystem commands such as
+ - mkdir, rmdir, rm, cd, cp, mv, ls
 
-These tools take arguments from the command line.  
-Type: <tool name> -h to see the list of options for that tool.
-
- -- FUSE ---
 

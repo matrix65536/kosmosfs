@@ -41,63 +41,37 @@ extern "C" {
 }
 
 #include "libkfsClient/KfsClient.h"
-#include "common/log.h"
+#include "tools/KfsShell.h"
+
+#include <boost/lexical_cast.hpp>
 
 using std::cout;
 using std::endl;
+using std::vector;
+using std::string;
 
 using namespace KFS;
 
-KfsClient *gKfsClient;
-
-int
-main(int argc, char **argv)
+void 
+KFS::tools::handleChangeReplication(const vector<string> &args)
 {
-    string kfspathname = "";
-    string serverHost = "";
-    int port = -1, res;
+    if ((args.size() < 2) || (args[0] == "--help")) {
+        cout << "Usage: changeReplication <filename> <replication factor> " << endl;
+        return;
+    }
+
+    KfsClient *kfsClient = KfsClient::Instance();
     int16_t numReplicas = 1;
-    bool help = false;
-    char optchar;
+    int res;
 
-    while ((optchar = getopt(argc, argv, "hs:p:f:n:")) != -1) {
-        switch (optchar) {
-            case 's':
-                serverHost = optarg;
-                break;
-            case 'p':
-                port = atoi(optarg);
-                break;
-            case 'n':
-                numReplicas = (int16_t) (atoi(optarg));
-                break;
-            case 'f':
-                kfspathname = optarg;
-                break;
-            case 'h':
-                help = true;
-                break;
-            default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
-                help = true;
-                break;
-        }
+    try {
+        numReplicas = (int16_t) boost::lexical_cast<int> (args[1]);
+    } catch (...) {
+        cout << "Print : " << args[1] << " is not a valid replication factor" << endl;
+        return;
     }
 
-    if (help || (kfspathname == "") || (serverHost == "") || (port < 0)) {
-        cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> "
-             << " -f <filename> -n <replication factor> " << endl;
-        exit(0);
-    }
-
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(serverHost, port);
-    if (!gKfsClient->IsInitialized()) {
-        cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
-    }
-
-    if ((res = gKfsClient->SetReplicationFactor(kfspathname.c_str(), numReplicas)) < 0) {
+    if ((res = kfsClient->SetReplicationFactor(args[0].c_str(), numReplicas)) < 0) {
 	cout << "Set replication failed: " << ErrorCodeToStr(res) << endl;
     } else {
 	cout << "Setting replication factor to: " << res << endl;

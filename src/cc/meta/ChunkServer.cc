@@ -773,8 +773,8 @@ ChunkServer::Ping(string &result)
 			<< "(MB), util=" << GetSpaceUtilization() * 100.0 << "% \t";
 	} else {
 		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
-	    		<< ", t=" << convertToGB(mTotalSpace) 
-			<< "(GB), u=" << convertToGB(mUsedSpace)
+	    		<< ", total=" << convertToGB(mTotalSpace) 
+			<< "(GB), used=" << convertToGB(mUsedSpace)
 			<< "(GB), util=" << GetSpaceUtilization() * 100.0 << "% \t";
 	}
 	result += ost.str();

@@ -35,9 +35,7 @@ extern "C" {
 }
 
 #include "libkfsClient/KfsClient.h"
-#include "common/log.h"
-
-#define MAX_FILE_NAME_LEN 256
+#include "tools/KfsShell.h"
 
 using std::cout;
 using std::endl;
@@ -46,67 +44,35 @@ using std::vector;
 
 using namespace KFS;
 
-KfsClient *gKfsClient;
+static void dirList(string kfsdirname);
 
-static void DirList(string &kfsdirname);
-
-int
-main(int argc, char **argv)
+// may want to do "ls -r"
+void
+KFS::tools::handleLs(const vector<string> &args)
 {
-    string kfsdirname = "";
-    string serverHost = "";
-    int port = -1;
-    bool help = false;
-    char optchar;
-
-    while ((optchar = getopt(argc, argv, "hs:p:d:")) != -1) {
-        switch (optchar) {
-            case 's':
-                serverHost = optarg;
-                break;
-            case 'p':
-                port = atoi(optarg);
-                break;
-            case 'd':
-                kfsdirname = optarg;
-                break;
-            case 'h':
-                help = true;
-                break;
-            default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
-                help = true;
-                break;
-        }
+    if ((args.size() >= 1) && (args[0] == "--help")) {
+        cout << "Usage: ls {<dir>} " << endl;
+        return;
     }
 
-    if (help || (kfsdirname == "") || (serverHost == "") || (port < 0)) {
-        cout << "Usage: " << argv[0] << " -s <meta server name> -p <port>"
-             << " -d <dir> " << endl;
-        exit(0);
-    }
-
-    gKfsClient = KFS::getKfsClient();
-    gKfsClient->Init(serverHost, port);
-    if (!gKfsClient->IsInitialized()) {
-        cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
-    }
-    
-    DirList(kfsdirname);
-
+    if (args.size())
+        dirList(args[0]);
+    else
+        dirList(".");
 }
 
 void
-DirList(string &kfsdirname)
+dirList(string kfsdirname)
 {
     string kfssubdir, subdir;
     int res;
     vector<KfsFileAttr> fileInfo;
     vector<KfsFileAttr>::size_type i;
 
-    if ((res = gKfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
-        cout << "Readdir plus failed: " << res << endl;
+    KfsClient *kfsClient = KFS::getKfsClient();
+
+    if ((res = kfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
+        cout << "Readdir plus failed: " << ErrorCodeToStr(res) << endl;
         return;
     }
     

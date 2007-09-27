@@ -48,9 +48,7 @@ LeaseClerk::RegisterLease(kfsChunkId_t chunkId, int64_t leaseId)
 void
 LeaseClerk::UnRegisterLease(kfsChunkId_t chunkId)
 {
-    LeaseMapIter iter;
-
-    iter = mLeases.find(chunkId);
+    LeaseMapIter iter = mLeases.find(chunkId);
     if (iter != mLeases.end()) {
         mLeases.erase(iter);
     }
