@@ -39,68 +39,30 @@ extern "C" {
 }
 
 #include "libkfsClient/KfsClient.h"
-#include "common/log.h"
-
-#define MAX_FILE_NAME_LEN 256
+#include "tools/KfsShell.h"
 
 using std::cout;
 using std::endl;
 using std::ifstream;
 using std::vector;
+using std::string;
 
 using namespace KFS;
-KfsClient *gKfsClient;
+using namespace KFS::tools;
 
 void doRecrRemove(const char *dirname);
-bool doRmdir(const char *dirname);
 bool doRecrRmdir(const char *dirname);
 bool doRemoveFile(const char *pathname);
 
-
-int
-main(int argc, char **argv)
+void
+KFS::tools::handleRm(const vector<string> &args)
 {
-    string kfsdirname = "";
-    string serverHost = "";
-    int port = -1;
-    bool help = false;
-    char optchar;
-
-    while ((optchar = getopt(argc, argv, "hs:p:d:")) != -1) {
-        switch (optchar) {
-            case 'd':
-                kfsdirname = optarg;
-                break;
-            case 's':
-                serverHost = optarg;
-                break;
-            case 'p':
-                port = atoi(optarg);
-                break;
-            case 'h':
-                help = true;
-                break;
-            default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
-                help = true;
-                break;
-        }
+    if ((args.size() < 1) || (args[0] == "--help") || (args[0] == "")) {
+        cout << "Usage: rm <path> " << endl;
+        return;
     }
 
-    if (help || (kfsdirname == "") || (serverHost == "") || (port < 0)) {
-        cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> "
-             << " -d <path> " << endl;
-        exit(0);
-    }
-
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(serverHost, port);
-    if (!gKfsClient->IsInitialized()) {
-        cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
-    }
-
-    doRecrRemove(kfsdirname.c_str());
+    doRecrRemove(args[0].c_str());
 }
 
 void
@@ -108,10 +70,12 @@ doRecrRemove(const char *pathname)
 {
     int res;
     struct stat statInfo;
+    KfsClient *kfsClient = KfsClient::Instance();
 
-    res = gKfsClient->Stat(pathname, statInfo);
+    res = kfsClient->Stat(pathname, statInfo);
     if (res < 0) {
-        cout << "unable to stat : " << pathname << endl;
+        cout << "Unable to remove: " <<  pathname << " : " 
+             << ErrorCodeToStr(res) << endl;
         return;
     }
     if (S_ISDIR(statInfo.st_mode)) {
@@ -125,28 +89,14 @@ bool
 doRemoveFile(const char *pathname)
 {
     int res;
+    KfsClient *kfsClient = KfsClient::Instance();
 
-    res = gKfsClient->Remove(pathname);
+    res = kfsClient->Remove(pathname);
     if (res < 0) {
         cout << "unable to remove: " << pathname <<  ' ' << "error = " << res << endl;
     }
 
     return res == 0;
-}
-
-bool
-doRmdir(const char *dirname)
-{
-    int res;
-
-    cout << "Rm dir: " << dirname << endl;
-
-    res = gKfsClient->Rmdir(dirname);
-    if (res < 0) {
-        cout << "unable to rmdir: " << dirname <<  ' ' << "error = " << res << endl;
-        return false;
-    }
-    return true;
 }
 
 // do the equivalent of rm -rf
@@ -156,10 +106,9 @@ doRecrRmdir(const char *dirname)
     int res;
     vector<KfsFileAttr> dirEntries;
     vector<KfsFileAttr>::size_type i;
+    KfsClient *kfsClient = KfsClient::Instance();
 
-    cout << "rmdir -r: " << dirname << endl;
-
-    res = gKfsClient->ReaddirPlus(dirname, dirEntries);
+    res = kfsClient->ReaddirPlus(dirname, dirEntries);
     if (res < 0) {
         cout << "Readdir failed on: " << dirname << ' ' << "error: " << res << endl;
         return false;

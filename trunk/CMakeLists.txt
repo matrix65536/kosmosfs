@@ -47,6 +47,9 @@ ENDIF(CMAKE_BUILD_TYPE STREQUAL "Release")
 # Locate Boost
 find_package(Boost REQUIRED)
 
+# Locate the path to jni.h
+find_package(JNI)
+
 #
 # Find the path to libfuse.so
 #
@@ -65,7 +68,6 @@ SET(Fuse_LIBRARY_DIR "")
 include_directories( ${Boost_INCLUDE_DIRS} src/cc)
 
 # get the subdirs we want
-add_subdirectory (src/cc/access)
 add_subdirectory (src/cc/common)
 add_subdirectory (src/cc/meta)
 add_subdirectory (src/cc/chunk)
@@ -73,6 +75,12 @@ add_subdirectory (src/cc/libkfsClient)
 add_subdirectory (src/cc/libkfsIO)
 add_subdirectory (src/cc/tools)
 add_subdirectory (src/cc/tests)
+
+IF (NOT ${JAVA_INCLUDE_PATH} STREQUAL "")
+   message(STATUS "Found JNI...building kfs_access")
+   include_directories ( ${JAVA_INCLUDE_PATH} ${JAVA_INCLUDE_PATH2} )
+   add_subdirectory (src/cc/access)
+ENDIF (NOT ${JAVA_INCLUDE_PATH} STREQUAL "")
 
 IF (NOT ${Fuse_LIBRARY_DIR} STREQUAL "")
    message(STATUS "Found fuse")

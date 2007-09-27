@@ -1,20 +1,27 @@
 
 # Build the tools library
-add_library (tools MonUtils.cc)
+set (lib_srcs
+    MonUtils.cc
+    KfsCd.cc
+    KfsChangeReplication.cc
+    KfsCp.cc
+    KfsLs.cc
+    KfsMkdirs.cc
+    KfsMv.cc
+    KfsRm.cc
+    KfsRmdir.cc
+    utils.cc
+)
+
+add_library (tools ${lib_srcs})
 add_dependencies (tools kfsClient)
 
 set (exe_files
 cpFs2Kfs
 cpKfs2Fs
-KfsCp
-KfsCat
-KfsChangeReplication
-KfsLs
-KfsMkdir
-KfsMv
+KfsShell
 KfsPing
 KfsPut
-KfsRm
 KfsStats
 )
 

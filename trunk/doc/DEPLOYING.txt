@@ -178,6 +178,18 @@ servers.
  This script reads the machines.cfg file and stops the appropriate
  server on a given target machine.
 
+ Manipulating the KFS directory tree
+ ===================================
+
+ To manipulate the KFS directory tree interactively, a KfsShell binary
+ is included in the tools.  This shell allows users to execute
+ filesystem utility commands such as, cd, ls, mkdir, rmdir, etc.  To
+ launch this binary:
+
+ 1. cd ~/code/kfs/scripts 
+ 2. python kfsshell.py -f machines.cfg -b ~/code/kfs/build/release/bin
+
+ The shell comes with interactive help.
 
 MONITORING KFS SERVERS
 ======================
@@ -210,6 +222,11 @@ To add new chunkservers to the setup, perform the following steps:
    start (1) the new chunkservers, and (2) any old chunkservers that
    may have been stopped.  When the new chunkservers startup, they
    announce themselves to the metaserver and get included in the system.
+4. The metaserver does periodic rebalancing of data.  If it detects
+   that some chunkservers are over-utilized (i.e., > 80% of their
+   exported space is used) and others are under-utilized (i.e., < 20%
+   of their exported space is used), data is migrated from the
+   over-utilized to under-utilized nodes.
 
 
 WHERE DOES THE SERVER STORE THINGS

@@ -39,19 +39,13 @@ extern "C" {
 }
 
 #include "libkfsClient/KfsClient.h"
-#include "common/log.h"
-
-#define MAX_FILE_NAME_LEN 256
+#include "tools/KfsShell.h"
 
 using std::cout;
 using std::endl;
 using std::ifstream;
 using namespace KFS;
-
-KfsClient *gKfsClient;
-
-// Make the directory hierarchy in KFS defined by path.
-bool doMkdirs(const char *path);
+using namespace KFS::tools;
 
 //
 // Given a file defined by a KFS srcPath, copy it to KFS as defined by
@@ -66,65 +60,29 @@ void CopyDir(const string &srcDirname, string dstDirname);
 // Guts of the work
 int CopyFile2(string srcfilename, string dstfilename);
 
-int
-main(int argc, char **argv)
+void
+KFS::tools::handleCopy(const vector<string> &args)
 {
-    string dstPath = "";
-    string serverHost = "";
-    int port = -1;
-    char *srcPath = NULL;
-    bool help = false;
-    char optchar;
     struct stat statInfo;
 
-    while ((optchar = getopt(argc, argv, "d:hk:p:s:")) != -1) {
-        switch (optchar) {
-            case 'd':
-                srcPath = optarg;
-                break;
-            case 'k':
-                dstPath = optarg;
-                break;
-            case 'p':
-                port = atoi(optarg);
-                break;
-            case 's':
-                serverHost = optarg;
-                break;
-            case 'h':
-                help = true;
-                break;
-            default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
-                help = true;
-                break;
-        }
+    if ((args.size() < 2) || (args[0] == "--help") || (args[0] == "") || (args[1] == "")) {
+        cout << "Usage: cp <source path> <dst path>" << endl;
+        return;
     }
 
-    if (help || (srcPath == NULL) || (dstPath == "") || (serverHost == "") || (port < 0)) {
-        cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> "
-             << " -d <source path> -k <dst path> " << endl;
-        exit(0);
-    }
+    KfsClient *kfsClient = KfsClient::Instance();
 
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(serverHost, port);
-    if (!gKfsClient->IsInitialized()) {
-	cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
-    }
-
-    if (gKfsClient->Stat(srcPath, statInfo) < 0) {
-	cout << "Source path: " << srcPath << " is non-existent!" << endl;
-	exit(-1);
+    if (kfsClient->Stat(args[0].c_str(), statInfo) < 0) {
+	cout << "Source path: " << args[0] << " is non-existent!" << endl;
+        return;
     }
 
     if (!S_ISDIR(statInfo.st_mode)) {
-	CopyFile(srcPath, dstPath);
-	exit(0);
+	CopyFile(args[0], args[1]);
+        return;
     }
 
-    CopyDir(srcPath, dstPath);
+    CopyDir(args[0], args[1]);
 }
 
 int
@@ -134,6 +92,7 @@ CopyFile(const string &srcPath, const string &dstPath)
     string::size_type slash = srcPath.rfind('/');
     struct stat statInfo;
     string kfsParentDir;
+    KfsClient *kfsClient = KfsClient::Instance();
 
     // get everything after the last slash
     if (slash != string::npos) {
@@ -150,13 +109,13 @@ CopyFile(const string &srcPath, const string &dstPath)
     // kfs://path/b and we are checking for existence of "/path"
     //
     kfsParentDir = dstPath;
-    if (gKfsClient->Stat(dstPath.c_str(), statInfo)) {
+    if (kfsClient->Stat(dstPath.c_str(), statInfo)) {
 	slash = dstPath.rfind('/');
 	if (slash == string::npos)
 	    kfsParentDir = "";
 	else {
 	    kfsParentDir.assign(dstPath, 0, slash);
-	    gKfsClient->Stat(kfsParentDir.c_str(), statInfo);
+	    kfsClient->Stat(kfsParentDir.c_str(), statInfo);
 
 	    // this is the name of the file in the dest path
 	    filename.assign(dstPath, slash+1, string::npos);
@@ -183,8 +142,9 @@ CopyDir(const string &srcDirname, string dstDirname)
     vector<KfsFileAttr> fileInfo;
     vector<KfsFileAttr>::size_type i;
     int res;
+    KfsClient *kfsClient = KfsClient::Instance();
 
-    if ((res = gKfsClient->ReaddirPlus((char *) srcDirname.c_str(), fileInfo)) < 0) {
+    if ((res = kfsClient->ReaddirPlus((char *) srcDirname.c_str(), fileInfo)) < 0) {
         cout << "Readdir plus failed: " << res << endl;
         return;
     }
@@ -219,50 +179,36 @@ CopyFile2(string srcfilename, string dstfilename)
     int srcfd, dstfd, nRead, toRead;
     long long n = 0;
     int res;
+    KfsClient *kfsClient = KfsClient::Instance();
 
-    cout << "In copyfile2: " << srcfilename << "->" << dstfilename << endl;
-
-    srcfd = gKfsClient->Open(srcfilename.c_str(), O_RDONLY);
+    srcfd = kfsClient->Open(srcfilename.c_str(), O_RDONLY);
     if (srcfd < 0) {
         cout << "Unable to open: " << srcfilename.c_str() << endl;
-	exit(0);
+        return srcfd;
     }
 
-    dstfd = gKfsClient->Create((char *) dstfilename.c_str());
+    dstfd = kfsClient->Create((char *) dstfilename.c_str());
     if (dstfd < 0) {
-        cout << "Create " << dstfilename << " failed: " << dstfd << endl;
-	exit(0);
+        cout << "Create " << dstfilename << " failed: " << ErrorCodeToStr(dstfd) << endl;
+        return dstfd;
     }
 
     while (1) {
 	toRead = bufsize;
-	nRead = gKfsClient->Read(srcfd, kfsBuf, toRead);
+	nRead = kfsClient->Read(srcfd, kfsBuf, toRead);
 	if (nRead <= 0)
 	    break;
 
         // write it out
-        res = gKfsClient->Write(dstfd, kfsBuf, nRead);
+        res = kfsClient->Write(dstfd, kfsBuf, nRead);
         if (res < 0) {
-            cout << "Write failed with error code: " << res << endl;
-            exit(0);
+            cout << "Write failed with error code: " << ErrorCodeToStr(res) << endl;
+            return res;
         }
         n += nRead;
     }
-    gKfsClient->Close(srcfd);
-    gKfsClient->Close(dstfd);
+    kfsClient->Close(srcfd);
+    kfsClient->Close(dstfd);
 
     return 0;
-}
-
-bool
-doMkdirs(const char *path)
-{
-    int res;
-
-    res = gKfsClient->Mkdirs((char *) path);
-    if ((res < 0) && (res != -EEXIST)) {
-        cout << "Mkdir failed: " << ErrorCodeToStr(res) << endl;
-        return false;
-    }
-    return true;
 }
