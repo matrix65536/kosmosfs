@@ -33,6 +33,12 @@ extern "C" {
 #include <cerrno>
 #include <cassert>
 
+#if defined (__APPLE__)
+// tr1 on Apple doesn't define the hash for int64
+#include "cxxutil.h"
+#endif
+
+
 namespace KFS {
 
 typedef long long seq_t;        //!< request sequence no. for logging

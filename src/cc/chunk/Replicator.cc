@@ -31,6 +31,7 @@
 #include "ChunkServer.h"
 #include "Utils.h"
 #include "libkfsIO/Globals.h"
+#include "libkfsIO/Checksum.h"
 
 #include <string>
 #include <sstream>
@@ -290,6 +291,12 @@ Replicator::Write(IOBuffer *iobuf, int numBytes)
     mWriteOp.dataBuf->Move(iobuf, numBytes);
     mWriteOp.offset = mOffset;
     mWriteOp.numBytes = numBytes;
+
+    // align the writes to checksum boundaries
+    if ((mWriteOp.numBytes >= CHECKSUM_BLOCKSIZE) &&
+        (mWriteOp.numBytes % CHECKSUM_BLOCKSIZE) != 0)
+        // round-down so to speak; whatever is left will be picked up by the next read
+        mWriteOp.numBytes = (mWriteOp.numBytes / CHECKSUM_BLOCKSIZE) * CHECKSUM_BLOCKSIZE;
 
     SET_HANDLER(this, &Replicator::HandleWrite);
 

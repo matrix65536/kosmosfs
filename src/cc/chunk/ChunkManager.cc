@@ -27,6 +27,7 @@ extern "C" {
 #include <dirent.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <unistd.h>
 }
 
@@ -453,13 +454,19 @@ ChunkManager::WriteChunk(WriteOp *op)
 
     // schedule a write based on the chunk size.  Make sure that a
     // write doesn't overflow the size of a chunk.
-    op->numBytesIO = min(KFS::CHUNKSIZE - op->offset, op->numBytes);
+    op->numBytesIO = min((size_t) (KFS::CHUNKSIZE - op->offset), op->numBytes);
 
     if (op->numBytesIO == 0)
         return -EINVAL;
 
-    size_t addedBytes = max((size_t)0,
+#if defined(__APPLE__)
+    size_t addedBytes = max((long long) 0,
 		    op->offset + op->numBytesIO - cih->chunkInfo.chunkSize);
+#else
+    size_t addedBytes = max((size_t) 0,
+		    op->offset + op->numBytesIO - cih->chunkInfo.chunkSize);
+#endif
+
     if (mUsedSpace + addedBytes >= mTotalSpace)
 	return -ENOSPC;
 

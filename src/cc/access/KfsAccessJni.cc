@@ -84,6 +84,9 @@ extern "C" {
     jshort Java_org_kosmix_kosmosfs_access_KfsAccess_setReplication(
         JNIEnv *jenv, jclass jcls, jstring jpath, jint jnumReplicas);
 
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
+        JNIEnv *jenv, jclass jcls, jstring jpath);
+
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_open(
         JNIEnv *jenv, jclass jcls, jstring jpath, jstring jmode, jint jnumReplicas);
 
@@ -376,6 +379,21 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_filesize(
         return -1;
     
     return result.st_size;
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
+    JNIEnv *jenv, jclass jcls, jstring jpath)
+{
+    KfsClient *clnt = KfsClient::Instance();
+
+    struct stat result;
+    string path;
+    setStr(path, jenv, jpath);
+    
+    if (clnt->Stat(path.c_str(), result) != 0)
+        return -1;
+    
+    return result.st_mtime;
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_getDataLocation(

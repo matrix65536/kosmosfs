@@ -634,17 +634,16 @@ int
 KfsClient::Close(int fd)
 {
     MutexLock l(&mMutex);
+    int status = 0;
 
     if (!valid_fd(fd))
 	return -EBADF;
 
     if (mFileTable[fd]->buffer.dirty) {
-	int status = FlushBuffer(fd);
-	if (status < 0)
-	    return status;
+	status = FlushBuffer(fd);
     }
     ReleaseFileTableEntry(fd);
-    return 0;
+    return status;
 }
 
 int

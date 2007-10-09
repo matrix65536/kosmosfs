@@ -172,7 +172,7 @@ KfsClient::WriteToBuffer(int fd, const char *buf, size_t numBytes)
     }
 
     // ensure that write doesn't straddle chunk boundaries
-    numBytes = min(numBytes, KFS::CHUNKSIZE - pos->chunkOffset);
+    numBytes = min(numBytes, (size_t) (KFS::CHUNKSIZE - pos->chunkOffset));
     if (numBytes == 0)
 	return 0;
 
@@ -223,7 +223,7 @@ KfsClient::WriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 {
     assert(KFS::CHUNKSIZE - offset >= 0);
 
-    size_t numAvail = min(numBytes, KFS::CHUNKSIZE - offset);
+    size_t numAvail = min(numBytes, (size_t) (KFS::CHUNKSIZE - offset));
     int res = 0;
 
     for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
@@ -416,7 +416,7 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 
     assert(KFS::CHUNKSIZE - offset >= 0);
 
-    numAvail = min(numBytes, KFS::CHUNKSIZE - offset);
+    numAvail = min(numBytes, (size_t) (KFS::CHUNKSIZE - offset));
 
     // cout << "Pushing to server: " << offset << ' ' << numBytes << endl;
 
@@ -451,8 +451,8 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 	// similar to read, breakup the write if it is straddling
 	// checksum block boundaries.
 	if (OffsetToChecksumBlockStart(op->offset) != op->offset) {
-	    op->numBytes = min(OffsetToChecksumBlockEnd(op->offset) - op->offset,
-	                       (long) op->numBytes);
+	    op->numBytes = min((size_t) (OffsetToChecksumBlockEnd(op->offset) - op->offset),
+	                       op->numBytes);
 	}
 
 	op->AttachContentBuf(buf + numWrote, op->numBytes);

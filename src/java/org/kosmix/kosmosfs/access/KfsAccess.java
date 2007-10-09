@@ -58,6 +58,9 @@ public class KfsAccess
     short setReplication(String path, int numReplicas);
 
     private final static native
+    long getModificationTime(String path);
+
+    private final static native
     int create(String path, int numReplicas, boolean exclusive);
 
     private final static native
@@ -224,6 +227,11 @@ public class KfsAccess
     public short kfs_setReplication(String path, int numReplicas)
     {
         return setReplication(path, numReplicas);
+    }
+
+    public long kfs_getModificationTime(String path)
+    {
+        return getModificationTime(path);
     }
 
     protected void finalize() throws Throwable

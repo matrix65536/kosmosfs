@@ -61,6 +61,9 @@ public class KfsTest
                 System.out.println("Unable to call create");
                 System.exit(1);
             }
+
+            long mTime = kfsAccess.kfs_getModificationTime(path);
+            System.out.println("Modification time for: " + path + " is: " + mTime);
             
             String [] entries;
             if ((entries = kfsAccess.kfs_readdir(basedir)) == null) {
