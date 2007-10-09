@@ -706,11 +706,22 @@ Tree::rename(fid_t parent, const string &oldname, string &newname,
 	}
 
 	fid_t srcFid = src->id();
+
+	if (t == KFS_DIR) {
+		// get rid of the linkage of the "old" ..
+		unlink(srcFid, "..", sfattr, true);
+	}
+
 	status = del(src);
 	assert(status == 0);
 	MetaDentry *newSrc = new MetaDentry(ddir, dname, srcFid);
 	status = insert(newSrc);
 	assert(status == 0);
+	if (t == KFS_DIR) {
+		// create a new linkage for ..
+		status = link(srcFid, "..", KFS_DIR, ddir, 1);
+		assert(status == 0);
+	}
 	return 0;
 }
 
