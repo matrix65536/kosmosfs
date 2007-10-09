@@ -313,8 +313,13 @@ doRead(int fd, off_t offset, int numBytes, const char *src)
     start = offset;
     bytesCompared = 0;
     while (bytesCompared < numBytes) {
+#if defined (__APPLE__)
+        toCompare =  min(KFS_DATA_BUF_SIZE - (start % KFS_DATA_BUF_SIZE),
+                         (long long) (numBytes - bytesCompared));
+#else
         toCompare =  min(KFS_DATA_BUF_SIZE - (start % KFS_DATA_BUF_SIZE),
                          (long) (numBytes - bytesCompared));
+#endif
         if (!compareData(kfsBuf1 + bytesCompared, src + (start % KFS_DATA_BUF_SIZE), 
                          toCompare)) {
             cout << "Mismatch on read starting at: " << offset << endl;

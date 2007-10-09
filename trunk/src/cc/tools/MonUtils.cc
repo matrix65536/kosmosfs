@@ -29,6 +29,8 @@
 #include <cassert>
 #include <cerrno>
 #include <sstream>
+#include <boost/scoped_array.hpp>
+
 using std::istringstream;
 using std::ostringstream;
 using std::string;
@@ -36,8 +38,9 @@ using std::string;
 using namespace KFS;
 using namespace KFS_MON;
 
-const char *KFS_VERSION_STR = "KFS/1.0";
-const int CMD_BUF_SIZE = 1024;
+static const char *KFS_VERSION_STR = "KFS/1.0";
+// use a big buffer so we don't have issues about server responses not fitting in
+static const int CMD_BUF_SIZE = 1 << 20;  
 
 void
 KfsMonOp::ParseResponseCommon(string &resp, Properties &prop)
@@ -148,7 +151,7 @@ int
 KFS_MON::DoOpCommon(KfsMonOp *op, TcpSocket *sock)
 {
     int numIO;
-    char buf[CMD_BUF_SIZE];
+    boost::scoped_array<char> buf;
     int len;
     ostringstream os;
 
@@ -159,7 +162,8 @@ KFS_MON::DoOpCommon(KfsMonOp *op, TcpSocket *sock)
         return -1;
     }
 
-    numIO = GetResponse(buf, CMD_BUF_SIZE, &len, sock);
+    buf.reset(new char[CMD_BUF_SIZE]);
+    numIO = GetResponse(buf.get(), CMD_BUF_SIZE, &len, sock);
 
     if (numIO <= 0) {
         op->status = -1;
@@ -168,7 +172,7 @@ KFS_MON::DoOpCommon(KfsMonOp *op, TcpSocket *sock)
 
     assert(len > 0);
 
-    op->ParseResponse(buf, len);
+    op->ParseResponse(buf.get(), len);
 
     return numIO;
 }

@@ -27,7 +27,11 @@ add_library (meta ${lib_srcs})
 
 add_executable (metaserver metaserver_main)
 add_dependencies (metaserver kfsCommon kfsIO meta)
-target_link_libraries (metaserver meta kfsIO kfsCommon pthread rt)
+target_link_libraries (metaserver meta kfsIO kfsCommon pthread)
+if (NOT APPLE)
+  target_link_libraries(meta rt)
+  target_link_libraries(metaserver rt)
+endif (NOT APPLE)
 #
 # Install them
 #

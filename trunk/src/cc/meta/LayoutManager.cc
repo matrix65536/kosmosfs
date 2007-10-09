@@ -575,12 +575,12 @@ LayoutManager::ChunkCorrupt(MetaChunkCorrupt *r)
 
 	v = iter->second;
 	if(v.fid != r->fid) {
-		KFS_LOG_WARN("Server claims invalid chunk: <%ld, %ld> to be corrupt",
+		KFS_LOG_WARN("Server claims invalid chunk: <%lld, %lld> to be corrupt",
 				r->fid, r->chunkId);
 		return;
 	}
 
-	KFS_LOG_INFO("Server claims file/chunk: <%ld, %ld> to be corrupt",
+	KFS_LOG_INFO("Server claims file/chunk: <%lld, %lld> to be corrupt",
 			r->fid, r->chunkId);
 	v.chunkServers.erase(remove_if(v.chunkServers.begin(), v.chunkServers.end(), 
 			ChunkServerMatcher(r->server.get())), v.chunkServers.end());
@@ -938,7 +938,7 @@ LayoutManager::ChunkReplicationChecker()
 		if (iter->second.ongoingReplications > 0)
 			continue;
 
-		KFS_LOG_DEBUG("Checking replication level for chunk: %ld", chunkId);
+		KFS_LOG_DEBUG("Checking replication level for chunk: %lld", chunkId);
 
 		if (!CanReplicateChunkNow(iter->first, iter->second, extraReplicas))
 			continue;
@@ -1047,7 +1047,7 @@ LayoutManager::DeleteAddlChunkReplicas(chunkId_t chunkId, ChunkPlacementInfo &cl
 	clli.chunkServers.resize(numReplicas);
 	mChunkToServerMap[chunkId] = clli;
 
-	KFS_LOG_INFO("Deleting extra replicas (%d) of chunk: %ld", extraReplicas, chunkId);
+	KFS_LOG_INFO("Deleting extra replicas (%d) of chunk: %lld", extraReplicas, chunkId);
 
 	// The first N are what we want to keep; the rest should go.
 	for_each(servers.begin() + numReplicas, servers.end(), ChunkDeletor(chunkId));
@@ -1160,7 +1160,7 @@ LayoutManager::RebalanceServers()
 			assert(!IsChunkHostedOnServer(clli.chunkServers, servers[i]));
 			if (IsChunkHostedOnServer(clli.chunkServers, servers[i])) {
 				string s = servers[i]->GetServerLocation().ToString();
-				KFS_LOG_DEBUG("ERROR Chunk (%ld) can't be moved as it is already hosted on %s",
+				KFS_LOG_DEBUG("ERROR Chunk (%lld) can't be moved as it is already hosted on %s",
 						chunkId, s.c_str());
 				continue;
 			}
@@ -1168,7 +1168,7 @@ LayoutManager::RebalanceServers()
 			string s = clli.chunkServers[i]->GetServerLocation().ToString();
 			string d = servers[i]->GetServerLocation().ToString();
 
-			KFS_LOG_INFO("Trying to move chunk(%ld): from %s to %s", chunkId,
+			KFS_LOG_INFO("Trying to move chunk(%lld): from %s to %s", chunkId,
 				s.c_str(), d.c_str());
 
 			servers[i]->ReplicateChunk(clli.fid, chunkId, mci->chunkVersion,

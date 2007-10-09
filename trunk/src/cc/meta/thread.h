@@ -38,21 +38,40 @@ class MetaThread {
 	pthread_mutex_t mutex;
 	pthread_cond_t cv;
 	pthread_t thread;
+#if defined (__APPLE__)
+	bool threadInited;
+#else
 	static const pthread_t NO_THREAD = -1u;
+#endif
 public:
 	typedef void *(*thread_start_t)(void *);
+#if defined (__APPLE__)
+	MetaThread() : threadInited(false)
+	{
+		pthread_mutex_init(&mutex, NULL);
+		pthread_cond_init(&cv, NULL);
+	}
+#else
 	MetaThread(): thread(NO_THREAD)
 	{
 		pthread_mutex_init(&mutex, NULL);
 		pthread_cond_init(&cv, NULL);
 	}
+#endif
 	~MetaThread()
 	{
 		pthread_mutex_destroy(&mutex);
+#if defined (__APPLE__)
+		if (threadInited) {
+                	int UNUSED_ATTR status = pthread_cancel(thread);
+			assert(status == 0);
+		}
+#else
                 if (thread != NO_THREAD) {
-                    int UNUSED_ATTR status = pthread_cancel(thread);
-                    assert(status == 0);
+			int UNUSED_ATTR status = pthread_cancel(thread);
+			assert(status == 0);
                 }
+#endif
 		pthread_cond_destroy(&cv);
 	}
 	void lock()

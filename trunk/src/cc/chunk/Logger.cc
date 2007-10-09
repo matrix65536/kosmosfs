@@ -25,6 +25,10 @@
 
 #include<map>
 #include<sstream>
+extern "C" {
+#include <sys/stat.h>
+}
+
 #include "libkfsIO/Globals.h"
 
 #include "Logger.h"

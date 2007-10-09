@@ -363,7 +363,7 @@ KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
 
     assert(chunk->chunkSize - pos->chunkOffset >= 0);
 
-    size_t numAvail = min(chunk->chunkSize - pos->chunkOffset, numBytes);
+    size_t numAvail = min((size_t) (chunk->chunkSize - pos->chunkOffset), numBytes);
     size_t numRead = 0;
 
     while (numRead < numAvail) {

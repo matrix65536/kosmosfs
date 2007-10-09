@@ -36,7 +36,7 @@ using std::istringstream;
 using std::ostringstream;
 using std::string;
 
-const char *KFS_VERSION_STR = "KFS/1.0";
+static const char *KFS_VERSION_STR = "KFS/1.0";
 
 static void GetTimeval(string &s, struct timeval &tv);
 
