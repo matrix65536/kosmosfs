@@ -900,6 +900,18 @@ LayoutManager::CanReplicateChunkNow(chunkId_t chunkId,
 		// from the candidate set.
 		return true;
 
+	// check if the chunk still exists
+	vector<MetaChunkInfo *> v;
+	vector<MetaChunkInfo *>::iterator chunk;
+
+	metatree.getalloc(c.fid, v);
+	chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(chunkId));
+	if (chunk == v.end()) {
+		// This chunk doesn't exist in this file anymore.  
+		// So, take out this chunk from the candidate set.
+		return true;
+	}
+
 	// May need to re-replicate this chunk: 
 	//    - extraReplicas > 0 means make extra copiles; 
 	//    - extraReplicas == 0, take out this chunkid from the candidate set
