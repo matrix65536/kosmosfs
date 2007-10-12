@@ -305,10 +305,6 @@ MetaServerSM::HandleCmd(IOBuffer *iobuf, int cmdLen)
 
     op->clnt = this;
     op->Execute();
-    
-    if (iobuf->BytesConsumable() > 0) {
-        KFS_LOG_DEBUG("More command data likely available for chunk: ");
-    }
 }
 
 

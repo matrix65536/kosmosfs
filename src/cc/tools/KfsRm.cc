@@ -104,11 +104,11 @@ bool
 doRecrRmdir(const char *dirname)
 {
     int res;
-    vector<KfsFileAttr> dirEntries;
-    vector<KfsFileAttr>::size_type i;
+    vector<string> dirEntries;
+    vector<string>::size_type i;
     KfsClient *kfsClient = KfsClient::Instance();
 
-    res = kfsClient->ReaddirPlus(dirname, dirEntries);
+    res = kfsClient->Readdir(dirname, dirEntries);
     if (res < 0) {
         cout << "Readdir failed on: " << dirname << ' ' << "error: " << res << endl;
         return false;
@@ -117,15 +117,15 @@ doRecrRmdir(const char *dirname)
     for (i = 0; i < dirEntries.size(); ++i) {
         string path = dirname;
 
-        if ((dirEntries[i].filename == ".") ||
-            (dirEntries[i].filename == ".."))
+        if ((dirEntries[i] == ".") ||
+            (dirEntries[i] == ".."))
             continue;
 
         // don't add a trailing slash if it exists already
         if (path[path.size() - 1] != '/')
             path += "/";
-        path += dirEntries[i].filename;
-        if (dirEntries[i].isDirectory) {
+        path += dirEntries[i];
+        if (kfsClient->IsDirectory(path.c_str())) {
             doRecrRmdir(path.c_str());
         } else {
             doRemoveFile(path.c_str());

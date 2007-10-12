@@ -396,7 +396,11 @@ int KFS::Simulcast(const char *buf, int bufLen, vector<TcpSocket *> &targets)
         timeout.tv_sec = 0;
         timeout.tv_usec = 100;
         FD_ZERO(&writeSet);
+        lastfd = 0;
         for (i = 0; i < targets.size(); i++) {
+            if (nsent[i] >= bufLen)
+                continue;
+
             if (!targets[i]->IsGood())
                 return -1;
             fd = targets[i]->GetFd();

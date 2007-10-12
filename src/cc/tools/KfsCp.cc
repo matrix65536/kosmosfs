@@ -63,8 +63,6 @@ int CopyFile2(string srcfilename, string dstfilename);
 void
 KFS::tools::handleCopy(const vector<string> &args)
 {
-    struct stat statInfo;
-
     if ((args.size() < 2) || (args[0] == "--help") || (args[0] == "") || (args[1] == "")) {
         cout << "Usage: cp <source path> <dst path>" << endl;
         return;
@@ -72,12 +70,12 @@ KFS::tools::handleCopy(const vector<string> &args)
 
     KfsClient *kfsClient = KfsClient::Instance();
 
-    if (kfsClient->Stat(args[0].c_str(), statInfo) < 0) {
+    if (!kfsClient->Exists(args[0].c_str())) {
 	cout << "Source path: " << args[0] << " is non-existent!" << endl;
         return;
     }
 
-    if (!S_ISDIR(statInfo.st_mode)) {
+    if (kfsClient->IsFile(args[0].c_str())) {
 	CopyFile(args[0], args[1]);
         return;
     }
@@ -90,8 +88,6 @@ CopyFile(const string &srcPath, const string &dstPath)
 {
     string filename;
     string::size_type slash = srcPath.rfind('/');
-    struct stat statInfo;
-    string kfsParentDir;
     KfsClient *kfsClient = KfsClient::Instance();
 
     // get everything after the last slash
@@ -100,51 +96,33 @@ CopyFile(const string &srcPath, const string &dstPath)
     } else {
 	filename = srcPath;
     }
-    
-    //
-    // get the path in KFS.  If we what we have is an existing file or
-    // directory in KFS, kfsParentDir will point to it; if kfsPath is
-    // non-existent, then we find the parent dir and check for its
-    // existence.  That is, we are trying to handle cp file/a to
-    // kfs://path/b and we are checking for existence of "/path"
-    //
-    kfsParentDir = dstPath;
-    if (kfsClient->Stat(dstPath.c_str(), statInfo)) {
-	slash = dstPath.rfind('/');
-	if (slash == string::npos)
-	    kfsParentDir = "";
-	else {
-	    kfsParentDir.assign(dstPath, 0, slash);
-	    kfsClient->Stat(kfsParentDir.c_str(), statInfo);
 
-	    // this is the name of the file in the dest path
-	    filename.assign(dstPath, slash+1, string::npos);
-	}
-    }
+    // for the dest side: if the dst is a dir, we are copying to
+    // dstPath with srcFilename; otherwise, dst is a file (that
+    // potenitally exists) and we are ovewriting/creating it
+    if (kfsClient->IsDirectory(dstPath.c_str())) {
+        string dst = dstPath;
 
-    // kfs side is a directory
-    if (S_ISDIR(statInfo.st_mode)) {
-	return CopyFile2(srcPath, kfsParentDir + "/" + filename);
+        if (dst[dstPath.size() - 1] != '/')
+            dst += "/";
+        
+        return CopyFile2(srcPath, dst + filename);
     }
     
-    if (S_ISREG(statInfo.st_mode)) {
-	return CopyFile2(srcPath, dstPath);
-    }
-    
-    // need to make the kfs dir
-    cout << "KFS Path: " << dstPath << " is non-existent!" << endl;
-    return -1;
+    // dstPath is the filename that is being specified for the cp
+    // target.  try to copy to there...
+    return CopyFile2(srcPath, dstPath);
 }
 
 void
 CopyDir(const string &srcDirname, string dstDirname)
 {
-    vector<KfsFileAttr> fileInfo;
-    vector<KfsFileAttr>::size_type i;
+    vector<string> dirEntries;
+    vector<string>::size_type i;
     int res;
     KfsClient *kfsClient = KfsClient::Instance();
 
-    if ((res = kfsClient->ReaddirPlus((char *) srcDirname.c_str(), fileInfo)) < 0) {
+    if ((res = kfsClient->Readdir((char *) srcDirname.c_str(), dirEntries)) < 0) {
         cout << "Readdir plus failed: " << res << endl;
         return;
     }
@@ -154,16 +132,16 @@ CopyDir(const string &srcDirname, string dstDirname)
 	return;
     }
     
-    for (i = 0; i < fileInfo.size(); ++i) {
-        if (fileInfo[i].isDirectory) {
-            if ((fileInfo[i].filename == ".") ||
-                (fileInfo[i].filename == ".."))
-                continue;
-	    CopyDir(srcDirname + "/" + fileInfo[i].filename, 
-                    dstDirname + "/" + fileInfo[i].filename);
+    for (i = 0; i < dirEntries.size(); ++i) {
+        if ((dirEntries[i] == ".") || (dirEntries[i] == ".."))
+            continue;
+
+        if (kfsClient->IsDirectory(dirEntries[i].c_str())) {
+	    CopyDir(srcDirname + "/" + dirEntries[i],
+                    dstDirname + "/" + dirEntries[i]);
         } else {
-            CopyFile2(srcDirname + "/" + fileInfo[i].filename,
-		      dstDirname + "/" + fileInfo[i].filename);
+            CopyFile2(srcDirname + "/" + dirEntries[i],
+		      dstDirname + "/" + dirEntries[i]);
         }
     }
 }

@@ -109,6 +109,11 @@ void printCmds()
     cout << "changeReplication" << endl;
 }
 
+void handleHelp(const vector<string> &args)
+{
+    printCmds();
+}
+
 void setupHandlers()
 {
     handlers["cd"] = handleCd;
@@ -120,6 +125,7 @@ void setupHandlers()
     handlers["rmdir"] = handleRmdir;
     // handlers["ping"] = handlePing;
     handlers["rm"] = handleRm;
+    handlers["help"] = handleHelp;
 }
 
 void processCmds()

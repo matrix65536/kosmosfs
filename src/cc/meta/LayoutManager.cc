@@ -46,7 +46,10 @@ using namespace KFS;
 using namespace KFS::libkfsio;
 
 LayoutManager KFS::gLayoutManager;
+/// Max # of concurrent replications we allow in the system
 const int MAX_CONCURRENT_REPLICATIONS = 10;
+/// Max # of concurrent replications per node
+const int MAX_CONCURRENT_REPLICATIONS_PER_NODE = 2;
 
 ///
 /// For disk space utilization balancing, we say that a server
@@ -219,13 +222,19 @@ LayoutManager::ServerDown(ChunkServer *server)
 
 struct ServerSpace {
 	uint32_t serverIdx;
+	uint32_t loadEstimate;
 	uint64_t availSpace;
 	uint64_t usedSpace;
 
 	// sort in decreasing order: Prefer the server with more free
 	// space, or in the case of a tie, the one with less used space.
+	// also, prefer servers that are lightly loaded
 
 	bool operator < (const ServerSpace &other) const {
+		if (loadEstimate != other.loadEstimate)
+			// prefer server that is "lightly" loaded
+			return loadEstimate < other.loadEstimate;
+
 		if (availSpace != other.availSpace)
 			return availSpace > other.availSpace;
 		else
@@ -270,7 +279,8 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 
 	for (i = 0, j = 0; i < sources.size(); i++) {
 		c = sources[i];
-		if (c->GetAvailSpace() < CHUNKSIZE) {
+		if ((c->GetAvailSpace() < CHUNKSIZE) || 
+			(!c->IsResponsiveServer())) {
 			continue;
 		}
 		iter = find(excludes.begin(), excludes.end(), c);
@@ -280,6 +290,7 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 		ss[j].serverIdx = i;
 		ss[j].availSpace = c->GetAvailSpace();
 		ss[j].usedSpace = c->GetUsedSpace();
+		ss[j].loadEstimate = c->GetNumChunkWrites();
 		j++;
 	}
 	ss.resize(j);
@@ -851,14 +862,17 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 		panic("missing chunk", true);
 	}
 
-	mTotalReplicationStats->Update(1);
-	mOngoingReplicationStats->Update(1);
-
 	MetaChunkInfo *mci = *chunk;
-	uint32_t numCopies = min((size_t) extraReplicas, candidates.size());
 
-	for (uint32_t i = 0; i < numCopies; i++) {
+	bool didReplication = false;
+	uint32_t j = 0;
+
+	for (uint32_t i = 0; i < candidates.size() && i < (uint32_t) extraReplicas; i++) {
 		c = candidates[i];
+		// Don't send too many replications to a server
+		if (c->GetNumChunkReplications() > MAX_CONCURRENT_REPLICATIONS_PER_NODE)
+			continue;
+		didReplication = true;
 #ifdef DEBUG
 		// verify that we got good candidates
 		vector<ChunkServerPtr>::const_iterator iter;
@@ -867,8 +881,16 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 			assert(!"Not possible...");
 		}
 #endif
+		// Spread the read load as well...
 		c->ReplicateChunk(fid, chunkId, mci->chunkVersion,
-				clli.chunkServers[0]->GetServerLocation());
+				clli.chunkServers[j]->GetServerLocation());
+		j++;
+		j %= clli.chunkServers.size();
+	}
+
+	if (didReplication) {
+		mTotalReplicationStats->Update(1);
+		mOngoingReplicationStats->Update(1);
 	}
 }
 

@@ -44,25 +44,79 @@ using std::vector;
 
 using namespace KFS;
 
-static void dirList(string kfsdirname);
+static void dirList(string kfsdirname, bool longMode, bool humanReadable);
+static void doDirList(string kfsdirname);
+static void doDirListPlusAttr(string kfsdirname, bool humanReadable);
+static void printFileInfo(const string &filename, size_t filesize, bool humanReadable);
 
 // may want to do "ls -r"
 void
 KFS::tools::handleLs(const vector<string> &args)
 {
+    bool longMode = false, humanReadable = false;
+    vector<string>::size_type pathIndex = 0;
+
     if ((args.size() >= 1) && (args[0] == "--help")) {
-        cout << "Usage: ls {<dir>} " << endl;
+        cout << "Usage: ls {-lh} {<dir>} " << endl;
         return;
     }
 
-    if (args.size())
-        dirList(args[0]);
+    if (args.size() >= 1) {
+        if (args[0][0] == '-') {
+            pathIndex = 1;
+            for (uint32_t i = 1; i < args[0].size(); i++) {
+                switch (args[0][i]) {
+                    case 'l':
+                        longMode = true;
+                        break;
+                    case 'h':
+                        humanReadable = true;
+                        break;
+                }
+            }
+        }
+    }
+
+    if (args.size() > pathIndex)
+        dirList(args[pathIndex], longMode, humanReadable);
     else
-        dirList(".");
+        dirList(".", longMode, humanReadable);
 }
 
 void
-dirList(string kfsdirname)
+dirList(string kfsdirname, bool longMode, bool humanReadable)
+{
+    if (longMode)
+        doDirListPlusAttr(kfsdirname, humanReadable);
+    else
+        doDirList(kfsdirname);
+}
+
+void
+doDirList(string kfsdirname)
+{
+    string kfssubdir, subdir;
+    int res;
+    vector<string> entries;
+    vector<string>::size_type i;
+
+    KfsClient *kfsClient = KFS::getKfsClient();
+
+    if ((res = kfsClient->Readdir((char *) kfsdirname.c_str(), entries)) < 0) {
+        cout << "Readdir failed: " << ErrorCodeToStr(res) << endl;
+        return;
+    }
+
+    // we could provide info of whether the thing is a dir...but, later
+    for (i = 0; i < entries.size(); ++i) {
+        if ((entries[i] == ".") || (entries[i] == ".."))
+            continue;
+        cout << entries[i] << endl;
+    }
+}
+
+void
+doDirListPlusAttr(string kfsdirname, bool humanReadable)
 {
     string kfssubdir, subdir;
     int res;
@@ -71,6 +125,13 @@ dirList(string kfsdirname)
 
     KfsClient *kfsClient = KFS::getKfsClient();
 
+    if (kfsClient->IsFile((char *) kfsdirname.c_str())) {
+        struct stat statInfo;
+
+        kfsClient->Stat(kfsdirname.c_str(), statInfo);
+        printFileInfo(kfsdirname, statInfo.st_size, humanReadable);
+        return;
+    }
     if ((res = kfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
         cout << "Readdir plus failed: " << ErrorCodeToStr(res) << endl;
         return;
@@ -81,10 +142,28 @@ dirList(string kfsdirname)
             if ((fileInfo[i].filename == ".") ||
                 (fileInfo[i].filename == ".."))
                 continue;
-            cout << fileInfo[i].filename << "/" << '\t' << "(dir)";
+            cout << fileInfo[i].filename << "/" << '\t' << "(dir)" << endl;
         } else {
-            cout << fileInfo[i].filename << '\t' << fileInfo[i].fileSize;
+            printFileInfo(fileInfo[i].filename, fileInfo[i].fileSize, humanReadable);
         }
-        cout << endl;
     }
+}
+
+void
+printFileInfo(const string &filename, size_t filesize, bool humanReadable)
+{
+    if (!humanReadable) {
+        cout << filename << '\t' << filesize << endl;
+        return;
+    }
+    if (filesize < (1 << 20)) {
+        cout << filename << '\t' << (float) (filesize) / (1 << 10) << " K";
+    }
+    else if (filesize < (1 << 30)) {
+        cout << filename << '\t' << (float) (filesize) / (1 << 20) << " M";
+    }
+    else {
+        cout << filename << '\t' << (float) (filesize) / (1 << 30) << " G";
+    }
+    cout << endl;
 }
