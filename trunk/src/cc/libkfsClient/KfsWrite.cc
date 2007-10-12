@@ -251,7 +251,7 @@ KfsClient::WriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 	if ((res == -EHOSTUNREACH) ||
 	    (res == -KFS::EBADVERS) ||
 	    (res == -KFS::ELEASEEXPIRED)) {
-	    if (DoAllocation(fd, true) < 0)
+	    if ((res = DoAllocation(fd, true)) < 0)
 		return res;
 	    continue;
 	}

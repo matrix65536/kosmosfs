@@ -555,7 +555,7 @@ KfsClient::Rename(const char *oldpath, const char *newpath, bool overwrite)
 		    absNewpath.c_str(), overwrite);
     (void)DoMetaOpWithRetry(&op);
 
-    KFS_LOG_DEBUG("Status of renaming %s -> %s is: %d", 
+    KFS_LOG_DEBUG("Status of renaming %s -> %s is: %ld", 
                      oldpath, newpath, op.status);
 
     return op.status;
@@ -636,7 +636,7 @@ KfsClient::Close(int fd)
     MutexLock l(&mMutex);
     int status = 0;
 
-    if (!valid_fd(fd))
+    if ((!valid_fd(fd)) || (mFileTable[fd] == NULL))
 	return -EBADF;
 
     if (mFileTable[fd]->buffer.dirty) {
@@ -761,7 +761,7 @@ KfsClient::GetReplicationFactor(const char *pathname)
 {
     MutexLock l(&mMutex);
 
-    int res, fd;
+    int fd;
     bool didOpen = false;
     int16_t numReplicas;
 
@@ -864,6 +864,11 @@ KfsClient::Seek(int fd, off_t offset, int whence)
 	    FlushBuffer(fd);
 	}
 	assert(!cb->dirty);
+        // better to panic than silently lose a write
+        if (cb->dirty) {
+            KFS_LOG_ERROR("Unable to flush data to server...aborting");
+            abort();
+        }
         // Disconnect from all the servers we were connected for this chunk
 	pos->ResetServers();
     }
@@ -1535,7 +1540,7 @@ KfsClient::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
         (now - FdInfo(fte)->validatedTime < FILE_CACHE_ENTRY_VALID_TIME))
         return fte;
 
-    KFS_LOG_DEBUG("Entry for <%d, %s> is likely stale; forcing revalidation", 
+    KFS_LOG_DEBUG("Entry for <%ld, %s> is likely stale; forcing revalidation", 
                      parentFid, name);
     // the entry maybe stale; force revalidation
     ReleaseFileTableEntry(fte);

@@ -144,6 +144,13 @@ namespace KFS
                 /// dispatcher sends them out, the message goes.
                 void Heartbeat();
 
+		/// If a chunkserver isn't responding, don't send any
+		/// write load towards it.  We detect loaded servers to be
+		/// those that don't respond to heartbeat messages.
+		bool IsResponsiveServer() {
+			return !mHeartbeatSkipped;
+		}
+
                 /// Whenever the layout manager determines that this
                 /// server has stale chunks, it queues an RPC to
                 /// notify the chunk server of the stale data.
@@ -236,6 +243,13 @@ namespace KFS
 
 		}
 
+		/// Accessor to that returns an estimate of the # of
+		/// concurrent writes that are being handled by this server
+		inline int GetNumChunkWrites() const {
+			return mNumChunkWrites;
+
+		}
+
                 uint64_t GetUsedSpace() {
                         return mUsedSpace;
                 }
@@ -286,6 +300,9 @@ namespace KFS
                 /// Is there a heartbeat message for which we haven't
 		/// recieved a reply yet?  If yes, dont' send one more
                 bool mHeartbeatSent;
+
+		/// did we skip the sending of a heartbeat message?
+                bool mHeartbeatSkipped;
 
                 /// Location of the server at which clients can
                 /// connect to

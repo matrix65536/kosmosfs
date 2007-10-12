@@ -53,6 +53,12 @@ KfsClient *gKfsClient;
 bool doMkdirs(const char *path);
 
 //
+// For the purpose of the cp -r, take the leaf from sourcePath and
+// make that directory in kfsPath. 
+//
+void MakeKfsLeafDir(const string &sourcePath, string &kfsPath);
+
+//
 // Given a file defined by sourcePath, copy it to KFS as defined by
 // kfsPath
 //
@@ -129,9 +135,31 @@ main(int argc, char **argv)
         exit(0);
     }
 
+    // when doing cp -r a/b kfs://c, we need to create c/b in KFS.
+    MakeKfsLeafDir(sourcePath, kfsPath);
+
     BackupDir(sourcePath, kfsPath);
 
     closedir(dirp);
+}
+
+void
+MakeKfsLeafDir(const string &sourcePath, string &kfsPath)
+{
+    string leaf;
+    string::size_type slash = sourcePath.rfind('/');
+
+    // get everything after the last slash
+    if (slash != string::npos) {
+	leaf.assign(sourcePath, slash+1, string::npos);
+    } else {
+	leaf = sourcePath;
+    }
+    if (kfsPath[kfsPath.size()-1] != '/')
+        kfsPath += "/";
+
+    kfsPath += leaf;
+    doMkdirs(kfsPath.c_str());
 }
 
 int
@@ -139,8 +167,6 @@ BackupFile(const string &sourcePath, const string &kfsPath)
 {
     string filename;
     string::size_type slash = sourcePath.rfind('/');
-    struct stat statInfo;
-    string kfsParentDir;
 
     // get everything after the last slash
     if (slash != string::npos) {
@@ -148,37 +174,22 @@ BackupFile(const string &sourcePath, const string &kfsPath)
     } else {
 	filename = sourcePath;
     }
-    
-    // get the path in KFS.  If we what we have is an existing file or
-    // directory in KFS, kfsParentDir will point to it; if kfsPath is
-    // non-existent, then we find the parent dir and check for its
-    // existence.  That is, we are trying to handle cp file/a to
-    // kfs://path/b and we are checking for existence of "/path"
-    kfsParentDir = kfsPath;
-    if (gKfsClient->Stat(kfsPath.c_str(), statInfo)) {
-	slash = kfsPath.rfind('/');
-	if (slash == string::npos)
-	    kfsParentDir = "";
-	else {
-	    kfsParentDir.assign(kfsPath, 0, slash);
-	    gKfsClient->Stat(kfsParentDir.c_str(), statInfo);
 
-	    // this is the name of the file in the dest path
-	    filename.assign(kfsPath, slash+1, string::npos);
-	}
+    // for the dest side: if kfsPath is a dir, we are copying to
+    // kfsPath with srcFilename; otherwise, kfsPath is a file (that
+    // potentially exists) and we are ovewriting/creating it
+    if (gKfsClient->IsDirectory(kfsPath.c_str())) {
+        string dst = kfsPath;
+
+        if (dst[kfsPath.size() - 1] != '/')
+            dst += "/";
+        
+        return BackupFile2(sourcePath, dst + filename);
     }
     
-    if (S_ISDIR(statInfo.st_mode)) {
-	return BackupFile2(sourcePath, kfsParentDir + "/" + filename);
-    }
-    
-    if (S_ISREG(statInfo.st_mode)) {
-	return BackupFile2(sourcePath, kfsPath);
-    }
-    
-    // need to make the kfs dir
-    cout << "KFS Path: " << kfsPath << " is non-existent!" << endl;
-    return -1;
+    // kfsPath is the filename that is being specified for the cp
+    // target.  try to copy to there...
+    return BackupFile2(sourcePath, kfsPath);
 }
 
 void

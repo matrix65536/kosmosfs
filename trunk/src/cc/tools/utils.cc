@@ -65,3 +65,18 @@ KFS::tools::doRmdir(const char *dirname)
     }
     return true;
 }
+
+void
+KFS::tools::GetPathComponents(const string &path, string &parent, string &name)
+{
+    string::size_type slash = path.rfind('/');
+
+    // get everything after the last slash
+    if (slash != string::npos) {
+        parent.assign(path, 0, slash);
+	name.assign(path, slash+1, string::npos);
+    } else {
+        name = path;
+        parent = "/";
+    }
+}

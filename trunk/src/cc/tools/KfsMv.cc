@@ -48,23 +48,11 @@ using std::ifstream;
 using namespace KFS;
 using namespace KFS::tools;
 
-//
-// Given a file defined by a KFS srcPath, move it to KFS as defined by
-// dstPath
-//
-int MoveFile(const string &srcPath, const string &dstPath);
-
-// Given a srcDirname, copy it to dirname.  Dirname will be created
-// if it doesn't exist.  
-void MoveDir(const string &srcDirname, string dstDirname);
-
-// Guts of the work
-int MoveFile2(string srcfilename, string dstfilename);
 
 void
 KFS::tools::handleMv(const vector<string> &args)
 {
-    struct stat statInfo;
+    int res;
 
     if ((args.size() < 2) || (args[0] == "--help") || (args[0] == "") || (args[1] == "")) {
         cout << "Usage: mv <source path> <dst path>" << endl;
@@ -73,115 +61,24 @@ KFS::tools::handleMv(const vector<string> &args)
 
     KfsClient *kfsClient = KfsClient::Instance();
 
-    if (kfsClient->Stat(args[0].c_str(), statInfo) < 0) {
+    if (!kfsClient->Exists(args[0].c_str())) {
 	cout << "Source path: " << args[0] << " is non-existent!" << endl;
         return;
     }
 
-    if (!S_ISDIR(statInfo.st_mode)) {
-	MoveFile(args[0], args[1]);
-        return;
-    }
+    string target = args[1].c_str();
 
-    MoveDir(args[0], args[1]);
-}
+    if (kfsClient->IsFile(args[0].c_str()) &&
+        kfsClient->IsDirectory(args[1].c_str())) {
+        string parent, filename;
 
-int
-MoveFile(const string &srcPath, const string &dstPath)
-{
-    string filename;
-    string::size_type slash = srcPath.rfind('/');
-    struct stat statInfo;
-    string kfsParentDir;
-    KfsClient *kfsClient = KfsClient::Instance();
-
-    // get everything after the last slash
-    if (slash != string::npos) {
-	filename.assign(srcPath, slash+1, string::npos);
-    } else {
-	filename = srcPath;
+        GetPathComponents(args[0], parent, filename);
+        target += "/";
+        target += filename;
     }
     
-    //
-    // get the path in KFS.  If we what we have is an existing file or
-    // directory in KFS, kfsParentDir will point to it; if kfsPath is
-    // non-existent, then we find the parent dir and check for its
-    // existence.  That is, we are trying to handle cp file/a to
-    // kfs://path/b and we are checking for existence of "/path"
-    //
-    kfsParentDir = dstPath;
-    if (kfsClient->Stat(dstPath.c_str(), statInfo)) {
-	slash = dstPath.rfind('/');
-	if (slash == string::npos)
-	    kfsParentDir = "";
-	else {
-	    kfsParentDir.assign(dstPath, 0, slash);
-	    kfsClient->Stat(kfsParentDir.c_str(), statInfo);
-
-	    // this is the name of the file in the dest path
-	    filename.assign(dstPath, slash+1, string::npos);
-	}
-    }
-
-    // kfs side is a directory
-    if (S_ISDIR(statInfo.st_mode)) {
-	return MoveFile2(srcPath, kfsParentDir + "/" + filename);
-    }
-    
-    if (S_ISREG(statInfo.st_mode)) {
-	return MoveFile2(srcPath, dstPath);
-    }
-    
-    // need to make the kfs dir
-    cout << "KFS Path: " << dstPath << " is non-existent!" << endl;
-    return -1;
-}
-
-void
-MoveDir(const string &srcDirname, string dstDirname)
-{
-    vector<KfsFileAttr> fileInfo;
-    vector<KfsFileAttr>::size_type i;
-    int res;
-    KfsClient *kfsClient = KfsClient::Instance();
-
-    if ((res = kfsClient->ReaddirPlus((char *) srcDirname.c_str(), fileInfo)) < 0) {
-        cout << "Readdir plus failed: " << res << endl;
-        return;
-    }
-
-    if (!doMkdirs(dstDirname.c_str())) {
-	cout << "Unable to make kfs dir: " << dstDirname << endl;
-	return;
-    }
-    
-    for (i = 0; i < fileInfo.size(); ++i) {
-        if (fileInfo[i].isDirectory) {
-            if ((fileInfo[i].filename == ".") ||
-                (fileInfo[i].filename == ".."))
-                continue;
-	    MoveDir(srcDirname + "/" + fileInfo[i].filename, 
-                    dstDirname + "/" + fileInfo[i].filename);
-        } else {
-            MoveFile2(srcDirname + "/" + fileInfo[i].filename,
-		      dstDirname + "/" + fileInfo[i].filename);
-        }
-    }
-    kfsClient->Rmdir(srcDirname.c_str());
-}
-
-//
-// Guts of the work to move the file.
-//
-int
-MoveFile2(string srcfilename, string dstfilename)
-{
-    int res;
-    KfsClient *kfsClient = KfsClient::Instance();
-
-    if ((res = kfsClient->Rename(srcfilename.c_str(), dstfilename.c_str())) < 0) {
+    if ((res = kfsClient->Rename(args[0].c_str(), target.c_str())) < 0) {
         cout << "Rename failed: " << ErrorCodeToStr(res) << endl;
-        return res;
+        return;
     }
-    return 0;
 }

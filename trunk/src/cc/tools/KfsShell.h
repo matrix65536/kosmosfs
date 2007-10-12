@@ -61,6 +61,9 @@ namespace KFS
         // utility functions
         bool doMkdirs(const char *path);
         bool doRmdir(const char *dirname);
+        void GetPathComponents(const std::string &path, 
+                               std::string &parent, std::string &name);
+
     }
 }
 

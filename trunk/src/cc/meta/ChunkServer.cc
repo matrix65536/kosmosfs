@@ -46,7 +46,7 @@ using boost::scoped_array;
 ChunkServer::ChunkServer(NetConnectionPtr &conn) :
 	mSeqNo(1), mNetConnection(conn), 
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
-	mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
+	mHeartbeatSkipped(false), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
 	mNumChunkWrites(0), mNumChunkReplications(0)
 {
         mTimer = new ChunkServerTimeoutImpl(this);
@@ -403,9 +403,11 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
 	} 
         ResumeOp(op);
     
+	/*
         if (iobuf->BytesConsumable() > 0) {
                 KFS_LOG_DEBUG("More command data likely available for chunk: ");
         }
+	*/
         return 0;
 }
 
@@ -612,12 +614,16 @@ ChunkServer::Heartbeat()
 	}
 
 	if (mHeartbeatSent) {
+		string loc = mLocation.ToString();
+
 		// If a request is outstanding, don't send one more
-		KFS_LOG_DEBUG("Skipping send of heartbeat...");
+		mHeartbeatSkipped = true;
+		KFS_LOG_DEBUG("Skipping send of heartbeat to %s", loc.c_str());
 		return;
 	}
 
 	mHeartbeatSent = true;
+	mHeartbeatSkipped = false;
 
         MetaChunkHeartbeat *r;
 
