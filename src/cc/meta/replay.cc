@@ -50,7 +50,7 @@ Replay::openlog(const string &p)
 		number = 0;
 		path = oplog.logfile(0);
 	} else {
-		KFS_LOG_DEBUG("Doing log replay from file: %s", p.c_str());
+		KFS_LOG_VA_INFO("Doing log replay from file: %s", p.c_str());
 		string::size_type dot = p.rfind('.');
 		assert(dot != string::npos);
 		number = std::atoi(p.substr(dot + 1).c_str());
@@ -93,7 +93,7 @@ static void
 updateSeed(UniqueID &id, seqid_t seed)
 {
 	if (seed < id.getseed()) {
-		KFS_LOG_ERROR("Seed from log: %lld < id's seed: %lld", 
+		KFS_LOG_VA_ERROR("Seed from log: %lld < id's seed: %lld", 
 				seed, id.getseed());
 		panic("Seed", false);
 	}
@@ -123,7 +123,7 @@ replay_create(deque <string> &c)
 		if (status == 0)
 			updateSeed(fileID, me);
 	}
-	KFS_LOG_DEBUG("Replay create: name=%s, id=%lld", myname.c_str(), me);
+	KFS_LOG_VA_DEBUG("Replay create: name=%s, id=%lld", myname.c_str(), me);
 	return (ok && status == 0);
 }
 
@@ -145,7 +145,7 @@ replay_mkdir(deque <string> &c)
 		if (status == 0)
 			updateSeed(fileID, me);
 	}
-	KFS_LOG_DEBUG("Replay mkdir: name=%s, id=%lld", myname.c_str(), me);
+	KFS_LOG_VA_DEBUG("Replay mkdir: name=%s, id=%lld", myname.c_str(), me);
 	return (ok && status == 0);
 }
 

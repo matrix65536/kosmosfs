@@ -73,7 +73,7 @@ ClientSM::SendResponse(KfsOp *op)
 
     op->Response(os);
 
-    KFS_LOG_DEBUG("Command %s: Response status: %d\n", 
+    KFS_LOG_VA_DEBUG("Command %s: Response status: %d\n", 
                      s.c_str(), op->status);
 
     mNetConnection->Write(os.str().c_str(), os.str().length());
@@ -81,7 +81,7 @@ ClientSM::SendResponse(KfsOp *op)
         // need to send out the data read
         rop = static_cast<ReadOp *> (op);
         if (op->status >= 0) {
-            KFS_LOG_DEBUG("Bytes avail from read: %d\n",
+            KFS_LOG_VA_DEBUG("Bytes avail from read: %d\n",
                              rop->dataBuf->BytesConsumable());
             assert(rop->dataBuf->BytesConsumable() == rop->status);
             mNetConnection->Write(rop->dataBuf, rop->numBytesIO);
@@ -140,7 +140,7 @@ ClientSM::HandleRequest(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	KFS_LOG_DEBUG("Closing connection");
+	// KFS_LOG_VA_DEBUG("Closing connection");
 
 	if (mNetConnection)
 	    mNetConnection->Close();
@@ -221,7 +221,7 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
     if (ParseCommand(buf.get(), cmdLen, &op) != 0) {
         iobuf->Consume(cmdLen);
 
-        KFS_LOG_DEBUG("Aye?: %s", buf.get());
+        KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
         // got a bogus command
         return true;
     }
@@ -243,13 +243,13 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
 
         wop->dataBuf->Move(iobuf, wop->numBytes);
         nAvail = wop->dataBuf->BytesConsumable();
-        KFS_LOG_DEBUG("Got command: %s", buf.get());
+        // KFS_LOG_VA_DEBUG("Got command: %s", buf.get());
 
-        KFS_LOG_DEBUG("# of bytes avail for write: %lu", nAvail);
+        KFS_LOG_VA_DEBUG("# of bytes avail for write: %lu", nAvail);
     } else {
         string s = op->Show();
 
-        KFS_LOG_DEBUG("Got command: %s\n", s.c_str());
+        KFS_LOG_VA_DEBUG("Got command: %s\n", s.c_str());
 
         iobuf->Consume(cmdLen);
     }

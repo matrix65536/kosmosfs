@@ -75,7 +75,7 @@ Logger::startLog(int seqno)
 		// should continue to append to the logfile that we replayed.
 		// seqno will be set to the value we got from the chkpt file.
 		// So, don't overwrite the log file.
-		KFS_LOG_DEBUG("Opening %s in append mode", logname.c_str());
+		KFS_LOG_VA_DEBUG("Opening %s in append mode", logname.c_str());
 		file.open(logname.c_str(), std::ios_base::app);
 		return (file.fail()) ? -EIO : 0;
 	}

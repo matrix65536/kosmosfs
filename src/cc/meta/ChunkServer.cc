@@ -58,7 +58,7 @@ ChunkServer::ChunkServer(NetConnectionPtr &conn) :
 
 ChunkServer::~ChunkServer()
 {
-	KFS_LOG_DEBUG("Deleting %p", this);
+	// KFS_LOG_VA_DEBUG("Deleting %p", this);
 
         if (mNetConnection)
                 mNetConnection->Close();
@@ -122,7 +122,7 @@ ChunkServer::HandleHello(int code, void *data)
 		break;
 
 	 case EVENT_NET_ERROR:
-		KFS_LOG_DEBUG("Closing connection");
+		// KFS_LOG_VA_DEBUG("Closing connection");
 		mDown = true;
 		gNetDispatch.GetChunkServerFactory()->RemoveServer(this);
 		break;
@@ -173,7 +173,7 @@ ChunkServer::HandleRequest(int code, void *data)
 		break;
 
 	case EVENT_NET_ERROR:
-		KFS_LOG_DEBUG("Chunk server is down...");
+		KFS_LOG_VA_INFO("Chunk server %s is down...", GetServerName());
 
 		StopTimer();
 		FailDispatchedOps();
@@ -254,7 +254,7 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
         // We should only get a HELLO message here; anything
         // else is bad.
         if (ParseCommand(buf.get(), msgLen, &op) != 0) {
-            KFS_LOG_DEBUG("Aye?: %s", buf.get());
+            KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
             iobuf->Consume(msgLen);
             // got a bogus command
             return -1;
@@ -262,7 +262,7 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 
         // we really ought to get only hello here
         if (op->op != META_HELLO) {
-            KFS_LOG_DEBUG("Only  need hello...but: %s", buf.get());
+            KFS_LOG_VA_DEBUG("Only  need hello...but: %s", buf.get());
             iobuf->Consume(msgLen);
             delete op;
             // got a bogus command
@@ -272,7 +272,7 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 
         helloOp = static_cast<MetaHello *> (op);
 
-        KFS_LOG_DEBUG("New server: \n%s", buf.get());
+        KFS_LOG_VA_INFO("New server: \n%s", buf.get());
         op->clnt = this;
         helloOp->server = shared_from_this();
         // make sure we have the chunk ids...
@@ -301,13 +301,12 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
                 ist >> c.chunkId;
                 ist >> c.chunkVersion;
                 helloOp->chunks.push_back(c);
-                // KFS_LOG_DEBUG("Server has chunk: %lld", chunkId);
+                // KFS_LOG_VA_DEBUG("Server has chunk: %lld", chunkId);
             }
         } else {
             // Message is ready to be pushed down.  So remove it.
             iobuf->Consume(msgLen);
         }
-        KFS_LOG_DEBUG("sending the new server request to be added...");
         // send it on its merry way
         submit_request(op);
         return 0;
@@ -344,7 +343,7 @@ ChunkServer::HandleCmd(IOBuffer *iobuf, int msgLen)
 
 	/*
         if (iobuf->BytesConsumable() > 0) {
-                KFS_LOG_DEBUG("More command data likely available: ");
+                KFS_LOG_VA_DEBUG("More command data likely available: ");
         }
 	*/
         return 0;
@@ -387,7 +386,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
             assert(!"Unable to find command for a response");
             return -1;
         }
-        // KFS_LOG_DEBUG("Got response for cseq=%d", cseq);
+        // KFS_LOG_VA_DEBUG("Got response for cseq=%d", cseq);
 
         submittedOp = static_cast <MetaChunkRequest *> (op);
         submittedOp->status = status;
@@ -405,7 +404,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
     
 	/*
         if (iobuf->BytesConsumable() > 0) {
-                KFS_LOG_DEBUG("More command data likely available for chunk: ");
+                KFS_LOG_VA_DEBUG("More command data likely available for chunk: ");
         }
 	*/
         return 0;
@@ -465,7 +464,7 @@ ChunkServer::ResumeOp(MetaRequest *op)
 		// This op is internally generated.  We need to notify
 		// the layout manager of this op's completion.  So, send
 		// it there.
-		KFS_LOG_DEBUG("Meta chunk replicate finished with status: %d",
+		KFS_LOG_VA_INFO("Meta chunk replicate finished with status: %d",
 				submittedOp->status);
 		submit_request(submittedOp);
 		// the op will get nuked after it is processed
@@ -495,13 +494,13 @@ ChunkServer::ParseResponse(char *buf, int bufLen,
         const char separator = ':';
         string respOk;
 
-        // KFS_LOG_DEBUG("Got chunk-server-response: %s", buf);
+        // KFS_LOG_VA_DEBUG("Got chunk-server-response: %s", buf);
 
         ist >> respOk;
         // Response better start with OK
         if (respOk.compare("OK") != 0) {
 
-                KFS_LOG_DEBUG("Didn't get an OK: instead, %s",
+                KFS_LOG_VA_DEBUG("Didn't get an OK: instead, %s",
                                  respOk.c_str());
 
                 return;
@@ -618,7 +617,7 @@ ChunkServer::Heartbeat()
 
 		// If a request is outstanding, don't send one more
 		mHeartbeatSkipped = true;
-		KFS_LOG_DEBUG("Skipping send of heartbeat to %s", loc.c_str());
+		KFS_LOG_VA_INFO("Skipping send of heartbeat to %s", loc.c_str());
 		return;
 	}
 

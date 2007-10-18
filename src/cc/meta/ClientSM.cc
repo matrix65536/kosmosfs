@@ -64,7 +64,7 @@ ClientSM::SendResponse(MetaRequest *op)
 
 	op->response(os);
 
-	KFS_LOG_DEBUG("Command %s, Status: %d", 
+	KFS_LOG_VA_DEBUG("Command %s, Status: %d", 
 			op->Show().c_str(), op->status);
 
 	mNetConnection->Write(os.str().c_str(), os.str().length());
@@ -109,7 +109,7 @@ ClientSM::HandleRequest(int code, void *data)
 		break;
 
 	case EVENT_NET_ERROR:
-		KFS_LOG_DEBUG("Closing connection");
+		// KFS_LOG_VA_DEBUG("Closing connection");
 
 		if (mNetConnection)
 			mNetConnection->Close();
@@ -173,12 +173,12 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 	if (ParseCommand(buf.get(), cmdLen, &mOp) != 0) {
 		iobuf->Consume(cmdLen);
 
-		KFS_LOG_DEBUG("Aye?: %s", buf.get());
+		KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
 		// got a bogus command
 		return;
 	}
 
-	KFS_LOG_DEBUG("Got command: %s", mOp->Show().c_str());
+	KFS_LOG_VA_DEBUG("Got command: %s", mOp->Show().c_str());
 
 	// Command is ready to be pushed down.  So remove the cmd from the buffer.
 	iobuf->Consume(cmdLen);
@@ -187,7 +187,9 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 	// send it on its merry way
 	submit_request(mOp);
     
+	/*
 	if (iobuf->BytesConsumable() > 0) {
-		KFS_LOG_DEBUG("More command data likely available for chunk: ");
+		KFS_LOG_VA_DEBUG("More command data likely available for chunk: ");
 	}
+	*/
 }

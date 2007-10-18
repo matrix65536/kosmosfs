@@ -78,7 +78,7 @@ struct ChunkHandle_t {
     }
     ~ChunkHandle_t() {
         if (mFileId != -1) {
-            KFS_LOG_DEBUG("Closing fileid: %d", mFileId);
+            KFS_LOG_VA_DEBUG("Closing fileid: %d", mFileId);
             close(mFileId);
         }
         mFileId = -1;

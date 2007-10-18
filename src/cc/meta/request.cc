@@ -267,14 +267,14 @@ handle_getalloc(MetaRequest *r)
 	vector<ChunkServerPtr> c;
 
 	if (!file_exists(req->fid)) {
-		KFS_LOG_DEBUG("handle_getalloc: no such file");
+		KFS_LOG_VA_DEBUG("handle_getalloc: no such file %lld", req->fid);
 		req->status = -ENOENT;
 		return;
 	}
 
 	req->status = metatree.getalloc(req->fid, req->offset, &chunkInfo);
 	if (req->status != 0) {
-		KFS_LOG_DEBUG(
+		KFS_LOG_VA_DEBUG(
 			"handle_getalloc(%lld, %lld) = %d: kfsop failed",
 			req->fid, req->offset, req->status);
 		return;
@@ -382,7 +382,7 @@ handle_allocate(MetaRequest *r)
 	MetaAllocate *req = static_cast<MetaAllocate *>(r);
 
 	if (!req->layoutDone) {
-		KFS_LOG_DEBUG("Starting layout for req:%lld", req->opSeqno);
+		KFS_LOG_VA_DEBUG("Starting layout for req:%lld", req->opSeqno);
 		// force an allocation
 		req->chunkId = 0;
 		// start at step #2 above.
@@ -402,7 +402,7 @@ handle_allocate(MetaRequest *r)
 				return;
 			}
 			if (!isNewLease) {
-				KFS_LOG_DEBUG("Got valid lease for req:%lld",
+				KFS_LOG_VA_DEBUG("Got valid lease for req:%lld",
 						req->opSeqno);
 				// we got a valid lease.  so, return
 				return;
@@ -420,7 +420,7 @@ handle_allocate(MetaRequest *r)
 		req->suspended = true;
 		return;
 	}
-	KFS_LOG_DEBUG("Layout is done for req:%lld", req->opSeqno);
+	KFS_LOG_VA_DEBUG("Layout is done for req:%lld", req->opSeqno);
 
 	if (req->status != 0) {
 		// we have a problem: it is possible that the server
@@ -453,7 +453,7 @@ handle_allocate(MetaRequest *r)
 	req->status = metatree.assignChunkId(req->fid, req->offset,
 					req->chunkId, req->chunkVersion);
 	if (req->status != 0)
-		KFS_LOG_DEBUG("Assign chunk id failed...");
+		KFS_LOG_VA_DEBUG("Assign chunk id failed for %lld,%lld", req->fid, req->offset);
 }
 
 static void
@@ -468,7 +468,7 @@ handle_truncate(MetaRequest *r)
 		MetaAllocate *alloc = new MetaAllocate(req->opSeqno, req->fid,
 							allocOffset);
 
-		KFS_LOG_DEBUG("Suspending truncation due to alloc at offset: %lld",
+		KFS_LOG_VA_DEBUG("Suspending truncation due to alloc at offset: %lld",
 				allocOffset);
 
 		// tie things together

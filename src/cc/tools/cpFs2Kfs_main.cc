@@ -83,6 +83,8 @@ main(int argc, char **argv)
     char optchar;
     struct stat statInfo;
 
+    KFS::MsgLogger::Init(NULL);
+
     while ((optchar = getopt(argc, argv, "d:hk:p:s:")) != -1) {
         switch (optchar) {
             case 'd':
@@ -101,7 +103,7 @@ main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }

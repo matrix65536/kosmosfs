@@ -51,6 +51,8 @@ main(int argc, char **argv)
     size_t writeSizeBytes = 65536;
     bool help = false;
 
+    KFS::MsgLogger::Init(NULL);
+
     while ((optchar = getopt(argc, argv, "f:p:m:b:")) != -1) {
         switch (optchar) {
             case 'f':
@@ -66,7 +68,7 @@ main(int argc, char **argv)
                 numMBytes = atoi(optarg);
                 break;
             default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }

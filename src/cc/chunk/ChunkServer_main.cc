@@ -68,6 +68,9 @@ main(int argc, char **argv)
         cout << "Usage: " << argv[0] << " <properties file>\n";
         exit(0);
     }
+
+    KFS::MsgLogger::Init(NULL);
+
     if (ReadChunkServerProperties(argv[1]) != 0) {
         cout << "Bad properties file: " << argv[1] << " aborting...\n";
         exit(-1);

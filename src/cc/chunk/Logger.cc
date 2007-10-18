@@ -171,14 +171,13 @@ Logger::Start()
 
     mFile.open(filename.c_str(), ios_base::app);
     if (writeHeader) {
-        KFS_LOG_DEBUG("Writing out a log header");
+        // KFS_LOG_VA_DEBUG("Writing out a log header");
         mFile << ckptLogVersionStr << '\n';
         mFile.flush();
     }
 
     if (!mFile.is_open()) {
-        KFS_LOG_DEBUG("Unable to open: %s",
-                         filename.c_str());
+        KFS_LOG_VA_WARN("Unable to open: %s", filename.c_str());
     }
     assert(!mFile.fail());
     globals().netManager.RegisterTimeoutHandler(mLoggerTimeoutImpl);
@@ -269,8 +268,7 @@ Logger::RotateLog()
     filename = MakeLogFilename();
     mFile.open(filename.c_str());
     if (!mFile.is_open()) {
-        KFS_LOG_DEBUG("Unable to open: %s",
-                         filename.c_str());
+        KFS_LOG_VA_WARN("Unable to open: %s", filename.c_str());
         return;
     }
     mFile << ckptLogVersionStr << '\n';
@@ -304,7 +302,7 @@ Logger::Restore()
     if (ifs.eof())
         goto out;
     if (strncmp(line, ckptLogVersionStr, strlen(ckptLogVersionStr)) != 0) {
-        KFS_LOG_DEBUG("Restore ckpt: Ckpt version str mismatch: read: %s",
+        KFS_LOG_VA_ERROR("Restore ckpt: Ckpt version str mismatch: read: %s",
                          line);
         goto out;
     }
@@ -315,7 +313,7 @@ Logger::Restore()
     if (ifs.eof())
         goto out;
     if (strncmp(line, "log:", 4) != 0) {
-        KFS_LOG_DEBUG("Restore ckpt: Log line mismatch: read: %s",
+        KFS_LOG_VA_ERROR("Restore ckpt: Log line mismatch: read: %s",
                          line);
         goto out;
     }
@@ -323,8 +321,7 @@ Logger::Restore()
     if (genNum != NULL) {
         genNum++;
         mLogGenNum = atoll(genNum);
-        KFS_LOG_DEBUG("Read log gen #: %lld",
-                         mLogGenNum);
+        KFS_LOG_VA_DEBUG("Read log gen #: %lld", mLogGenNum);
     }
     
     // Read the checkpoint file
@@ -336,7 +333,7 @@ Logger::Restore()
         cih = new ChunkInfoHandle_t();
         cih->chunkInfo = entry;
 
-        KFS_LOG_DEBUG("Read chunk: %ld, %d, %lu", 
+        KFS_LOG_VA_DEBUG("Read chunk: %ld, %d, %lu", 
                          cih->chunkInfo.chunkId,
                          cih->chunkInfo.chunkVersion,
                          cih->chunkInfo.chunkSize);
@@ -467,15 +464,14 @@ Logger::ReplayLog()
     filename = MakeLogFilename();
 
     if (!file_exists(filename.c_str())) {
-        KFS_LOG_DEBUG("File: %s doesn't exist; no log replay",
+        KFS_LOG_VA_INFO("File: %s doesn't exist; no log replay",
                          filename.c_str());
         return;
     }
 
     ifs.open(filename.c_str(), ios_base::in);
     if (!ifs) {
-        KFS_LOG_DEBUG("Unable to open: %s",
-                         filename.c_str()); 
+        KFS_LOG_VA_DEBUG("Unable to open: %s", filename.c_str()); 
         return;
     }
 
@@ -489,7 +485,7 @@ Logger::ReplayLog()
     }
 
     if (strncmp(line, ckptLogVersionStr, strlen(ckptLogVersionStr)) != 0) {
-        KFS_LOG_DEBUG("Replay log failed: Log version str mismatch: read: %s",
+        KFS_LOG_VA_ERROR("Replay log failed: Log version str mismatch: read: %s",
                          line);
         ifs.close();
         return;
@@ -512,7 +508,7 @@ Logger::ReplayLog()
         iter = opHandlers.find(opName);
 
         if (iter == opHandlers.end()) {
-            KFS_LOG_DEBUG("Unable to replay %s", line);
+            KFS_LOG_VA_ERROR("Unable to replay %s", line);
             ist.clear();
             continue;
         }

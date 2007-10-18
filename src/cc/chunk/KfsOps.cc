@@ -875,7 +875,7 @@ WriteCommitOp::Execute()
 
     int64_t v = gChunkManager.GetChunkVersion(chunkId);
     if (v != chunkVersion) {
-        KFS_LOG_DEBUG("Version # mismatch(have=%ld vs asked=%ld...failing a commit",
+        KFS_LOG_VA_INFO("Version # mismatch(have=%ld vs asked=%ld...failing a commit",
                          v, chunkVersion);
         status = -KFS::EBADVERS;
         clnt->HandleEvent(EVENT_CMD_DONE, this);
@@ -1168,7 +1168,7 @@ WriteSyncOp::Execute()
     UpdateCounter(CMD_WRITE_SYNC);
 
     if (!gLeaseClerk.IsLeaseValid(chunkId)) {
-        KFS_LOG_DEBUG("Write sync failed...lease expired for %ld",
+        KFS_LOG_VA_DEBUG("Write sync failed...lease expired for %ld",
                          chunkId);
         status = -KFS::ELEASEEXPIRED;
     }

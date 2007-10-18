@@ -98,7 +98,7 @@ void EventManager::Timeout()
 
     if ((mLongtermEvents.size() > 0) &&
         (msElapsed - EVENT_GRANULARITY_MS >= 3 * EVENT_GRANULARITY_MS)) {
-        KFS_LOG_DEBUG("Elapsed ms = %d", msElapsed);
+        KFS_LOG_VA_DEBUG("Elapsed ms = %d", msElapsed);
     }
     // Now, pull all the long-term events
     iter = mLongtermEvents.begin();

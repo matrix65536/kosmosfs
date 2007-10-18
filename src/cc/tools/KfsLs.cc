@@ -32,6 +32,7 @@ extern "C" {
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 }
 
 #include "libkfsClient/KfsClient.h"
@@ -47,7 +48,9 @@ using namespace KFS;
 static void dirList(string kfsdirname, bool longMode, bool humanReadable);
 static void doDirList(string kfsdirname);
 static void doDirListPlusAttr(string kfsdirname, bool humanReadable);
-static void printFileInfo(const string &filename, size_t filesize, bool humanReadable);
+static void printFileInfo(const string &filename, time_t mtime, size_t filesize, bool humanReadable);
+static void getTimeString(time_t time, char *buf, int bufLen = 256);
+
 
 // may want to do "ls -r"
 void
@@ -129,7 +132,7 @@ doDirListPlusAttr(string kfsdirname, bool humanReadable)
         struct stat statInfo;
 
         kfsClient->Stat(kfsdirname.c_str(), statInfo);
-        printFileInfo(kfsdirname, statInfo.st_size, humanReadable);
+        printFileInfo(kfsdirname, statInfo.st_mtime, statInfo.st_size, humanReadable);
         return;
     }
     if ((res = kfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
@@ -142,28 +145,46 @@ doDirListPlusAttr(string kfsdirname, bool humanReadable)
             if ((fileInfo[i].filename == ".") ||
                 (fileInfo[i].filename == ".."))
                 continue;
-            cout << fileInfo[i].filename << "/" << '\t' << "(dir)" << endl;
+            char timeBuf[256];
+
+            getTimeString(fileInfo[i].mtime.tv_sec, timeBuf);
+
+            cout << fileInfo[i].filename << "/" << '\t' << timeBuf << '\t' << "(dir)" << endl;
         } else {
-            printFileInfo(fileInfo[i].filename, fileInfo[i].fileSize, humanReadable);
+            printFileInfo(fileInfo[i].filename, fileInfo[i].mtime.tv_sec, 
+                          fileInfo[i].fileSize, humanReadable);
         }
     }
 }
 
 void
-printFileInfo(const string &filename, size_t filesize, bool humanReadable)
+printFileInfo(const string &filename, time_t mtime, size_t filesize, bool humanReadable)
 {
+    char timeBuf[256];
+
+    getTimeString(mtime, timeBuf);
+
     if (!humanReadable) {
-        cout << filename << '\t' << filesize << endl;
+        cout << filename << '\t' << timeBuf << '\t' << filesize << endl;
         return;
     }
     if (filesize < (1 << 20)) {
-        cout << filename << '\t' << (float) (filesize) / (1 << 10) << " K";
+        cout << filename << '\t' << timeBuf << '\t' << (float) (filesize) / (1 << 10) << " K";
     }
     else if (filesize < (1 << 30)) {
-        cout << filename << '\t' << (float) (filesize) / (1 << 20) << " M";
+        cout << filename << '\t' << timeBuf << '\t' << (float) (filesize) / (1 << 20) << " M";
     }
     else {
-        cout << filename << '\t' << (float) (filesize) / (1 << 30) << " G";
+        cout << filename << '\t' << timeBuf << '\t' << (float) (filesize) / (1 << 30) << " G";
     }
     cout << endl;
+}
+
+void
+getTimeString(time_t time, char *buf, int bufLen)
+{
+    struct tm locTime;
+
+    localtime_r(&time, &locTime);
+    strftime(buf, bufLen, "%b %e %H:%M", &locTime);
 }

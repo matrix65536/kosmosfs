@@ -162,7 +162,11 @@ struct FilePosition {
         iter = std::find(chunkServers.begin(), chunkServers.end(), loc);
         if (iter != chunkServers.end()) {
             iter->Connect();
-            return (iter->sock.get());
+            TcpSocket *s = iter->sock.get();
+
+            if (s->IsGood())
+                return s;
+            return NULL;
         }
 
         // Bit of an issue here: The object that is being pushed is
@@ -172,7 +176,10 @@ struct FilePosition {
         chunkServers.push_back(ChunkServerConn(loc));
         chunkServers[chunkServers.size()-1].Connect();
 
-        return (chunkServers[chunkServers.size()-1].sock.get());
+        TcpSocket *s = chunkServers[chunkServers.size()-1].sock.get();
+        if (s->IsGood())
+            return s;
+        return NULL;
     }
 
     void SetPreferredServer(const ServerLocation &loc) {

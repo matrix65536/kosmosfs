@@ -117,7 +117,7 @@ ChunkManager::AllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId,
     chunkPathname = MakeChunkPathname(chunkId);
 
     if (tableEntry != mChunkTable.end()) {
-        KFS_LOG_DEBUG("Chunk %s already exists; changing version # to %ld",
+        KFS_LOG_VA_DEBUG("Chunk %s already exists; changing version # to %ld",
                          chunkPathname.c_str(), chunkVersion);
         cih = tableEntry->second;
         cih->chunkInfo.chunkVersion = chunkVersion;
@@ -125,7 +125,7 @@ ChunkManager::AllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId,
         return 0;
     }
     
-    KFS_LOG_DEBUG("Creating chunk: %s", chunkPathname.c_str());
+    KFS_LOG_VA_DEBUG("Creating chunk: %s", chunkPathname.c_str());
 
     CleanupInactiveFds();
 
@@ -184,7 +184,7 @@ ChunkManager::StaleChunk(kfsChunkId_t chunkId)
     
     rename(chunkPathname.c_str(), staleChunkPathname.c_str());
 
-    KFS_LOG_INFO("Moving chunk %ld to staleChunks dir", chunkId);
+    KFS_LOG_VA_INFO("Moving chunk %ld to staleChunks dir", chunkId);
 
     cih = tableEntry->second;
     mUsedSpace -= cih->chunkInfo.chunkSize;
@@ -248,7 +248,7 @@ ChunkManager::ChangeChunkVers(kfsFileId_t fileId,
 
     mIsChunkTableDirty = true;
 
-    KFS_LOG_DEBUG("Chunk %s already exists; changing version # to %ld",
+    KFS_LOG_VA_INFO("Chunk %s already exists; changing version # to %ld",
                      chunkPathname.c_str(), chunkVersion);
 
     cih = tableEntry->second;
@@ -269,7 +269,7 @@ ChunkManager::ReplicationDone(kfsChunkId_t chunkId)
 
 #ifdef DEBUG
     string chunkPathname = MakeChunkPathname(chunkId);
-    KFS_LOG_DEBUG("Replication for chunk %s is complete...",
+    KFS_LOG_VA_DEBUG("Replication for chunk %s is complete...",
                      chunkPathname.c_str());
 #endif
 
@@ -322,7 +322,7 @@ ChunkManager::OpenChunk(kfsChunkId_t chunkId,
     CMI tableEntry = mChunkTable.find(chunkId);
 
     if (tableEntry == mChunkTable.end()) {
-        KFS_LOG_DEBUG("No such chunk: %s", chunkPathname.c_str());
+        KFS_LOG_VA_DEBUG("No such chunk: %s", chunkPathname.c_str());
         return -EBADF;
     }
     chunkPathname = MakeChunkPathname(chunkId);
@@ -343,8 +343,10 @@ ChunkManager::OpenChunk(kfsChunkId_t chunkId,
         fd = cih->chunkHandle->mFileId;
     }
 
-    KFS_LOG_DEBUG("opening %s with flags %d; fd = %d", 
+    /*
+    KFS_LOG_VA_DEBUG("opening %s with flags %d; fd = %d", 
                      chunkPathname.c_str(), openFlags, fd);
+    */
 
     return 0;
 }
@@ -366,7 +368,7 @@ ChunkManager::CloseChunk(kfsChunkId_t chunkId)
     if (cih->chunkHandle.use_count() <= 2) {
         if (cih->chunkHandle->mFileId < 0)
             return;
-        KFS_LOG_DEBUG("closing fileid = %d, for chunk = %ld",
+        KFS_LOG_VA_DEBUG("closing fileid = %d, for chunk = %ld",
                          cih->chunkHandle->mFileId, 
                          cih->chunkHandle->mChunkId);
         close(cih->chunkHandle->mFileId);
@@ -406,7 +408,7 @@ ChunkManager::ReadChunk(ReadOp *op)
         return -KFS::ESERVERBUSY;
 
     if (op->chunkVersion != cih->chunkInfo.chunkVersion) {
-        KFS_LOG_DEBUG("Version # mismatch(have=%u vs asked=%ld...failing a read",
+        KFS_LOG_VA_INFO("Version # mismatch(have=%u vs asked=%ld...failing a read",
                          cih->chunkInfo.chunkVersion, op->chunkVersion);
         return -KFS::EBADVERS;
     }
@@ -503,7 +505,7 @@ ChunkManager::WriteChunk(WriteOp *op)
             // issue a read
             ReadOp *rop = new ReadOp(op, OffsetToChecksumBlockStart(op->offset),
                                      CHECKSUM_BLOCKSIZE);
-            KFS_LOG_DEBUG("Write triggered a read for offset = %ld",
+            KFS_LOG_VA_DEBUG("Write triggered a read for offset = %ld",
                              op->offset);
             rop->Execute();
 
@@ -560,8 +562,10 @@ ChunkManager::WriteChunk(WriteOp *op)
 
     op->diskConnection.reset(d);
 
-    KFS_LOG_DEBUG("Checksum for chunk: %ld, offset = %ld, bytes = %ld, # of cksums = %u",
+    /*
+    KFS_LOG_VA_DEBUG("Checksum for chunk: %ld, offset = %ld, bytes = %ld, # of cksums = %u",
                   op->chunkId, op->offset, op->numBytesIO, op->checksums.size());
+    */
 
     return op->diskConnection->Write(op->offset, op->numBytesIO, op->dataBuf);
 }
@@ -599,13 +603,13 @@ ChunkManager::WriteChunkDone(WriteOp *op)
 void
 ChunkManager::ReadChunkDone(ReadOp *op)
 {
-    ChunkInfoHandle_t *cih;
+    ChunkInfoHandle_t *cih = NULL;
     
     if ((GetChunkInfoHandle(op->chunkId, &cih) < 0) ||
         (op->chunkVersion != cih->chunkInfo.chunkVersion)) {
         AdjustDataRead(op);
         if (cih) {
-            KFS_LOG_DEBUG("Version # mismatch(have=%u vs asked=%ld...",
+            KFS_LOG_VA_INFO("Version # mismatch(have=%u vs asked=%ld...",
                              cih->chunkInfo.chunkVersion, op->chunkVersion);
         }
         op->status = -KFS::EBADVERS;
@@ -644,7 +648,7 @@ ChunkManager::ReadChunkDone(ReadOp *op)
 
     // die ("checksum mismatch");
 
-    KFS_LOG_ERROR("Checksum mismatch for chunk=%ld, offset=%ld, bytes = %ld: expect: %u, computed: %u ",
+    KFS_LOG_VA_ERROR("Checksum mismatch for chunk=%ld, offset=%ld, bytes = %ld: expect: %u, computed: %u ",
                   op->chunkId, op->offset, op->numBytesIO,
                   cih->chunkInfo.chunkBlockChecksum[checksumBlock],
                   checksums[i]);
@@ -667,12 +671,12 @@ ChunkManager::NotifyMetaCorruptedChunk(kfsChunkId_t chunkId)
     ChunkInfoHandle_t *cih;
 
     if (GetChunkInfoHandle(chunkId, &cih) < 0) {
-        KFS_LOG_ERROR("Unable to notify metaserver of corrupt chunk: %ld",
+        KFS_LOG_VA_ERROR("Unable to notify metaserver of corrupt chunk: %ld",
                       chunkId);
         return;
     }
 
-    KFS_LOG_INFO("Notifying metaserver of corrupt chunk (%ld) in file %ld",
+    KFS_LOG_VA_INFO("Notifying metaserver of corrupt chunk (%ld) in file %ld",
                  cih->chunkInfo.fileId, chunkId);
 
     // This op will get deleted when we get an ack from the metaserver
@@ -764,7 +768,7 @@ ChunkManager::Checkpoint()
     if (!mIsChunkTableDirty)
         return;
 
-    KFS_LOG_DEBUG("Checkpointing state");
+    // KFS_LOG_VA_DEBUG("Checkpointing state");
     cop = new CheckpointOp(1);
     
     for (iter = mChunkTable.begin(); iter != mChunkTable.end(); ++iter) {
@@ -816,7 +820,7 @@ ChunkManager::Restart()
     // sort all the chunk names alphabetically
     numChunkFiles = scandir(mChunkBaseDir, &namelist, 0, alphasort);
     if (numChunkFiles < 0) {
-        KFS_LOG_INFO("Unable to open %s", mChunkBaseDir);
+        KFS_LOG_VA_INFO("Unable to open %s", mChunkBaseDir);
         return;
     }
 
@@ -843,7 +847,7 @@ ChunkManager::Restart()
             }
         }
         if (!found) {
-            KFS_LOG_DEBUG("Orphaned chunk as the file doesn't exist: %s",
+            KFS_LOG_VA_INFO("Orphaned chunk as the file doesn't exist: %s",
                              chunkIdStr.c_str());
             orphans.push_back(entry.chunkId);
             continue;
@@ -856,7 +860,7 @@ ChunkManager::Restart()
 
         // stat buf's st_size is of type off_t.  Typecast to avoid compiler warnings.
         if (buf.st_size != (off_t) entry.chunkSize) {
-            KFS_LOG_DEBUG("Truncating file: %s to size: %zd",
+            KFS_LOG_VA_INFO("Truncating file: %s to size: %zd",
                              chunkPathname.c_str(), entry.chunkSize);
             if (truncate(chunkPathname.c_str(), entry.chunkSize) < 0) {
                 perror("Truncate");
@@ -872,8 +876,7 @@ ChunkManager::Restart()
     // Get rid of the orphans---valid entries but no backing file
     for (j = 0; j < orphans.size(); ++j) {
 
-        KFS_LOG_DEBUG("Found orphan entry: %ld",
-                         orphans[j]);
+        KFS_LOG_VA_DEBUG("Found orphan entry: %ld", orphans[j]);
 
         iter = mChunkTable.find(orphans[j]);
         if (iter != mChunkTable.end()) {
@@ -903,7 +906,7 @@ ChunkManager::Restart()
         res = stat(chunkPathname.c_str(), &buf);
         if ((res == 0) && (S_ISREG(buf.st_mode))) {
             unlink(chunkPathname.c_str());
-            KFS_LOG_DEBUG("Found zombie entry: %s", chunkPathname.c_str());
+            KFS_LOG_VA_DEBUG("Found zombie entry: %s", chunkPathname.c_str());
         }
 
         free(namelist[i]);
@@ -961,7 +964,7 @@ ChunkManager::ReplayChangeChunkVers(kfsFileId_t fileId, kfsChunkId_t chunkId,
     if (GetChunkInfoHandle(chunkId, &cih) != 0) 
         return;
 
-    KFS_LOG_DEBUG("Chunk %ld already exists; changing version # to %ld",
+    KFS_LOG_VA_DEBUG("Chunk %ld already exists; changing version # to %ld",
                      chunkId, chunkVersion);
     
     // Update the version #
@@ -1070,7 +1073,7 @@ ChunkManager::EnqueueWrite(WritePrepareOp *wp)
         return -EBADF;
 
     if (wp->chunkVersion != cih->chunkInfo.chunkVersion) {
-        KFS_LOG_DEBUG("Version # mismatch(have=%d vs asked=%lu...failing a write",
+        KFS_LOG_VA_INFO("Version # mismatch(have=%d vs asked=%lu...failing a write",
                          cih->chunkInfo.chunkVersion, wp->chunkVersion);
         return -EINVAL;
     }
@@ -1159,7 +1162,7 @@ ChunkManager::ScavengePendingWrites()
             break;
         }
         // if it exceeds 5 mins, retire the op
-        KFS_LOG_DEBUG("Retiring write with id=%ld as it has been too long",
+        KFS_LOG_VA_DEBUG("Retiring write with id=%ld as it has been too long",
                          op->writeId);
         mPendingWrites.pop_front();
         CloseChunk(op->chunkId);
@@ -1189,7 +1192,7 @@ public:
             return;
 
         // we have a valid file-id and it has been over 5 mins since we last did I/O on it.
-        KFS_LOG_DEBUG("cleanup: closing fileid = %d, for chunk = %ld",
+        KFS_LOG_VA_DEBUG("cleanup: closing fileid = %d, for chunk = %ld",
                          cih->chunkHandle->mFileId, 
                          cih->chunkHandle->mChunkId);
         close(cih->chunkHandle->mFileId);
@@ -1216,7 +1219,7 @@ ChunkManager::CleanupInactiveFds()
             // bump the soft limit to the hard limit
             rlim.rlim_cur = rlim.rlim_max;
             if (setrlimit(RLIMIT_NOFILE, &rlim) == 0) {
-                KFS_LOG_DEBUG("Setting # of open files to: %ld",
+                KFS_LOG_VA_DEBUG("Setting # of open files to: %ld",
                                  rlim.rlim_cur);
                 OPEN_FDS_LOW_WATERMARK = rlim.rlim_cur / 2;
             }

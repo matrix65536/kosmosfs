@@ -48,7 +48,7 @@ DiskEvent_t::ToString()
 DiskConnection::DiskConnection(ChunkHandlePtr &handle,
                                KfsCallbackObj *callbackObj) 
 {
-    // KFS_LOG_DEBUG("Allocating connection 0x%p", this);
+    // KFS_LOG_VA_DEBUG("Allocating connection 0x%p", this);
 
     mHandle = handle;
     mCallbackObj = callbackObj;
@@ -56,7 +56,7 @@ DiskConnection::DiskConnection(ChunkHandlePtr &handle,
 
 DiskConnection::~DiskConnection() 
 {
-    // KFS_LOG_DEBUG("Freeing connection 0x%p", this);
+    // KFS_LOG_VA_DEBUG("Freeing connection 0x%p", this);
     // Cancel out the events
     Close();
     mDiskIO.clear();
@@ -120,7 +120,7 @@ DiskConnection::Read(off_t offset, size_t numBytes)
     }
 
     /*
-    KFS_LOG_DEBUG("# of reads queued for (off = %lld, size = %zd): %d",
+    KFS_LOG_VA_DEBUG("# of reads queued for (off = %lld, size = %zd): %d",
                      r.offset, r.numBytes, r.diskEvents.size());
     */
 
@@ -146,7 +146,7 @@ int DiskConnection::ReadDone(DiskEventPtr &doneEvent, int res)
     bool found;
 
     if (res != 0) {
-        KFS_LOG_DEBUG("Read failure: errno = %d",
+        KFS_LOG_VA_DEBUG("Read failure: errno = %d",
                          res);
     }
     assert(mCallbackObj != NULL);
@@ -269,10 +269,10 @@ DiskConnection::Write(off_t offset, size_t numBytes, IOBuffer *buf)
     mDiskIO.push_back(r);
 
     /*
-    KFS_LOG_DEBUG("# of writes queued for (off = %lld, size = %lld): %d",
+    KFS_LOG_VA_DEBUG("# of writes queued for (off = %lld, size = %lld): %d",
                      r.offset, r.numBytes, r.diskEvents.size());
 
-    KFS_LOG_DEBUG("# of elements in write list: %d",
+    KFS_LOG_VA_DEBUG("# of elements in write list: %d",
                      mDiskIO.size());
     */
 
@@ -292,8 +292,7 @@ int DiskConnection::WriteDone(DiskEventPtr &doneEvent, int res)
     int retVal = 0;
 
     if (res != 0) {
-        KFS_LOG_DEBUG("Write failure: errno = %d",
-                         res);
+        KFS_LOG_VA_DEBUG("Write failure: errno = %d", res);
     }
 
     // find the request that issued the event

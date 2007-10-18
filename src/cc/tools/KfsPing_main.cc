@@ -62,6 +62,8 @@ int main(int argc, char **argv)
     const char *server = NULL;
     int port = -1;
 
+    KFS::MsgLogger::Init(NULL);
+
     while ((optchar = getopt(argc, argv, "hmcs:p:")) != -1) {
         switch (optchar) {
             case 'm': 
@@ -80,7 +82,7 @@ int main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }
@@ -111,14 +113,14 @@ PingMetaServer(const ServerLocation &location)
     MetaPingOp *op;
 
     if (metaServerSock.Connect(location) < 0) {
-        KFS_LOG_ERROR("Unable to connect to %s",
+        KFS_LOG_VA_ERROR("Unable to connect to %s",
                          location.ToString().c_str());
         exit(0);
     }
     op = new MetaPingOp(1);
     numIO = DoOpCommon(op, &metaServerSock);
     if (numIO < 0) {
-        KFS_LOG_ERROR("Server (%s) isn't responding to ping",
+        KFS_LOG_VA_ERROR("Server (%s) isn't responding to ping",
                          location.ToString().c_str());
         exit(0);
     }
@@ -140,14 +142,14 @@ PingChunkServer(const ServerLocation &location)
     ChunkPingOp *op;
 
     if (chunkServerSock.Connect(location) < 0) {
-        KFS_LOG_ERROR("Unable to connect to %s",
+        KFS_LOG_VA_ERROR("Unable to connect to %s",
                          location.ToString().c_str());
         exit(0);
     }
     op = new ChunkPingOp(1);
     numIO = DoOpCommon(op, &chunkServerSock);
     if (numIO < 0) {
-        KFS_LOG_ERROR("Server %s isn't responding to ping",
+        KFS_LOG_VA_ERROR("Server %s isn't responding to ping",
                          location.ToString().c_str());
         exit(0);
     }

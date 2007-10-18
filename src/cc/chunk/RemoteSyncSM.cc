@@ -59,7 +59,7 @@ RemoteSyncSM::Connect()
 {
     TcpSocket *sock;
 
-    KFS_LOG_DEBUG("Trying to connect to: %s", mLocation.ToString().c_str());
+    KFS_LOG_VA_DEBUG("Trying to connect to: %s", mLocation.ToString().c_str());
 
     sock = new TcpSocket();
     if (sock->Connect(mLocation)) {
@@ -67,7 +67,7 @@ RemoteSyncSM::Connect()
         delete sock;
         return false;
     }
-    KFS_LOG_INFO("Connect to remote server (%s) succeeded...",
+    KFS_LOG_VA_INFO("Connect to remote server (%s) succeeded...",
                     mLocation.ToString().c_str());
 
     mNetConnection.reset(new NetConnection(sock, this));
