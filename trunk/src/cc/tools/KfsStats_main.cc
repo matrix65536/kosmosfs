@@ -77,6 +77,8 @@ int main(int argc, char **argv)
     const char *server = NULL;
     int port = -1, numSecs = 10;
 
+    KFS::MsgLogger::Init(NULL);
+
     while ((optchar = getopt(argc, argv, "hcmn:p:s:t")) != -1) {
         switch (optchar) {
             case 'm': 
@@ -101,7 +103,7 @@ int main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }
@@ -138,7 +140,7 @@ StatsMetaServer(const ServerLocation &location, bool rpcStats, int numSecs)
     TcpSocket metaServerSock;
 
     if (metaServerSock.Connect(location) < 0) {
-        KFS_LOG_ERROR("Unable to connect to %s",
+        KFS_LOG_VA_ERROR("Unable to connect to %s",
                          location.ToString().c_str());
         exit(0);
     }
@@ -233,7 +235,7 @@ StatsChunkServer(const ServerLocation &location, bool rpcStats, int numSecs)
     TcpSocket chunkServerSock;
 
     if (chunkServerSock.Connect(location) < 0) {
-        KFS_LOG_ERROR("Unable to connect to %s",
+        KFS_LOG_VA_ERROR("Unable to connect to %s",
                          location.ToString().c_str());
         exit(0);
     }

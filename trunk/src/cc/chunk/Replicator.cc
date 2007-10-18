@@ -70,15 +70,15 @@ Replicator::Connect()
 {
     TcpSocket *sock;
 
-    KFS_LOG_DEBUG("Trying to connect to: %s", mOwner->location.ToString().c_str());
+    KFS_LOG_VA_DEBUG("Trying to connect to: %s", mOwner->location.ToString().c_str());
 
     sock = new TcpSocket();
     if (sock->Connect(mOwner->location)) {
-        KFS_LOG_DEBUG("connect failed...");
+        // KFS_LOG_DEBUG("connect failed...");
         delete sock;
         return false;
     }
-    KFS_LOG_INFO("Connect to remote server (%s) succeeded...",
+    KFS_LOG_VA_INFO("Connect to remote server (%s) succeeded...",
                     mOwner->location.ToString().c_str());
 
     mNetConnection.reset(new NetConnection(sock, this));
@@ -129,7 +129,7 @@ Replicator::HandleStart(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	KFS_LOG_DEBUG("Closing connection");
+	// KFS_LOG_VA_DEBUG("Closing connection");
 
 	if (mNetConnection)
 	    mNetConnection->Close();
@@ -224,7 +224,7 @@ Replicator::HandleRead(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	KFS_LOG_DEBUG("Closing connection");
+	// KFS_LOG_VA_DEBUG("Closing connection");
 
 	if (mNetConnection)
 	    mNetConnection->Close();
@@ -333,11 +333,11 @@ void
 Replicator::Terminate()
 {
     if (mDone) {
-        KFS_LOG_DEBUG("Replication for %ld finished", mChunkId);
+        KFS_LOG_VA_INFO("Replication for %ld finished", mChunkId);
         gChunkManager.ReplicationDone(mChunkId);
         mOwner->status = 0;
     } else {
-        KFS_LOG_DEBUG("Replication for %ld failed...cleaning up", mChunkId);
+        KFS_LOG_VA_INFO("Replication for %ld failed...cleaning up", mChunkId);
         gChunkManager.DeleteChunk(mChunkId);
         mOwner->status = -1;
     }

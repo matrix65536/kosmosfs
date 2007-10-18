@@ -62,7 +62,7 @@ bool KFS::IsMsgAvail(IOBuffer *iobuf, int *msgLen)
 
 void KFS::die(const string &msg)
 {
-    KFS_LOG_ERROR("Panic'ing: %s", msg.c_str());
+    KFS_LOG_VA_FATAL("Panic'ing: %s", msg.c_str());
     abort();
 }
 

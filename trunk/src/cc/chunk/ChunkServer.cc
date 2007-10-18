@@ -54,7 +54,7 @@ ChunkServer::MainLoop(int clientAcceptPort)
         exit(-1);
     }
 
-    KFS_LOG_DEBUG("Hostname: %s", hostname);
+    // KFS_LOG_VA_DEBUG("Hostname: %s", hostname);
     
     mLocation.Reset(hostname, clientAcceptPort);
 

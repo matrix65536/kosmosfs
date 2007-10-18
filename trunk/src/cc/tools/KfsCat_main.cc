@@ -50,6 +50,8 @@ main(int argc, char **argv)
     bool help = false;
     char optchar;
 
+    KFS::MsgLogger::Init(NULL);
+
     while ((optchar = getopt(argc, argv, "hs:p:")) != -1) {
         switch (optchar) {
             case 'h':

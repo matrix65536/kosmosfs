@@ -90,7 +90,7 @@ KfsClient::Read(int fd, char *buf, size_t numBytes)
 	    break;
 
 	if (pos->fileOffset >= (off_t) fa->fileSize) {
-	    KFS_LOG_DEBUG("Current pointer (%ld) is past EOF (%ld) ...so, done",
+	    KFS_LOG_VA_DEBUG("Current pointer (%ld) is past EOF (%ld) ...so, done",
 	                     pos->fileOffset, fa->fileSize);
 	    break;
 	}
@@ -220,7 +220,7 @@ KfsClient::ReadChunk(int fd, char *buf, size_t numBytes)
             break;
         }
 
-        KFS_LOG_DEBUG("Need to retry read...");
+        // KFS_LOG_DEBUG("Need to retry read...");
         // Ok...so, we need to retry the read.  so, re-determine where
         // the chunk went and then retry.
         chunk->chunkId = -1;
@@ -393,9 +393,11 @@ KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     assert(buf + numRead <= buf + numBytes);
 
     ssize_t numIO = DoPipelinedRead(ops, pos->preferredServer);
+    /*
     if (numIO < 0) {
 	KFS_LOG_DEBUG("Pipelined read from server failed...");
     }
+    */
 
     int retryStatus = 0;
 
@@ -416,8 +418,7 @@ KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     if (retryStatus != 0)
         numIO = retryStatus;
 
-    KFS_LOG_DEBUG("Read data from server...%d bytes",
-                  numIO);
+    KFS_LOG_VA_DEBUG("Read data from server...%d bytes", numIO);
 
     return numIO;
 }

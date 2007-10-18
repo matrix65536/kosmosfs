@@ -175,12 +175,12 @@ KfsClient::Cd(const char *pathname)
     int status = Stat(path.c_str(), s);
 
     if (status < 0) {
-	KFS_LOG_DEBUG("Non-existent path: %s", pathname);
+	KFS_LOG_VA_DEBUG("Non-existent path: %s", pathname);
 	return -ENOENT;
     }
 
     if (!S_ISDIR(s.st_mode)) {
-	KFS_LOG_DEBUG("Non-existent dir: %s", pathname);
+	KFS_LOG_VA_DEBUG("Non-existent dir: %s", pathname);
 	return -ENOTDIR;
     }
 
@@ -334,7 +334,7 @@ KfsClient::Readdir(const char *pathname, vector<string> &result)
 	// ist >> result[i];
 	ist.getline(filename, MAX_FILENAME_LEN);
 	result[i] = filename;
-        KFS_LOG_DEBUG("Entry: %s", filename);
+        // KFS_LOG_VA_DEBUG("Entry: %s", filename);
     }
     sort(result.begin(), result.end());
     return res;
@@ -379,7 +379,7 @@ KfsClient::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result)
     for (int i = 0; i < op.numEntries; ++i) {
 	ist.getline(filename, MAX_FILENAME_LEN);
 	result[i].filename = filename;
-        KFS_LOG_DEBUG("Entry: %s", filename);
+        // KFS_LOG_VA_DEBUG("Entry: %s", filename);
         // get the file size for files
 	LookupAttr(dirFid, result[i].filename.c_str(), result[i], true);
     }
@@ -485,7 +485,7 @@ KfsClient::Create(const char *pathname, int numReplicas, bool exclusive)
     string filename;
     int res = GetPathComponents(pathname, &parentFid, filename);
     if (res < 0) {
-	KFS_LOG_DEBUG("status %d for pathname %s", res, pathname);
+	KFS_LOG_VA_DEBUG("status %d for pathname %s", res, pathname);
 	return res;
     }
 
@@ -495,14 +495,14 @@ KfsClient::Create(const char *pathname, int numReplicas, bool exclusive)
     CreateOp op(nextSeq(), parentFid, filename.c_str(), numReplicas, exclusive);
     (void)DoMetaOpWithRetry(&op);
     if (op.status < 0) {
-	KFS_LOG_DEBUG("status %ld from create RPC", op.status);
+	KFS_LOG_VA_DEBUG("status %ld from create RPC", op.status);
 	return op.status;
     }
 
     // Everything is good now...
     int fte = ClaimFileTableEntry(parentFid, filename.c_str());
     if (fte < 0) {	// XXX Too many open files
-	KFS_LOG_DEBUG("status %d from ClaimFileTableEntry", fte);
+	KFS_LOG_VA_DEBUG("status %d from ClaimFileTableEntry", fte);
 	return fte;
     }
 
@@ -555,7 +555,7 @@ KfsClient::Rename(const char *oldpath, const char *newpath, bool overwrite)
 		    absNewpath.c_str(), overwrite);
     (void)DoMetaOpWithRetry(&op);
 
-    KFS_LOG_DEBUG("Status of renaming %s -> %s is: %ld", 
+    KFS_LOG_VA_DEBUG("Status of renaming %s -> %s is: %ld", 
                      oldpath, newpath, op.status);
 
     return op.status;
@@ -602,7 +602,7 @@ KfsClient::Open(const char *pathname, int openMode, int numReplicas)
             return -EEXIST;
     }
 
-    int fte = ClaimFileTableEntry(parentFid, filename.c_str());
+    int fte = AllocFileTableEntry(parentFid, filename.c_str());
     if (fte < 0)		// Too many open files
 	return fte;
 
@@ -906,7 +906,7 @@ KfsClient::AllocChunk(int fd)
 
     (void) DoMetaOpWithRetry(&op);
     if (op.status < 0) {
-	KFS_LOG_DEBUG("AllocChunk(%ld)", op.status);
+	// KFS_LOG_VA_DEBUG("AllocChunk(%ld)", op.status);
 	return op.status;
     }
     ChunkAttr chunk;
@@ -922,11 +922,11 @@ KfsClient::AllocChunk(int fd)
         SizeChunk(fd);
     }
 
-    KFS_LOG_DEBUG("Fileid: %ld, chunk : %ld, version: %ld, hosted on:",
+    KFS_LOG_VA_DEBUG("Fileid: %ld, chunk : %ld, version: %ld, hosted on:",
                      fa->fileId, chunk.chunkId, chunk.chunkVersion);
 
     for (uint32_t i = 0; i < op.chunkServers.size(); i++) {
-	KFS_LOG_DEBUG("%s", op.chunkServers[i].ToString().c_str());
+	KFS_LOG_VA_DEBUG("%s", op.chunkServers[i].ToString().c_str());
     }
 
     return op.status;
@@ -962,7 +962,7 @@ KfsClient::LocateChunk(int fd, int chunkNum)
     (void)DoMetaOpWithRetry(&op);
     if (op.status < 0) {
 	string errstr = ErrorCodeToStr(op.status);
-	KFS_LOG_DEBUG("LocateChunk (%ld): %s", op.status, errstr.c_str());
+	KFS_LOG_VA_DEBUG("LocateChunk (%ld): %s", op.status, errstr.c_str());
 	return op.status;
     }
 
@@ -973,7 +973,7 @@ KfsClient::LocateChunk(int fd, int chunkNum)
     mFileTable[fd]->cattr[chunkNum] = chunk;
 
     if (op.chunkServers.size() > 0) {
-	KFS_LOG_DEBUG("Fileid: %ld, chunk: %ld, hosted on (%s)",
+	KFS_LOG_VA_DEBUG("Fileid: %ld, chunk: %ld, hosted on (%s)",
 	                 mFileTable[fd]->fattr.fileId,
 	                 chunk.chunkId,
 	                 op.chunkServers[0].ToString().c_str());
@@ -1002,7 +1002,7 @@ KFS::DoOpSend(KfsOp *op, TcpSocket *sock)
     ostringstream os;
 
     if ((sock == NULL ) || (!sock->IsGood())) {
-	KFS_LOG_DEBUG("Trying to do I/O on a closed socket..failing it");
+	// KFS_LOG_VA_DEBUG("Trying to do I/O on a closed socket..failing it");
 	op->status = -EHOSTUNREACH;
 	return -1;
     }
@@ -1175,7 +1175,7 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
 	if (resSeq == op->seq) {
 	    break;
 	}
-	KFS_LOG_DEBUG("Seq #'s dont match: Expect: %ld, got: %ld",
+	KFS_LOG_VA_DEBUG("Seq #'s dont match: Expect: %ld, got: %ld",
                          op->seq, resSeq);
         // assert(!"Seq # mismatch");
 
@@ -1257,27 +1257,27 @@ int
 KFS::DoOpCommon(KfsOp *op, TcpSocket *sock)
 {
     if (sock == NULL) {
-	KFS_LOG_DEBUG("%s: send failed; no socket", op->Show().c_str());
+	KFS_LOG_VA_DEBUG("%s: send failed; no socket", op->Show().c_str());
 	assert(sock);
 	return -EHOSTUNREACH;
     }
 
     int res = DoOpSend(op, sock);
     if (res < 0) {
-	KFS_LOG_DEBUG("%s: send failure code: %d", op->Show().c_str(), res);
+	KFS_LOG_VA_DEBUG("%s: send failure code: %d", op->Show().c_str(), res);
 	return res;
     }
 
     res = DoOpResponse(op, sock);
 
     if (res < 0) {
-	KFS_LOG_DEBUG("%s: recv failure code: %d", op->Show().c_str(), res);
+	KFS_LOG_VA_DEBUG("%s: recv failure code: %d", op->Show().c_str(), res);
 	return res;
     }
 
     if (op->status < 0) {
 	string errstr = ErrorCodeToStr(op->status);
-	KFS_LOG_DEBUG("%s failed with code: %s", op->Show().c_str(), errstr.c_str());
+	KFS_LOG_VA_DEBUG("%s failed with code: %s", op->Show().c_str(), errstr.c_str());
     }
 
     return res;
@@ -1338,7 +1338,7 @@ KfsClient::ComputeFilesize(kfsFileId_t kfsfid)
 	KFS_LOG_DEBUG("Unable to parse layout info");
 	return -1;
     }
-    KFS_LOG_DEBUG("Fileid: %ld, # of chunks: %lu", kfsfid, lop.chunks.size());
+    KFS_LOG_VA_DEBUG("Fileid: %ld, # of chunks: %lu", kfsfid, lop.chunks.size());
     if (lop.chunks.size() == 0)
 	return 0;
 
@@ -1352,13 +1352,13 @@ KfsClient::ComputeFilesize(kfsFileId_t kfsfid)
 			    responder);
     if (s != last->chunkServers.end()) {
 	if (rstatus < 0) {
-	    KFS_LOG_DEBUG("RespondingServer status %d", rstatus);
+	    KFS_LOG_VA_DEBUG("RespondingServer status %d", rstatus);
 	    return 0;
 	}
 	filesize += endsize;
     }
 
-    KFS_LOG_DEBUG("Size of kfsfid = %ld, size = %ld",
+    KFS_LOG_VA_DEBUG("Size of kfsfid = %ld, size = %ld",
 	             kfsfid, filesize);
 
     return filesize;
@@ -1397,7 +1397,7 @@ KfsClient::OpenChunk(int fd)
     if (s != chunk->chunkServerLoc.end()) {
         FdPos(fd)->SetPreferredServer(*s);
         if (FdPos(fd)->GetPreferredServer() != NULL) {
-            KFS_LOG_DEBUG("Picking local server: %s", s->ToString().c_str());
+            KFS_LOG_VA_DEBUG("Picking local server: %s", s->ToString().c_str());
             return SizeChunk(fd);
         }
     }
@@ -1411,7 +1411,7 @@ KfsClient::OpenChunk(int fd)
         FdPos(fd)->SetPreferredServer(loc[i]);
 #ifdef DEBUG
         if (FdPos(fd)->GetPreferredServer() != NULL)
-            KFS_LOG_DEBUG("Randomly chose: %s", loc[i].ToString().c_str());
+            KFS_LOG_VA_DEBUG("Randomly chose: %s", loc[i].ToString().c_str());
 #endif
     }
 
@@ -1431,7 +1431,7 @@ KfsClient::SizeChunk(int fd)
     (void)DoOpCommon(&op, FdPos(fd)->preferredServer);
     chunk->chunkSize = op.size;
 
-    KFS_LOG_DEBUG("Chunk: %ld, size = %zd",
+    KFS_LOG_VA_DEBUG("Chunk: %ld, size = %zd",
 	             chunk->chunkId, chunk->chunkSize);
 
     return op.status;
@@ -1540,7 +1540,7 @@ KfsClient::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
         (now - FdInfo(fte)->validatedTime < FILE_CACHE_ENTRY_VALID_TIME))
         return fte;
 
-    KFS_LOG_DEBUG("Entry for <%ld, %s> is likely stale; forcing revalidation", 
+    KFS_LOG_VA_DEBUG("Entry for <%ld, %s> is likely stale; forcing revalidation", 
                      parentFid, name);
     // the entry maybe stale; force revalidation
     ReleaseFileTableEntry(fte);
@@ -1568,7 +1568,14 @@ KfsClient::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name)
     if (fte >= 0)
 	return fte;
 
-    fte = FindFreeFileTableEntry();
+    return AllocFileTableEntry(parentFid, name);
+}
+
+int
+KfsClient::AllocFileTableEntry(kfsFileId_t parentFid, const char *name)
+{
+    int fte = FindFreeFileTableEntry();
+
     if (fte >= 0) {
 	mFileTable[fte] = new FileTableEntry(parentFid, name);
         mFileTable[fte]->validatedTime = mFileTable[fte]->lastAccessTime = 
@@ -1681,7 +1688,7 @@ KfsClient::GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
 	start = next + 1; // next points to '/'
     }
 
-    KFS_LOG_DEBUG("file-id for dir: %s (file = %s) is %ld",
+    KFS_LOG_VA_DEBUG("file-id for dir: %s (file = %s) is %ld",
 	             pathstr.c_str(), name.c_str(), *parentFid);
     return 0;
 }

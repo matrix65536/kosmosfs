@@ -117,7 +117,7 @@ NetDispatch::Dispatch()
 		}
 		else {
 			// somehow, occasionally we are getting checkpoint requests here...
-			KFS_LOG_DEBUG("Getting an op (%d) with no client",
+			KFS_LOG_VA_DEBUG("Getting an op (%d) with no client",
 					r->op);
 		}
         }

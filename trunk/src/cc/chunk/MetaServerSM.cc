@@ -88,16 +88,16 @@ MetaServerSM::Connect()
         globals().netManager.RegisterTimeoutHandler(mTimer);
     }
 
-    KFS_LOG_DEBUG("Trying to connect to: %s:%d",
+    KFS_LOG_VA_DEBUG("Trying to connect to: %s:%d",
                      mLocation.hostname.c_str(), mLocation.port);
 
     sock = new TcpSocket();
     if (sock->Connect(mLocation) < 0) {
-        KFS_LOG_DEBUG("Reconnect failed...");
+        // KFS_LOG_DEBUG("Reconnect failed...");
         delete sock;
         return -1;
     }
-    KFS_LOG_INFO("Connect to metaserver (%s) succeeded...",
+    KFS_LOG_VA_INFO("Connect to metaserver (%s) succeeded...",
                     mLocation.ToString().c_str());
 
     mNetConnection.reset(new NetConnection(sock, this));
@@ -137,7 +137,7 @@ MetaServerSM::SendHello(int chunkServerPort)
 
     mSentHello = true;
 
-    KFS_LOG_INFO("Sent hello to meta server: %s", op.Show().c_str());
+    KFS_LOG_VA_INFO("Sent hello to meta server: %s", op.Show().c_str());
 
     ResubmitPendingOps();
 
@@ -183,7 +183,7 @@ MetaServerSM::HandleRequest(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	KFS_LOG_DEBUG("Closing connection");
+	// KFS_LOG_VA_DEBUG("Closing connection");
 
 	if (mNetConnection)
 	    mNetConnection->Close();
@@ -274,7 +274,7 @@ MetaServerSM::HandleCmd(IOBuffer *iobuf, int cmdLen)
     if (ParseCommand(buf.get(), cmdLen, &op) != 0) {
         iobuf->Consume(cmdLen);
 
-        KFS_LOG_DEBUG("Aye?: %s", buf.get());
+        KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
         // got a bogus command
         return;
     }
@@ -321,7 +321,7 @@ MetaServerSM::SendResponse(KfsOp *op)
     op->Response(os);
 
 /*
-    KFS_LOG_DEBUG("Command %d: Response: \n%s\n", 
+    KFS_LOG_VA_DEBUG("Command %d: Response: \n%s\n", 
                      op->op, os.str().c_str());
 */
 
@@ -339,7 +339,7 @@ MetaServerSM::SubmitOp(KfsOp *op)
 
     // XXX: If the server connection is dead, hold on
     if ((!mNetConnection) || (!mSentHello)) {
-        KFS_LOG_DEBUG("Metaserver connection is down...will dispatch later");
+        KFS_LOG_INFO("Metaserver connection is down...will dispatch later");
         return;
     }
     op->Request(os);

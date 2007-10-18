@@ -114,7 +114,7 @@ LayoutManager::AddNewServer(MetaHello *r)
         //
         for (j = 0; j < mChunkServers.size(); ++j) {
 		if (mChunkServers[j]->MatchingServer(r->location)) {
-			KFS_LOG_DEBUG("Duplicate server: %s, %d",
+			KFS_LOG_VA_DEBUG("Duplicate server: %s, %d",
 					 r->location.hostname.c_str(), r->location.port);
 			return;
 		}
@@ -164,14 +164,14 @@ LayoutManager::AddNewServer(MetaHello *r)
 				}
 			}
 			else {
-                        	KFS_LOG_DEBUG("Old version for chunk id = %lld => stale",
+                        	KFS_LOG_VA_INFO("Old version for chunk id = %lld => stale",
                                          r->chunks[i].chunkId);
 			}
 		}
 
                 if (res < 0) {
                         /// stale chunk
-                        KFS_LOG_DEBUG("Non-existent chunk id = %lld => stale",
+                        KFS_LOG_VA_INFO("Non-existent chunk id = %lld => stale",
                                          r->chunks[i].chunkId);
                         staleChunkIds.push_back(r->chunks[i].chunkId);
                 }
@@ -394,7 +394,7 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 	// issuing the lease during recovery---because there could
 	// be some server who has a lease and hasn't told us yet.
 	if (InRecovery()) {
-		KFS_LOG_DEBUG("GetChunkWriteLease: InRecovery() => EBUSY");
+		KFS_LOG_INFO("GetChunkWriteLease: InRecovery() => EBUSY");
 		return -EBUSY;
 	}
 
@@ -472,7 +472,7 @@ LayoutManager::GetChunkReadLease(MetaLeaseAcquire *req)
 	ChunkPlacementInfo v;
 
 	if (InRecovery()) {
-		KFS_LOG_DEBUG("GetChunkReadLease: inRecovery() => EBUSY");
+		KFS_LOG_INFO("GetChunkReadLease: inRecovery() => EBUSY");
 		return -EBUSY;
 	}
 
@@ -519,7 +519,7 @@ LayoutManager::IsValidLeaseIssued(const vector <MetaChunkInfo *> &c)
 	i = find_if(c.begin(), c.end(), ValidLeaseIssued(mChunkToServerMap));
 	if (i == c.end())
 		return false;
-	KFS_LOG_DEBUG("Valid lease issued on chunk: %lld",
+	KFS_LOG_VA_DEBUG("Valid lease issued on chunk: %lld",
 			(*i)->chunkId);
 	return true;
 }
@@ -586,12 +586,12 @@ LayoutManager::ChunkCorrupt(MetaChunkCorrupt *r)
 
 	v = iter->second;
 	if(v.fid != r->fid) {
-		KFS_LOG_WARN("Server claims invalid chunk: <%lld, %lld> to be corrupt",
+		KFS_LOG_VA_WARN("Server claims invalid chunk: <%lld, %lld> to be corrupt",
 				r->fid, r->chunkId);
 		return;
 	}
 
-	KFS_LOG_INFO("Server claims file/chunk: <%lld, %lld> to be corrupt",
+	KFS_LOG_VA_INFO("Server claims file/chunk: <%lld, %lld> to be corrupt",
 			r->fid, r->chunkId);
 	v.chunkServers.erase(remove_if(v.chunkServers.begin(), v.chunkServers.end(), 
 			ChunkServerMatcher(r->server.get())), v.chunkServers.end());
@@ -673,7 +673,7 @@ LayoutManager::AddChunkToServerMapping(chunkId_t chunkId, fid_t fid,
 
 	assert(ValidServer(c));
 
-	KFS_LOG_DEBUG("Laying out chunk=%lld on server %s",
+	KFS_LOG_VA_DEBUG("Laying out chunk=%lld on server %s",
 			 chunkId, c->GetServerName());
 
 	if (UpdateChunkToServerMapping(chunkId, c) == 0)
@@ -708,7 +708,7 @@ LayoutManager::UpdateChunkToServerMapping(chunkId_t chunkId, ChunkServer *c)
                 return -1;
 
 	/*
-	KFS_LOG_DEBUG("chunk=%lld was laid out on server %s",
+	KFS_LOG_VA_DEBUG("chunk=%lld was laid out on server %s",
 			 chunkId, c->GetServerName());
 	*/
         iter->second.chunkServers.push_back(c->shared_from_this());
@@ -972,7 +972,7 @@ LayoutManager::ChunkReplicationChecker()
 		if (iter->second.ongoingReplications > 0)
 			continue;
 
-		KFS_LOG_DEBUG("Checking replication level for chunk: %lld", chunkId);
+		KFS_LOG_VA_DEBUG("Checking replication level for chunk: %lld", chunkId);
 
 		if (!CanReplicateChunkNow(iter->first, iter->second, extraReplicas))
 			continue;
@@ -1041,7 +1041,7 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(req->chunkId));
 	if (chunk == v.end()) {
 		// Chunk disappeared -> stale; this chunk will get nuked
-		KFS_LOG_DEBUG("Re-replicate: chunk (%lld) disappeared => so, stale",
+		KFS_LOG_VA_INFO("Re-replicate: chunk (%lld) disappeared => so, stale",
 				req->chunkId);
 		mFailedReplicationStats->Update(1);
 		req->server->NotifyStaleChunk(req->chunkId);
@@ -1050,7 +1050,7 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	MetaChunkInfo *mci = *chunk;
 	if (mci->chunkVersion != req->chunkVersion) {
 		// Version that we replicated has changed...so, stale
-		KFS_LOG_DEBUG("Re-replicate: chunk (%lld) version changed (was=%lld, now=%lld) => so, stale",
+		KFS_LOG_VA_INFO("Re-replicate: chunk (%lld) version changed (was=%lld, now=%lld) => so, stale",
 				req->chunkId, req->chunkVersion, mci->chunkVersion);
 		mFailedReplicationStats->Update(1);
 		req->server->NotifyStaleChunk(req->chunkId);
@@ -1081,7 +1081,7 @@ LayoutManager::DeleteAddlChunkReplicas(chunkId_t chunkId, ChunkPlacementInfo &cl
 	clli.chunkServers.resize(numReplicas);
 	mChunkToServerMap[chunkId] = clli;
 
-	KFS_LOG_INFO("Deleting extra replicas (%d) of chunk: %lld", extraReplicas, chunkId);
+	KFS_LOG_VA_INFO("Deleting extra replicas (%d) of chunk: %lld", extraReplicas, chunkId);
 
 	// The first N are what we want to keep; the rest should go.
 	for_each(servers.begin() + numReplicas, servers.end(), ChunkDeletor(chunkId));
@@ -1114,7 +1114,7 @@ void
 LayoutManager::RebalanceServers()
 {
 	if ((mNumOngoingReplications > MAX_CONCURRENT_REPLICATIONS) ||
-		(InRecovery())) {
+		(InRecovery()) || (mChunkServers.size() == 0)) {
 		return;
 	}
 
@@ -1124,6 +1124,9 @@ LayoutManager::RebalanceServers()
 
 	// We get servers sorted by increasing amount of space utilization
 	SortServersByUtilization(servers);
+	assert(servers.size() > 0);
+	if (servers.size() == 0)
+		return;
 
 	// If things are somewhat utilized, don't mess...
 	if ((servers.back()->GetSpaceUtilization() < MAX_SERVER_SPACE_UTIL_THRESHOLD) ||
@@ -1194,7 +1197,7 @@ LayoutManager::RebalanceServers()
 			assert(!IsChunkHostedOnServer(clli.chunkServers, servers[i]));
 			if (IsChunkHostedOnServer(clli.chunkServers, servers[i])) {
 				string s = servers[i]->GetServerLocation().ToString();
-				KFS_LOG_DEBUG("ERROR Chunk (%lld) can't be moved as it is already hosted on %s",
+				KFS_LOG_VA_DEBUG("ERROR Chunk (%lld) can't be moved as it is already hosted on %s",
 						chunkId, s.c_str());
 				continue;
 			}
@@ -1202,7 +1205,7 @@ LayoutManager::RebalanceServers()
 			string s = clli.chunkServers[i]->GetServerLocation().ToString();
 			string d = servers[i]->GetServerLocation().ToString();
 
-			KFS_LOG_INFO("Trying to move chunk(%lld): from %s to %s", chunkId,
+			KFS_LOG_VA_INFO("Trying to move chunk(%lld): from %s to %s", chunkId,
 				s.c_str(), d.c_str());
 
 			servers[i]->ReplicateChunk(clli.fid, chunkId, mci->chunkVersion,

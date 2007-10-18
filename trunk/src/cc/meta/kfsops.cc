@@ -130,7 +130,7 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 		int16_t numReplicas, bool exclusive)
 {
 	if (!legalname(fname)) {
-		KFS_LOG_DEBUG("Bad file name %s", fname.c_str());
+		KFS_LOG_VA_WARN("Bad file name %s", fname.c_str());
 		return -EINVAL;
 	}
 
@@ -146,7 +146,7 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 
 		int status = remove(dir, fname);
 		if (status == -EBUSY) {
-			KFS_LOG_DEBUG("Remove failed as file is busy");
+			KFS_LOG_VA_INFO("Remove failed as file (%d:%s) is busy", dir, fname.c_str());
 			return status;
 		}
 		assert(status == 0);
@@ -200,7 +200,7 @@ Tree::remove(fid_t dir, const string &fname)
 		if (gLayoutManager.IsValidLeaseIssued(chunkInfo)) {
 			// put the file into dumpster
 			int status = moveToDumpster(dir, fname);
-			KFS_LOG_DEBUG("Moving %s to dumpster", fname.c_str());
+			KFS_LOG_VA_DEBUG("Moving %s to dumpster", fname.c_str());
 			return status;
 		}
 		// fire-away...
@@ -271,7 +271,7 @@ Tree::rmdir(fid_t dir, const string &dname)
 	MetaFattr *fa = lookup(dir, dname);
 
 	if ((dir == ROOTFID) && (dname == DUMPSTERDIR)) {
-		KFS_LOG_INFO(" Preventing removing dumpster (%s)",
+		KFS_LOG_VA_INFO(" Preventing removing dumpster (%s)",
 					dname.c_str());
 		return -EPERM;
 	}
@@ -767,12 +767,11 @@ Tree::moveToDumpster(fid_t dir, const string &fname)
 
 	if (fa == NULL) {
 		// Someone nuked the dumpster
-		KFS_LOG_DEBUG("No dumpster dir...recreating...");
 		makeDumpsterDir();
 		fa = lookup(ROOTFID, DUMPSTERDIR);
 		if (fa == NULL) {
 			assert(!"No dumpster");
-			KFS_LOG_INFO("Unable to create dumpster dir to remove %s",
+			KFS_LOG_VA_INFO("Unable to create dumpster dir to remove %s",
 					fname.c_str());
 			return -1;
 		}
@@ -809,7 +808,6 @@ Tree::cleanupDumpster()
 
 	if (fa == NULL) {
 		// Someone nuked the dumpster
-		KFS_LOG_DEBUG("No dumpster...recreating...");
 		makeDumpsterDir();
 	}
 		

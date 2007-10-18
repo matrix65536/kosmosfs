@@ -67,8 +67,10 @@ LeaseClerk::RegisterLease(kfsChunkId_t chunkId, int64_t leaseId)
                                 LEASE_RENEW_INTERVAL_MSECS, false));
     mLeases[chunkId] = lease;
     globals().eventManager.Schedule(lease.timer, LEASE_RENEW_INTERVAL_MSECS);
-    KFS_LOG_DEBUG("Registered lease: chunk=%ld, lease=%ld",
-                     chunkId, leaseId);
+    // Dont' print msgs for lease cleanup events.
+    if (chunkId != 0)
+        KFS_LOG_VA_DEBUG("Registered lease: chunk=%ld, lease=%ld",
+                         chunkId, leaseId);
 }
 
 void
@@ -78,7 +80,7 @@ LeaseClerk::UnRegisterLease(kfsChunkId_t chunkId)
     if (iter != mLeases.end()) {
         mLeases.erase(iter);
     }
-    KFS_LOG_DEBUG("Lease for chunk = %ld unregistered",
+    KFS_LOG_VA_DEBUG("Lease for chunk = %ld unregistered",
                      chunkId);
 
 }
@@ -125,7 +127,7 @@ LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
     LeaseInfo_t lease = iter->second;
 
     if (chunkId != 0) {
-        KFS_LOG_DEBUG("Lease for chunk = %ld renewed",
+        KFS_LOG_VA_DEBUG("Lease for chunk = %ld renewed",
                          chunkId);
     }
     
@@ -177,13 +179,13 @@ LeaseClerk::HandleEvent(int code, void *data)
 	    LeaseRenewOp *op = new LeaseRenewOp(-1, chunkId, lease.leaseId,
 			"WRITE_LEASE");
 
-	    KFS_LOG_DEBUG("renewing lease for: chunk=%ld, lease=%ld",
+	    KFS_LOG_VA_DEBUG("renewing lease for: chunk=%ld, lease=%ld",
 	    chunkId, lease.leaseId);
 
 	    op->clnt = this;
 	    gMetaServerSM.SubmitOp(op);
 	} else {
-	    KFS_LOG_DEBUG("not renewing lease for: chunk=%ld, lease=%ld",
+	    KFS_LOG_VA_DEBUG("not renewing lease for: chunk=%ld, lease=%ld",
 	    chunkId, lease.leaseId);
 	    // else...need to cleanup expired leases
 	}

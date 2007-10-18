@@ -23,34 +23,33 @@
 
 #include "log.h"
 #include <stdlib.h>
+#include <log4cpp/RollingFileAppender.hh>
+#include <log4cpp/OstreamAppender.hh>
+#include <log4cpp/SimpleLayout.hh>
 
 using namespace KFS;
 
-pthread_mutex_t KFS::_kosmosfs_log_internal_stdio_lock = PTHREAD_MUTEX_INITIALIZER;
+log4cpp::Category* KFS::MsgLogger::logger = NULL;
 
-const KosmosFSLogLevel KFS::KFS_LOG_INSANE_LEVEL = 5;
-const KosmosFSLogLevel KFS::KFS_LOG_DEBUG_LEVEL = 4;
-const KosmosFSLogLevel KFS::KFS_LOG_INFO_LEVEL = 3;
-const KosmosFSLogLevel KFS::KFS_LOG_WARN_LEVEL = 2;
-const KosmosFSLogLevel KFS::KFS_LOG_ERROR_LEVEL = 1;
+void
+MsgLogger::Init(const char *filename, log4cpp::Priority::Value priority)
+{
+    log4cpp::Appender* appender;
+    log4cpp::Layout* layout = new log4cpp::SimpleLayout();
 
-class KosmosFSLog {
-public:
-    static KosmosFSLogLevel getloglevel() {
+    if (filename != NULL)
+        appender = new log4cpp::RollingFileAppender("default", std::string(filename));
+    else
+        appender = new log4cpp::OstreamAppender("default", &std::cout);
 
-#ifdef NDEBUG
-        // Omit KFS_LOG_DEBUG by default for NDEBUG code.
-        KosmosFSLogLevel level = KFS_LOG_INFO_LEVEL;
-#else
-        KosmosFSLogLevel level = KFS_LOG_DEBUG_LEVEL;
-#endif
+    appender->setLayout(layout);
 
-        char *env = getenv("KFS_LOG_LEVEL");
-        if (env == NULL) return level;
-        level = (KosmosFSLogLevel)strtol(env, NULL, 0);
-        if (level <= 0 || level > 5) return level;
-        return level;
-    }
-};
+    logger = &(log4cpp::Category::getInstance(std::string("kfs")));
+    logger->addAppender(appender);
+    logger->setAdditivity(false);
+    logger->setPriority(priority);
+}
 
-KosmosFSLogLevel KFS::kosmosfs_log_level = KosmosFSLog::getloglevel();
+void MsgLogger::SetLevel(log4cpp::Priority::Value priority) {
+    logger->setPriority(priority);
+}

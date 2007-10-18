@@ -97,7 +97,7 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 	if (pos->preferredServer == NULL) {
 	    numIO = OpenChunk(fd);
 	    if (numIO < 0) {
-		KFS_LOG_DEBUG("OpenChunk(%ld)", numIO);
+		// KFS_LOG_VA_DEBUG("OpenChunk(%ld)", numIO);
 		break;
 	    }
 	}
@@ -115,14 +115,14 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 
 	if (numIO < 0) {
 	    string errstr = ErrorCodeToStr(numIO);
-	    KFS_LOG_DEBUG("WriteToXXX:%s", errstr.c_str());
+	    // KFS_LOG_VA_DEBUG("WriteToXXX:%s", errstr.c_str());
 	    break;
 	}
 
 	nwrote += numIO;
 	numIO = Seek(fd, numIO, SEEK_CUR);
 	if (numIO < 0) {
-	    KFS_LOG_DEBUG("Seek(%ld)", numIO);
+	    // KFS_LOG_VA_DEBUG("Seek(%ld)", numIO);
 	    break;
 	}
     }
@@ -131,7 +131,7 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 	return numIO;
 
     if (nwrote != numBytes) {
-	KFS_LOG_DEBUG("----Write done: asked: %lu, got: %lu-----",
+	KFS_LOG_VA_DEBUG("----Write done: asked: %lu, got: %lu-----",
 			  numBytes, nwrote);
     }
     return nwrote;
@@ -180,7 +180,7 @@ KfsClient::WriteToBuffer(int fd, const char *buf, size_t numBytes)
     numIO = min(ChunkBuffer::BUF_SIZE - cb->length, numBytes);
     assert(numIO > 0);
 
-    // KFS_LOG_DEBUG("Buffer absorbs write...%d bytes", numIO);
+    // KFS_LOG_VA_DEBUG("Buffer absorbs write...%d bytes", numIO);
 
     // chunkBuf[0] corresponds to some offset in the chunk,
     // which is defined by chunkBufStart.
@@ -307,7 +307,7 @@ KfsClient::DoAllocation(int fd, bool force)
 	assert(chunk != NULL);
 	chunk->didAllocation = true;
 	if (force) {
-	    KFS_LOG_DEBUG("Forced allocation version: %ld",
+	    KFS_LOG_VA_DEBUG("Forced allocation version: %ld",
                              chunk->chunkVersion);
 	}
 	// XXX: This is incorrect...you may double-count for
@@ -339,7 +339,7 @@ KfsClient::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 
     for (uint8_t retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
 	if (retryCount) {
-	    KFS_LOG_DEBUG("Will retry write after %d secs",
+	    KFS_LOG_VA_DEBUG("Will retry write after %d secs",
 	                     RETRY_DELAY_SECS);
 	    Sleep(RETRY_DELAY_SECS);
 	    op.seq = nextSeq();
@@ -399,7 +399,7 @@ KfsClient::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t nu
     op.ReleaseContentBuf();
 
     if (numIO >= 0) {
-	KFS_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes",
+	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %ld bytes",
 	                 fd, numIO);
     }
     return numIO;
@@ -470,7 +470,7 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 
     for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
 	if (retryCount != 0) {
-	    KFS_LOG_DEBUG("Will retry write after %d secs",
+	    KFS_LOG_VA_DEBUG("Will retry write after %d secs",
 	                     RETRY_DELAY_SECS);
 	    Sleep(RETRY_DELAY_SECS);
 
@@ -497,7 +497,7 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 	    continue;
 	}
 	if (numIO < 0) {
-	    KFS_LOG_DEBUG("Write failed...chunk = %ld, version = %ld, offset = %ld, bytes = %ld",
+	    KFS_LOG_VA_DEBUG("Write failed...chunk = %ld, version = %ld, offset = %ld, bytes = %ld",
 	                     ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
 	                     ops[0]->numBytes);
 	    assert(numIO != -EBADF);
@@ -531,11 +531,11 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
     }
 
     if (numIO != (ssize_t) numBytes) {
-	KFS_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes, was asked %lu bytes",
+	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %ld bytes, was asked %lu bytes",
 	                 fd, numIO, numBytes);
     }
 
-    KFS_LOG_DEBUG("Wrote to server (fd = %d), %ld bytes",
+    KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %ld bytes",
                      fd, numIO);
 
     return numIO;
@@ -677,7 +677,7 @@ KfsClient::PushDataForWrite(int fd, WritePrepareOp *op)
     }
     assert(op->contentLength == op->numBytes);
 
-    KFS_LOG_DEBUG("%s", op->Show().c_str());
+    // KFS_LOG_VA_DEBUG("%s", op->Show().c_str());
 
     res = DoOpSend(op, targets);
     if (res < 0)
@@ -714,7 +714,7 @@ KfsClient::IssueWriteCommit(int fd, WritePrepareOp *op, WriteSyncOp **sop,
     }
 
     *sop = new WriteSyncOp(nextSeq(), chunk->chunkId, chunk->chunkVersion, w);
-    KFS_LOG_DEBUG("%s", (*sop)->Show().c_str());
+    // KFS_LOG_VA_DEBUG("%s", (*sop)->Show().c_str());
 
     res = DoOpSend(*sop, masterSock);
     if (res < 0) {

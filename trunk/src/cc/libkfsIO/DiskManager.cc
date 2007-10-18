@@ -97,7 +97,7 @@ DiskManager::Timeout()
             case 0:
             default:
                 if (aioStatus != 0) {
-                    KFS_LOG_DEBUG("AIO for event: %s, returned (errno value): %d", 
+                    KFS_LOG_VA_DEBUG("AIO for event: %s, returned (errno value): %d", 
                                      event->ToString(),
                                      aioStatus);
                 }
@@ -141,7 +141,7 @@ DiskManager::Read(DiskConnection *conn, int fd,
     struct aiocb *aio_cb = &event->aio_cb;
 
 /*
-    KFS_LOG_DEBUG("reading from fd=%d at offset=%d, numbytes = %d",
+    KFS_LOG_VA_DEBUG("reading from fd=%d at offset=%d, numbytes = %d",
                      fd, offset, numBytes);
 */
 
@@ -173,7 +173,7 @@ DiskManager::Write(DiskConnection *conn, int fd,
     struct aiocb *aio_cb = &event->aio_cb;
 
 /*
-    KFS_LOG_DEBUG("writing at fd=%d at offset=%d, numbytes = %d",
+    KFS_LOG_VA_DEBUG("writing at fd=%d at offset=%d, numbytes = %d",
                      fd, offset, numBytes);
 */
 
@@ -207,7 +207,7 @@ DiskManager::Sync(DiskConnection *conn, int fd,
     DiskEventPtr event(new DiskEvent_t(conn->shared_from_this(), OP_SYNC));
     struct aiocb *aio_cb = &event->aio_cb;
 
-    KFS_LOG_DEBUG("syncing fd = %d", fd);
+    // KFS_LOG_VA_DEBUG("syncing fd = %d", fd);
 
     // schedule a datasync request
     aio_cb->aio_fildes = fd;

@@ -41,7 +41,7 @@ LeaseClerk::RegisterLease(kfsChunkId_t chunkId, int64_t leaseId)
     lease.renewTime = now + LEASE_RENEW_INTERVAL_SECS;
 
     mLeases[chunkId] = lease;
-    KFS_LOG_DEBUG("Registered lease: chunk=%ld, lease=%ld",
+    KFS_LOG_VA_DEBUG("Registered lease: chunk=%ld, lease=%ld",
                      chunkId, leaseId);
 }
 
@@ -52,7 +52,7 @@ LeaseClerk::UnRegisterLease(kfsChunkId_t chunkId)
     if (iter != mLeases.end()) {
         mLeases.erase(iter);
     }
-    KFS_LOG_DEBUG("Lease for chunk = %ld unregistered",
+    KFS_LOG_VA_DEBUG("Lease for chunk = %ld unregistered",
                      chunkId);
 
 }
@@ -111,7 +111,7 @@ LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
     time_t now = time(NULL);
     LeaseInfo_t lease = iter->second;
 
-    KFS_LOG_DEBUG("Lease for chunk = %ld renewed",
+    KFS_LOG_VA_DEBUG("Lease for chunk = %ld renewed",
                      chunkId);
 
     lease.expires = now + KFS::LEASE_INTERVAL_SECS;

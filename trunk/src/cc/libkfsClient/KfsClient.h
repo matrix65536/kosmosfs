@@ -518,6 +518,7 @@ private:
     int Lookup(kfsFileId_t parentFid, const char *name);
 
     int ClaimFileTableEntry(kfsFileId_t parentFid, const char *name);
+    int AllocFileTableEntry(kfsFileId_t parentFid, const char *name);
     void ReleaseFileTableEntry(int fte);
 
     /// Helper functions that interact with the leaseClerk to

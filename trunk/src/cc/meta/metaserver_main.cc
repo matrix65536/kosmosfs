@@ -62,6 +62,9 @@ main(int argc, char **argv)
                 cout << "Usage: " << argv[0] << " <properties file> " << endl;
                 exit(0);
         }
+
+	KFS::MsgLogger::Init(NULL);
+
         if (ReadMetaServerProperties(argv[1]) != 0) {
                 cout << "Bad properties file: " << argv[1] << " aborting..." << endl;
                 exit(-1);

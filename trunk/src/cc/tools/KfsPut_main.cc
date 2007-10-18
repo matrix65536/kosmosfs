@@ -52,6 +52,8 @@ main(int argc, char **argv)
     bool help = false;
     ssize_t numBytes;
 
+    KFS::MsgLogger::Init(NULL);
+
     while ((optchar = getopt(argc, argv, "hs:p:d:")) != -1) {
         switch (optchar) {
             case 'f':
@@ -67,7 +69,7 @@ main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                KFS_LOG_ERROR("Unrecognized flag %c", optchar);
+                KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
                 break;
         }
