@@ -10,6 +10,7 @@ set (lib_srcs
     KfsMv.cc
     KfsRm.cc
     KfsRmdir.cc
+    KfsPwd.cc
     utils.cc
 )
 

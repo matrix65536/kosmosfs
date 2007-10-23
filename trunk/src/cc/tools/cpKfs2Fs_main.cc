@@ -65,7 +65,6 @@ int RestoreFile2(string kfsfilename, string localfilename);
 int
 main(int argc, char **argv)
 {
-    DIR *dirp;
     string kfsPath = "";
     string localPath = "";
     string serverHost = "";
@@ -124,7 +123,6 @@ main(int argc, char **argv)
     }
 
     RestoreDir(kfsPath, localPath);
-    closedir(dirp);
 }
 
 int

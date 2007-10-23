@@ -40,7 +40,9 @@ KFS has been tested on Linux machines running FC5 on 64-bit architectures.
 To compile and run KFS, you need to have the following software
 packages installed on your machine:
  - Boost (preferably, version 1.34 or higher)
- - cmake (preferable, version 2.4.7 or higher)
+ - cmake (preferably, version 2.4.7 or higher)
+ - log4cpp (preferably, version 0.3.5rc1 or higher)
+ - log4cpp-devel (preferably, version 0.3.5rc1-1 or higher)
 
 This document assumes that you have downloaded the source to
 directory: ~/code/kfs.  We assume that you want to build the source in

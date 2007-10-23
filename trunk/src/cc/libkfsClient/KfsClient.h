@@ -91,6 +91,11 @@ public:
     ///
     int Cd(const char *pathname);
 
+    /// Get cwd
+    /// @retval a string that describes the current working dir.
+    ///
+    std::string GetCwd();
+
     ///
     /// Make a directory hierarcy in KFS.  If the parent dirs are not
     /// present, they are also made.

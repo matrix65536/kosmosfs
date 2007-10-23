@@ -111,7 +111,7 @@ def setupChunk(section, config):
     fh.close()
     cmd = "tar -zcf kfspkg.tgz bin/chunkserver bin/ChunkServer.prp scripts/*"
     os.system(cmd)
-    installArgs = "-d %s -c %s" % (rundir, chunkDir)
+    installArgs = "-d %s -c \"%s\" " % (rundir, chunkDir)
     return installArgs
 
 def usage():
@@ -194,7 +194,7 @@ def doUpgrade(config, bindir):
                 chunkDir = config.get(s, 'chunkdir')
             else:
                 chunkDir = "%s/bin/kfschunk" % (rundir)
-            upgradeArgs = "-c %s" % chunkDir
+            upgradeArgs = "-c \"%s\"" % chunkDir
             server = "chunkserver"
             
         node = config.get(s, 'node')
@@ -223,7 +223,7 @@ def doUninstall(config):
                 chunkDir = config.get(s, 'chunkdir')
             else:
                 chunkDir = "%s/bin/kfschunk" % (rundir)
-            otherArgs = "-c %s" % (chunkDir)
+            otherArgs = "-c \"%s\"" % (chunkDir)
         
         cmd = "ssh %s 'cd %s; sh scripts/kfsinstall.sh -U -d %s %s' " % \
               (node, rundir, rundir, otherArgs)

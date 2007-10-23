@@ -74,7 +74,7 @@ public:
     ~ChunkManager();
     
     /// Init function to configure the chunk manager object.
-    void Init(const char *chunkBaseDir, size_t totalSpace);
+    void Init(const std::vector<std::string> &chunkDirs, size_t totalSpace);
 
     /// Allocate a file to hold a chunk on disk.  The filename is the
     /// chunk id itself.
@@ -262,8 +262,8 @@ private:
     /// how much is used up by chunks
     size_t	mUsedSpace;
     
-    /// base directory for storing the chunks
-    const char	*mChunkBaseDir;
+    /// directories for storing the chunks
+    std::vector<std::string> mChunkDirs;
 
     /// See the comments in KfsOps.cc near WritePreapreOp related to write handling
     int64_t mWriteId;
@@ -327,6 +327,11 @@ private:
     /// metaserver will re-replicate this chunk and for now, won't
     /// send us traffic for this chunk.
     void NotifyMetaCorruptedChunk(kfsChunkId_t chunkId);
+
+    /// Get all the chunk filenames into a single array.
+    /// @retval on success, # of entries in the array;
+    ///         on failures, -1
+    int GetChunkDirsEntries(struct dirent ***namelist);
 };
 
 /// A Timeout interface object for taking checkpoints on the
@@ -348,6 +353,10 @@ private:
 };
 
 extern ChunkManager gChunkManager;
+
+/// Given a partition that holds chunks, get the path to the directory
+/// that is used to keep the stale chunks (from this partition)
+std::string GetStaleChunkPath(const std::string &partition);
 
 }
 

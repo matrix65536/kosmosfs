@@ -188,6 +188,15 @@ KfsClient::Cd(const char *pathname)
     return 0;
 }
 
+///
+/// To allow tools to get at "pwd"
+///
+string
+KfsClient::GetCwd()
+{
+    return mCwd;
+}
+
 
 ///
 /// Make a directory hierarchy in KFS.

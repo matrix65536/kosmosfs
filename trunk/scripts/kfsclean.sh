@@ -20,9 +20,11 @@
 #
 #
 # An endless loop that cleans up excess KFS checkpoints and logs
-# and then sleeps
+# and then sleeps; also, for metaserver, if a backup location is
+# specified, then the checkpoint files are backed up.
 #
 # usage: ./kfsclean.sh [-m min] [-M max] [-t time] [-s sleep] [-d dir]
+# {[-r remote] [-p remote_path]}
 
 me=$0
 CLEANER="scripts/kfsprune.py"
@@ -35,7 +37,7 @@ keep_time=3600
 kfs_dir="."
 
 # process any command-line arguments
-TEMP=`getopt -o m:M:t:s:d:h -l min:,max:,time:,sleep:,dir:,help \
+TEMP=`getopt -o m:M:t:s:d:r:p:h -l min:,max:,time:,sleep:,dir:,remote:,remote_path:,help \
 		-n kfsclean.sh -- "$@"`
 eval set -- "$TEMP"
 
@@ -47,7 +49,9 @@ do
 	-t|--time) keep_time=$2; shift 2 ;;
 	-s|--sleep) sleep_time=$2; shift 2 ;;
 	-d|--dir) kfs_dir=$2; shift 2 ;;
-	-h|--help) echo "usage: $0 [-m min] [-M max] [-t time] [-s sleep] [-d dir]"; exit ;;
+	-r|--remote) remote=$2; shift 2 ;;
+	-p|--remote_path) remote_path=$2; shift 2 ;;
+	-h|--help) echo "usage: $0 [-m min] [-M max] [-t time] [-s sleep] [-d dir] {[-r remote] [-p remote_path]}"; exit ;;
 	--) shift; break ;;
 	esac
 done
@@ -58,12 +62,15 @@ if [ -f $kfs_dir/bin/metaserver ];
     logdir="$kfs_dir/bin/kfslog"
     cpfile="chkpt"
     logfile="log"
+#    metabkup="$kfs_dir/scripts/metabkup.sh"
+    metabkup=""
 elif [ -f $kfs_dir/bin/chunkserver ];
     then
     cpdir="$kfs_dir/bin/kfslog"
     logdir="$kfs_dir/bin/kfslog"
     cpfile="ckpt"
     logfile="logs"
+    metabkup=""
 else
     echo "No server exists...exiting"
     exit
@@ -75,5 +82,10 @@ do
 	echo " `date` : Cleaning cp/logs" 
 	$CLEANER -m $min_save -M $max_save -t $keep_time $cpdir $cpfile
 	$CLEANER -m $min_save -M $max_save -t $keep_time $logdir $logfile
+	if [ -e $metabkup ];
+	    then
+	    echo " `date` : Backing up metaserver checkpoints"
+	    $metabkup -d $cpdir -r $remote -p $remote_path
+	fi
 	sleep $sleep_time
 done

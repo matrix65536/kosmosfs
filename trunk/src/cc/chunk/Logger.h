@@ -54,7 +54,7 @@ public:
     Logger();
     ~Logger();
 
-    void Init(const char *logDir);
+    void Init(const std::string &logDir);
 
     /// Set up for logging
     void Start();
@@ -82,7 +82,7 @@ private:
     static const int KFS_VERSION = 1;
 
     /// The path to the directory for writing out logs
-    const char *mLogDir;
+    std::string mLogDir;
     /// The name of the log file
     std::string mLogFilename;
     /// counter that tracks the generation # of the log file

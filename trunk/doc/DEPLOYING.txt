@@ -89,15 +89,17 @@ For the chunkservers, there is are two additional variables that are defined:
        space: 30 G 
   defines that the space exported by the chunkserver is 30 GB.
  
-  * chunkdir: This variable is optional.  When specified, this defines
-  the directory the chunkserver should use to store the chunks.  
+  * chunkdir: This variable is optional.  It can be used to provide a
+  list of directories that the chunkserver should use to store the
+  chunks.  The directory list consists of a set of paths that are
+  separated by a space character.
 
 By default, 
  - meta server's checkpoint/log files are stored in
  ${rundir}/bin/kfscp and ${rundir}/bin/kfslog
  - chunkserver's checkpoint/log files are stored in
  ${rundir}/bin/logs
- - chunkserver's chunks are stored in ${rundir}/bin/chunks.  This
+ - chunkserver's chunks are stored in ${rundir}/bin/kfschunk.  This
  value is overridden when "chunkdir" variable is defined for a chunkserver.
 
 NOTE: It is not advisable to change the default location for either
