@@ -29,6 +29,9 @@ extern "C" {
 #include <sys/types.h>
 }
 
+#include <string>
+#include <vector>
+
 #include "common/properties.h"
 #include "libkfsIO/DiskManager.h"
 #include "libkfsIO/NetManager.h"
@@ -39,6 +42,10 @@ extern "C" {
 
 using namespace KFS;
 using namespace KFS::libkfsio;
+using std::string;
+using std::vector;
+using std::cout;
+using std::endl;
 
 // all the globals we need...
 ChunkServer KFS::gChunkServer;
@@ -47,7 +54,9 @@ Logger KFS::gLogger;
 MetaServerSM KFS::gMetaServerSM;
 ClientManager KFS::gClientManager;
 
-const char *gChunksDir, *gLogDir;
+string gLogDir;
+vector<string> gChunkDirs;
+
 ServerLocation gMetaServerLoc;
 size_t gTotalSpace;			// max. storage space to use
 int gChunkServerClientPort;	// Port at which kfs clients connect to us
@@ -58,18 +67,20 @@ int gChunkServerCleanupOnStart;
 
 int ReadChunkServerProperties(char *fileName);
 
-using std::cout;
-using std::endl;
 
 int
 main(int argc, char **argv)
 {
     if (argc < 2) {
-        cout << "Usage: " << argv[0] << " <properties file>\n";
+        cout << "Usage: " << argv[0] << " <properties file> {<msg log file>}" << endl;
         exit(0);
     }
 
-    KFS::MsgLogger::Init(NULL);
+    if (argc > 2) {
+        KFS::MsgLogger::Init(argv[2]);
+    } else {
+        KFS::MsgLogger::Init(NULL);
+    }
 
     if (ReadChunkServerProperties(argv[1]) != 0) {
         cout << "Bad properties file: " << argv[1] << " aborting...\n";
@@ -84,7 +95,7 @@ main(int argc, char **argv)
     libkfsio::SetIOBufferSize(1 << 24);
     
     gChunkServer.Init();
-    gChunkManager.Init(gChunksDir, gTotalSpace);
+    gChunkManager.Init(gChunkDirs, gTotalSpace);
     gLogger.Init(gLogDir);
     gMetaServerSM.Init(gMetaServerLoc);
 
@@ -123,6 +134,9 @@ make_if_needed(const char *dirname)
 int
 ReadChunkServerProperties(char *fileName)
 {
+    string::size_type curr = 0, next;
+    string chunkDirPaths;
+
     if (gProp.loadProperties(fileName, '=', true) != 0)
         return -1;
 
@@ -141,15 +155,40 @@ ReadChunkServerProperties(char *fileName)
     }
     cout << "Using chunk server client port: " << gChunkServerClientPort << '\n';
 
-    gChunksDir = gProp.getValue("chunkServer.chunkDir", "chunks");
-    if (!make_if_needed(gChunksDir)) {
-	cout << "Aborting...failed to create " << gChunksDir << '\n';
-	return -1;
+    // Paths are space separated directories for storing chunks
+    chunkDirPaths = gProp.getValue("chunkServer.chunkDir", "chunks");
+
+    while (curr < chunkDirPaths.size()) {
+        string component;
+
+        next = chunkDirPaths.find(' ', curr);
+        if (next == string::npos)
+            next = chunkDirPaths.size();
+
+        component.assign(chunkDirPaths, curr, next - curr);
+
+        curr = next + 1;
+
+        if ((component == " ") || (component == "")) {
+            continue;
+        }
+
+        if (!make_if_needed(component.c_str())) {
+            cout << "Aborting...failed to create " << component << '\n';
+            return -1;
+        }
+
+        // also, make the directory for holding stale chunks in each "partition"
+        string staleChunkDir = GetStaleChunkPath(component);
+        make_if_needed(staleChunkDir.c_str());
+
+        cout << "Using chunk dir = " << component << '\n';
+
+        gChunkDirs.push_back(component);
     }
-    cout << "Using chunk dir = " << gChunksDir << '\n';
 
     gLogDir = gProp.getValue("chunkServer.logDir", "logs");
-    if (!make_if_needed(gLogDir)) {
+    if (!make_if_needed(gLogDir.c_str())) {
 	cout << "Aborting...failed to create " << gLogDir << '\n';
 	return -1;
     }

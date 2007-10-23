@@ -51,7 +51,6 @@ installServer()
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	-c|--chunk)
-	    mkdir -p $chunkDir/lost+found
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	*)

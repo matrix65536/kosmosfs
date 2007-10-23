@@ -42,7 +42,8 @@ startServer()
 	exit -1
     fi
     echo "Starting $server..."
-    bin/$server $config > $SERVER_LOG_FILE < /dev/null 2>&1 &
+#   bin/$server $config > $SERVER_LOG_FILE < /dev/null 2>&1 &
+    bin/$server $config $SERVER_LOG_FILE > /dev/null 2>&1 &
     echo $! > $SERVER_PID_FILE
 
     if [ ! -e $CLEANER_PID_FILE ];

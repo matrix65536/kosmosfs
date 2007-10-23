@@ -49,20 +49,21 @@ typedef map <string, cmdHandler>::iterator CmdHandlersIter;
 CmdHandlers handlers;
 
 static void setupHandlers();
-static void processCmds();
+static void processCmds(bool quietMode);
 
 int
 main(int argc, char **argv)
 {
     string kfsdirname = "";
     string serverHost = "";
-    int port = -1, res;
+    int port = -1;
     bool help = false;
+    bool quietMode = false;
     char optchar;
 
     KFS::MsgLogger::Init(NULL);
 
-    while ((optchar = getopt(argc, argv, "hs:p:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hqs:p:")) != -1) {
         switch (optchar) {
             case 's':
                 serverHost = optarg;
@@ -73,6 +74,9 @@ main(int argc, char **argv)
             case 'h':
                 help = true;
                 break;
+            case 'q':
+                quietMode = true;
+                break;
             default:
                 KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
@@ -81,7 +85,7 @@ main(int argc, char **argv)
     }
 
     if (help || (serverHost == "") || (port < 0)) {
-        cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> " << endl;
+        cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> {-q}" << endl;
         exit(0);
     }
 
@@ -94,7 +98,7 @@ main(int argc, char **argv)
     
     setupHandlers();
 
-    processCmds();
+    processCmds(quietMode);
 
     return 0;
 }
@@ -102,13 +106,14 @@ main(int argc, char **argv)
 void printCmds()
 {
     cout << "cd" << endl;
+    cout << "changeReplication" << endl;
     cout << "cp" << endl;
     cout << "ls" << endl;
     cout << "mkdir" << endl;
     cout << "mv" << endl;
     cout << "rm" << endl;
     cout << "rmdir" << endl;
-    cout << "changeReplication" << endl;
+    cout << "pwd" << endl;
 }
 
 void handleHelp(const vector<string> &args)
@@ -127,17 +132,25 @@ void setupHandlers()
     handlers["rmdir"] = handleRmdir;
     // handlers["ping"] = handlePing;
     handlers["rm"] = handleRm;
+    handlers["pwd"] = handlePwd;
     handlers["help"] = handleHelp;
 }
 
-void processCmds()
+void processCmds(bool quietMode)
 {
     char buf[256];
     string cmd;
 
     while (1) {
-        cout << "KfsShell> ";
+        if (!quietMode) {
+            // Turn off prompt printing when quiet mode is enabled;
+            // this allows scripting with KfsShell
+            cout << "KfsShell> ";
+        }
         cin.getline(buf, 256);
+
+        if (cin.eof())
+            break;
 
         string s = buf, cmd;
         // buf contains info of the form: <cmd>{<args>}

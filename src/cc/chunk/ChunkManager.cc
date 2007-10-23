@@ -75,7 +75,6 @@ int OPEN_FDS_LOW_WATERMARK = 0;
 ChunkManager::ChunkManager()
 {
     mTotalSpace = mUsedSpace = 0;
-    mChunkBaseDir = NULL;
     mChunkManagerTimeoutImpl = new ChunkManagerTimeoutImpl(this);
     mIsChunkTableDirty = false;
 }
@@ -84,8 +83,6 @@ ChunkManager::~ChunkManager()
 {
     ChunkInfoHandle_t *cih;
 
-    mChunkBaseDir = NULL;
-    
     for (CMI iter = mChunkTable.begin(); iter != mChunkTable.end(); ++iter) {
         cih = iter->second;
         delete cih;
@@ -96,10 +93,10 @@ ChunkManager::~ChunkManager()
 }
 
 void 
-ChunkManager::Init(const char *chunkBaseDir, size_t totalSpace)
+ChunkManager::Init(const vector<string> &chunkDirs, size_t totalSpace)
 {
     mTotalSpace = totalSpace;
-    mChunkBaseDir = chunkBaseDir;
+    mChunkDirs = chunkDirs;
 }
 
 int
@@ -286,20 +283,21 @@ ChunkManager::Start()
 }
 
 string
-ChunkManager::MakeChunkPathname(kfsChunkId_t chunkId)
+ChunkManager::MakeChunkPathname(const char *chunkId)
 {
-    ostringstream os;
-
-    os << mChunkBaseDir << '/' << chunkId;
-    return os.str();
+    kfsChunkId_t c = atoll(chunkId);
+    return MakeChunkPathname(c);
 }
 
 string
-ChunkManager::MakeChunkPathname(const char *chunkId)
+ChunkManager::MakeChunkPathname(kfsChunkId_t chunkId)
 {
-    ostringstream os;
+    assert(mChunkDirs.size() > 0);
 
-    os << mChunkBaseDir << '/' << chunkId;
+    ostringstream os;
+    uint32_t chunkSubdir = chunkId % mChunkDirs.size();
+
+    os << mChunkDirs[chunkSubdir] << '/' << chunkId;
     return os.str();
 }
 
@@ -307,8 +305,11 @@ string
 ChunkManager::MakeStaleChunkPathname(kfsChunkId_t chunkId)
 {
     ostringstream os;
+    uint32_t chunkSubdir = chunkId % mChunkDirs.size();
+    string staleChunkDir = GetStaleChunkPath(mChunkDirs[chunkSubdir]);
 
-    os << mChunkBaseDir << "/lost+found/" << chunkId;
+    os << staleChunkDir << '/' << chunkId;
+
     return os.str();
 }
 
@@ -473,7 +474,7 @@ ChunkManager::WriteChunk(WriteOp *op)
 	return -ENOSPC;
 
     if ((OffsetToChecksumBlockStart(op->offset) == op->offset) &&
-        (op->numBytesIO >= CHECKSUM_BLOCKSIZE)) {
+        ((size_t) op->numBytesIO >= (size_t) CHECKSUM_BLOCKSIZE)) {
         assert(op->numBytesIO % CHECKSUM_BLOCKSIZE == 0);
         if (op->numBytesIO % CHECKSUM_BLOCKSIZE != 0) {
             return -EINVAL;
@@ -483,7 +484,7 @@ ChunkManager::WriteChunk(WriteOp *op)
         op->checksums = ComputeChecksums(op->dataBuf, op->numBytesIO);
     } else {
 
-        assert(op->numBytesIO < CHECKSUM_BLOCKSIZE);
+        assert((size_t) op->numBytesIO < (size_t) CHECKSUM_BLOCKSIZE);
 
         // The checksum block we are after is beyond the current
         // end-of-chunk.  So, treat that as a 0-block and splice in.
@@ -800,6 +801,52 @@ ChunkManager::Checkpoint()
 }
 
 //
+// Get all the chunk directory entries from all the places we can
+// store the chunks into a single array.
+//
+int
+ChunkManager::GetChunkDirsEntries(struct dirent ***namelist)
+{
+    struct dirent **entries;
+    vector<struct dirent **> dirEntries;
+    vector<int> dirEntriesCount;
+    int res, numChunkFiles = 0;
+    uint32_t i;
+
+    *namelist = NULL;
+    for (i = 0; i < mChunkDirs.size(); i++) {
+        res = scandir(mChunkDirs[i].c_str(), &entries, 0, alphasort);
+        if (res < 0) {
+            KFS_LOG_VA_INFO("Unable to open %s", mChunkDirs[i].c_str());
+            for (i = 0; i < dirEntries.size(); i++) {
+                entries = dirEntries[i];
+                for (int j = 0; j < dirEntriesCount[i]; j++)
+                    free(entries[j]);
+                free(entries);
+            }
+            dirEntries.clear();
+            return -1;
+        }
+        dirEntries.push_back(entries);
+        dirEntriesCount.push_back(res);
+        numChunkFiles += res;
+    }
+    
+    // Get all the directory entries into one giganto array
+    *namelist = (struct dirent **) malloc(sizeof(struct dirent **) * numChunkFiles);
+
+    numChunkFiles = 0;
+    for (i = 0; i < dirEntries.size(); i++) {
+        int count = dirEntriesCount[i];
+        entries = dirEntries[i];
+
+        memcpy((*namelist) + numChunkFiles, entries, count * sizeof(struct dirent **));
+        numChunkFiles += count;
+    }
+    return numChunkFiles;
+}
+
+//
 // Restart from a checkpoint. Validate that the files in the
 // checkpoint exist in the chunks directory.
 //
@@ -817,12 +864,11 @@ ChunkManager::Restart()
     vector<kfsChunkId_t> orphans;
     vector<kfsChunkId_t>::size_type j;
 
-    // sort all the chunk names alphabetically
-    numChunkFiles = scandir(mChunkBaseDir, &namelist, 0, alphasort);
-    if (numChunkFiles < 0) {
-        KFS_LOG_VA_INFO("Unable to open %s", mChunkBaseDir);
+    // sort all the chunk names alphabetically in each of the
+    // directories
+    numChunkFiles = GetChunkDirsEntries(&namelist);
+    if (numChunkFiles < 0)
         return;
-    }
 
     gLogger.Restore();
 
@@ -1056,8 +1102,10 @@ ChunkManager::GetChunkInfoHandle(kfsChunkId_t chunkId, ChunkInfoHandle_t **cih)
 {
     CMI iter = mChunkTable.find(chunkId);
 
-    if (iter == mChunkTable.end())
+    if (iter == mChunkTable.end()) {
+        *cih = NULL;
         return -EBADF;
+    }
 
     *cih = iter->second;
     return 0;
@@ -1238,4 +1286,10 @@ ChunkManager::CleanupInactiveFds()
     lastCleanupTime = time(0);
 
     for_each(mChunkTable.begin(), mChunkTable.end(), InactiveFdCleaner(now));
+}
+
+string
+KFS::GetStaleChunkPath(const string &partition)
+{
+    return partition + "/lost+found/";
 }

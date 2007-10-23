@@ -57,6 +57,7 @@ namespace KFS
         void handleRmdir(const std::vector<std::string> &args);
         void handlePing(const std::vector<std::string> &args);
         void handleRm(const std::vector<std::string> &args);    
+        void handlePwd(const std::vector<std::string> &args);
 
         // utility functions
         bool doMkdirs(const char *path);

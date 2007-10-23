@@ -70,7 +70,7 @@ file_exists(string name)
 
 Logger::Logger()
 {
-    mLogDir = NULL;
+    mLogDir = "";
     mLogFilename = "";
     mLoggerTimeoutImpl = new LoggerTimeoutImpl(this);
     mLogGenNum = 1;
@@ -84,7 +84,7 @@ Logger::~Logger()
 }
 
 void
-Logger::Init(const char *logDir)
+Logger::Init(const string &logDir)
 {
     mLogDir = logDir;
     mLogFilename = mLogDir;
