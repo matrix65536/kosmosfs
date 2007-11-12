@@ -37,7 +37,7 @@ keep_time=3600
 kfs_dir="."
 
 # process any command-line arguments
-TEMP=`getopt -o m:M:t:s:d:r:p:h -l min:,max:,time:,sleep:,dir:,remote:,remote_path:,help \
+TEMP=`getopt -o m:M:t:s:d:b:h -l min:,max:,time:,sleep:,dir:,backup:,help \
 		-n kfsclean.sh -- "$@"`
 eval set -- "$TEMP"
 
@@ -49,9 +49,8 @@ do
 	-t|--time) keep_time=$2; shift 2 ;;
 	-s|--sleep) sleep_time=$2; shift 2 ;;
 	-d|--dir) kfs_dir=$2; shift 2 ;;
-	-r|--remote) remote=$2; shift 2 ;;
-	-p|--remote_path) remote_path=$2; shift 2 ;;
-	-h|--help) echo "usage: $0 [-m min] [-M max] [-t time] [-s sleep] [-d dir] {[-r remote] [-p remote_path]}"; exit ;;
+	-b|--backup) backup_path=$2; shift 2 ;;
+	-h|--help) echo "usage: $0 [-m min] [-M max] [-t time] [-s sleep] [-d dir] {[-b backup]}"; exit ;;
 	--) shift; break ;;
 	esac
 done
@@ -62,15 +61,15 @@ if [ -f $kfs_dir/bin/metaserver ];
     logdir="$kfs_dir/bin/kfslog"
     cpfile="chkpt"
     logfile="log"
-#    metabkup="$kfs_dir/scripts/metabkup.sh"
-    metabkup=""
+    metabkup="$kfs_dir/scripts/metabkup.sh"
+    chmod a+x $metabkup
 elif [ -f $kfs_dir/bin/chunkserver ];
     then
     cpdir="$kfs_dir/bin/kfslog"
     logdir="$kfs_dir/bin/kfslog"
     cpfile="ckpt"
     logfile="logs"
-    metabkup=""
+    metabkup=
 else
     echo "No server exists...exiting"
     exit
@@ -84,8 +83,8 @@ do
 	$CLEANER -m $min_save -M $max_save -t $keep_time $logdir $logfile
 	if [ -e $metabkup ];
 	    then
-	    echo " `date` : Backing up metaserver checkpoints"
-	    $metabkup -d $cpdir -r $remote -p $remote_path
+	    echo " `date` : Backing up metaserver checkpoints to: $backup_path"
+	    $metabkup -d $cpdir -b $backup_path
 	fi
 	sleep $sleep_time
 done

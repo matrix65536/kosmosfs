@@ -63,8 +63,15 @@ installServer()
 
 upgradeServer()
 {
+    if [ ! -d $serverDir ]; 
+	then
+	echo "Can't upgrade: No $serverDir"
+	exit -1
+    fi
+
     sh $serverDir/scripts/kfsrun.sh --stop $serverType 
-    cp /tmp/$serverBinary $serverDir/bin
+
+    cd $serverDir; tar -zxf /tmp/kfspkg.tgz 
     RETVAL=0
     return $RETVAL
 }

@@ -30,6 +30,7 @@ TABLE OF CONTENTS
  * TOOLS SOURCE/BINARIES
  * LOADING/UNLOADING DATA
  * FILE SYSTEM TOOLS
+ * SCRIPTING SUPPORT
 
 INTRODUCTION
 ============
@@ -75,5 +76,12 @@ FILE SYSTEM TOOLS
 To manipulate the KFS directory tree, KfsShell tool is provided.
 This tool provides a basic set of filesystem commands such as
  - mkdir, rmdir, rm, cd, cp, mv, ls
+
+SCRIPTING SUPPORT
+=================
+
+To manipulate the KFS directory tree from a script, commands can be
+"piped" to the KfsShell tool.  For instance, to create a directory:
+  mkdir foo | KfsShell -q -m <metaserver host> -p <metaserver port>
 
 
