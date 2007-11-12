@@ -33,6 +33,7 @@ CONTENTS:
  * MONITORING KFS SERVERS
  * INCREMENTAL SCALING: ADDING NEW SERVERS
  * WHERE DOES THE SERVER STORE THINGS
+ * UPGRADE
 
 DEPLOYING KFS
 =============
@@ -78,6 +79,16 @@ variables:
     - When servers are run on different nodes, by definition, the
       values are unique.  Consequently, all servers can be configured
       to listen on the same port # on the node.
+
+For the metaserver, an additional variable is defined:
+ * backup_path: This can be used to specify the (remote) location to
+ which the metaserver checkpoint files should be backed up to.
+ Periodically, via rsync, the metaserver checkpoint files are backed
+ to the remote location.  For this backup to work, the "backup_path"
+ should exist and for remote locations, you should be able to ssh
+ without password---from the machine on which the metaserver
+ is running to the remote node to which the checkpoint files have to
+ be backed up to.
 
 For the chunkservers, there is are two additional variables that are defined:
   * space:  This variable specifies the amount of storage
@@ -265,3 +276,21 @@ where it keeps stale/corrupted chunks:
    lost+found directory.  The metaserver is notified of the corrupted
    chunk.  If the chunk is replicated, the metaserver will trigger
    re-replication to recover the lost chunk.
+
+UPGRADE
+=======
+
+To upgrade from KFS-v-0.1 to KFS-v-0.1.1, run the setup script with
+the upgrade option enabled.  For instance, assuming you had installed
+the KFS binaries based on the steps outlined in "INSTALLING KFS
+BINARIES" section, type the following:
+
+1. cd ~/code/kfs/scripts
+2. python kfssetup.py -f machines.cfg -b ../build/bin -u
+
+The upgrade script does the following steps:
+
+1. It stops existing chunkserver/metaserver processes on the
+   appropriate nodes.
+2. It pushes new binaries to each node as well upgrades the scripts on
+   each node.  This is similar to what was done for install.

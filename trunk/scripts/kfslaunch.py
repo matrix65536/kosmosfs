@@ -69,6 +69,9 @@ if __name__ == '__main__':
         rundir = config.get(s, 'rundir')
         if (s == 'metaserver'):
             runargs = "-m -f bin/MetaServer.prp"
+            if config.has_option(s, 'backup_path'):
+                bkup_path = config.get(s, 'backup_path')
+                runargs = runargs + " -b %s" % (bkup_path)
         else:
             runargs = "-c -f bin/ChunkServer.prp"
             

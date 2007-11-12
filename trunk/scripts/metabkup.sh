@@ -23,18 +23,17 @@
 # 
 
 # process any command-line arguments
-TEMP=`getopt -o d:r:p:R:h -l dir:,remote:,path:,recover:help -n metabkup.sh -- "$@"`
+TEMP=`getopt -o d:b:R:h -l dir:,backup:,recover:help -n metabkup.sh -- "$@"`
 eval set -- "$TEMP"
 
-$recover=0
+recover=0
 while true
 do
 	case "$1" in
 	-d|--dir) cpdir=$2; shift 2;;
-	-r|--remote) remote=$2; shift 2;;
-	-p|--path) path=$2; shift 2;;
+	-b|--backup) backup_dir=$2; shift 2;;
 	-R|--recover) recover=1; shift;;
-	-h|--help) echo "usage: $0 [-d cpdir] [-r remote] [-p path] {-recover}"; exit ;;
+	-h|--help) echo "usage: $0 [-d cpdir] [-b backup] {-recover}"; exit ;;
 	--) shift; break ;;
 	esac
 done
@@ -45,10 +44,10 @@ if [ ! -d $cpdir ];
     exit -1
 fi
 
-if [ $recover -ne 0];
+if [ $recover -eq 0 ];
     then
-    rsync -avz --delete $cpdir $remote:$path
+    rsync -avz --delete $cpdir $backup_dir
 else
     # Restore the checkpoint files from remote node
-    rsync -avz $remote:$path $cpdir
+    rsync -avz $backup_dir $cpdir
 fi    

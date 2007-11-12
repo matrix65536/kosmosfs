@@ -147,7 +147,7 @@ def cleanup():
     cmd = "rm -rf ./bin"
     os.system(cmd)
 
-def doInstall(config, bindir):
+def doInstall(config, bindir, upgrade):
     if not config.has_section('metaserver'):
         raise config.NoSectionError, "No metaserver section"
 
@@ -164,48 +164,18 @@ def doInstall(config, bindir):
         else:
             installArgs = setupChunk(s, config)
         node = config.get(s, 'node')
-        cmd = "scp -q kfspkg.tgz kfsinstall.sh %s:/tmp; ssh %s 'sh /tmp/kfsinstall.sh -i %s ' " % \
-              (node, node, installArgs)
+        if upgrade == 1:
+            mode = "-u"
+        else:
+            mode = "-i"
+        cmd = "scp -q kfspkg.tgz kfsinstall.sh %s:/tmp; ssh %s 'sh /tmp/kfsinstall.sh %s %s ' " % \
+              (node, node, mode, installArgs)
         print "Install cmd: %s\n" % cmd
         os.system(cmd)
         os.remove('kfspkg.tgz')
         # Cleanup remote
         cmd = "ssh %s 'rm -f /tmp/kfsinstall.sh /tmp/kfspkg.tgz' " % (node)
         os.system(cmd)
-        
-    cleanup()
-
-def doUpgrade(config, bindir):
-    if not config.has_section('metaserver'):
-        raise config.NoSectionError, "No metaserver section"
-
-    if not os.path.exists(bindir):
-        print "%s : directory doesn't exist\n" % bindir
-        sys.exit(-1)
-
-    sections = config.sections()
-    for s in sections:
-        rundir = config.get(s, 'rundir')
-        if (s == 'metaserver'):
-            server = "metaserver"
-            upgradeArgs = "-m"
-        else:
-            if config.has_option(s, 'chunkdir'):
-                chunkDir = config.get(s, 'chunkdir')
-            else:
-                chunkDir = "%s/bin/kfschunk" % (rundir)
-            upgradeArgs = "-c \"%s\"" % chunkDir
-            server = "chunkserver"
-            
-        node = config.get(s, 'node')
-        cmd = "scp -q %s/%s %s:/tmp; ssh %s 'cd %s; sh scripts/kfsinstall.sh -d %s -u %s' " \
-              % (bindir, server, node, node, rundir, rundir, upgradeArgs)
-        # print "Upgrade cmd: %s\n" % cmd
-        os.system(cmd)
-        # Cleanup remote
-        cmd = "ssh %s 'rm -f /tmp/%s' " % (node, server)
-        os.system(cmd)
-        print "Upgrade done on %s" % (node)
         
     cleanup()
 
@@ -259,8 +229,6 @@ if __name__ == '__main__':
 
     if uninstall == 1:
         doUninstall(config)
-    elif upgrade == 1:
-        doUpgrade(config, bindir)
     else:
-        doInstall(config, bindir)
+        doInstall(config, bindir, upgrade)
         

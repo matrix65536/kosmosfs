@@ -49,7 +49,15 @@ startServer()
     if [ ! -e $CLEANER_PID_FILE ];
 	then
 	echo "Starting cleaner..."
-	sh scripts/kfsclean.sh > $CLEANER_LOG_FILE < /dev/null 2>&1 &
+	if [ $backup_dir ];
+	    then
+	    # Once in 10 mins, clean/backup stuff
+	    cleaner_args="-b $backup_dir -s 600"
+	else
+	    cleaner_args=
+	fi
+	    
+	sh scripts/kfsclean.sh $cleaner_args > $CLEANER_LOG_FILE < /dev/null 2>&1 &
 	echo $! > $CLEANER_PID_FILE
     else
 	echo "cleaner is already running..."
@@ -92,9 +100,11 @@ stopServer()
 }
 
 # Process any command line arguments
-TEMP=`getopt -o f:sSmch -l file:,start,stop,meta,chunk,help \
+TEMP=`getopt -o f:b:sSmch -l file:,backup:,start,stop,meta,chunk,help \
 	-n kfsrun.sh -- "$@"`
 eval set -- "$TEMP"
+
+backup_dir=
 
 while true
 do
@@ -104,7 +114,8 @@ do
 	-m|--meta) server="metaserver";;
 	-c|--chunk) server="chunkserver";;
 	-f|--file) config=$2; shift;;
-	-h|--help) echo "usage: $0 [--start | --stop] [--meta | --chunk] [--file <config>"; exit;;
+	-b|--backup) backup_dir=$2; shift;;
+	-h|--help) echo "usage: $0 [--start | --stop] [--meta | --chunk] [--file <config>]"; exit;;
 	--) break ;;
 	esac
 	shift
