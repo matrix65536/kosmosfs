@@ -40,7 +40,7 @@ void NetConnection::HandleReadEvent()
         sock = mSock->Accept();
 #ifdef DEBUG
         if (sock == NULL) {
-            KFS_LOG_DEBUG("# of open-fd's: disk=%d, net=%d",
+            KFS_LOG_VA_DEBUG("# of open-fd's: disk=%d, net=%d",
                              globals().ctrOpenDiskFds.GetValue(),
                              globals().ctrOpenNetFds.GetValue());
         }
