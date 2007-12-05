@@ -152,6 +152,10 @@ int KfsClient::Init(const string metaServerHost, int metaServerPort)
 	mIsInitialized = false;
 	return -1;
     }
+
+    // Initialize the logger
+    MsgLogger::Init(NULL);
+
     mIsInitialized = true;
     return 0;
 }
