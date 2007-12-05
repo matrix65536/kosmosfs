@@ -763,7 +763,7 @@ ReplicateChunkOp::Execute()
 
 #ifdef DEBUG
     string s = location.ToString();
-    KFS_LOG_DEBUG("Replicating chunk: %ld from %s",
+    KFS_LOG_VA_DEBUG("Replicating chunk: %ld from %s",
                      chunkId, s.c_str());
 #endif
 
