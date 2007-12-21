@@ -140,8 +140,14 @@ KfsClient::Init(const char *propFile)
 
 int KfsClient::Init(const string metaServerHost, int metaServerPort)
 {
+    // Initialize the logger
+    MsgLogger::Init(NULL);
+
     mMetaServerLoc.hostname = metaServerHost;
     mMetaServerLoc.port = metaServerPort;
+
+    KFS_LOG_VA_DEBUG("Connecting to metaserver at: %s:%d",
+                     metaServerHost.c_str(), metaServerPort);
 
     if (!mMetaServerLoc.IsValid()) {
 	mIsInitialized = false;
@@ -153,8 +159,6 @@ int KfsClient::Init(const string metaServerHost, int metaServerPort)
 	return -1;
     }
 
-    // Initialize the logger
-    MsgLogger::Init(NULL);
 
     mIsInitialized = true;
     return 0;
