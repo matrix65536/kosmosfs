@@ -29,6 +29,7 @@
 #include <cerrno>
 
 #include "libkfsClient/KfsClient.h"
+#include "common/log.h"
 #include "tools/KfsShell.h"
 
 #include <iostream>
@@ -61,8 +62,6 @@ main(int argc, char **argv)
     bool quietMode = false;
     char optchar;
 
-    KFS::MsgLogger::Init(NULL);
-
     while ((optchar = getopt(argc, argv, "hqs:p:")) != -1) {
         switch (optchar) {
             case 's':
@@ -78,7 +77,7 @@ main(int argc, char **argv)
                 quietMode = true;
                 break;
             default:
-                KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
+                cout << "Unrecognized flag : " << optchar;
                 help = true;
                 break;
         }

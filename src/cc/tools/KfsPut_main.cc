@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <fstream>
 #include "libkfsClient/KfsClient.h"
+#include "common/log.h"
 
 using std::cout;
 using std::cin;
@@ -52,8 +53,6 @@ main(int argc, char **argv)
     bool help = false;
     ssize_t numBytes;
 
-    KFS::MsgLogger::Init(NULL);
-
     while ((optchar = getopt(argc, argv, "hs:p:d:")) != -1) {
         switch (optchar) {
             case 'f':
@@ -69,7 +68,7 @@ main(int argc, char **argv)
                 help = true;
                 break;
             default:
-                KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
+                cout << "Unrecognized flag : " << optchar << endl;
                 help = true;
                 break;
         }

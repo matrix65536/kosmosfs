@@ -28,6 +28,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <fstream>
+#include <fcntl.h>
 #include "libkfsClient/KfsClient.h"
 
 #define MIN_FILE_SIZE 2048

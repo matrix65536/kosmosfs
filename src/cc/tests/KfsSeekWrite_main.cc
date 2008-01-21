@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <fstream>
 #include <algorithm>
 #include "libkfsClient/KfsClient.h"

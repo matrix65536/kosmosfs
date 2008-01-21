@@ -26,6 +26,7 @@
 //----------------------------------------------------------------------------
 
 #include "KfsClient.h"
+#include "KfsClientInt.h"
 
 #include "common/config.h"
 #include "common/properties.h"
@@ -78,6 +79,202 @@ KFS::getKfsClient()
 
 KfsClient::KfsClient()
 {
+    mImpl = new KfsClientImpl();
+}
+
+int
+KfsClient::Init(const char *propFile)
+{
+    return mImpl->Init(propFile);
+}
+
+int 
+KfsClient::Init(const std::string metaServerHost, int metaServerPort)
+{
+    return mImpl->Init(metaServerHost, metaServerPort);
+}
+
+bool 
+KfsClient::IsInitialized()
+{
+    return mImpl->IsInitialized();
+}
+
+int
+KfsClient::Cd(const char *pathname)
+{
+    return mImpl->Cd(pathname);
+}
+
+string
+KfsClient::GetCwd()
+{
+    return mImpl->GetCwd();
+}
+
+int
+KfsClient::Mkdirs(const char *pathname)
+{
+    return mImpl->Mkdirs(pathname);
+}
+
+int 
+KfsClient::Mkdir(const char *pathname)
+{
+    return mImpl->Mkdir(pathname);
+}
+
+int 
+KfsClient::Rmdir(const char *pathname)
+{
+    return mImpl->Rmdir(pathname);
+}
+
+int 
+KfsClient::Rmdirs(const char *pathname)
+{
+    return mImpl->Rmdirs(pathname);
+}
+
+int 
+KfsClient::Readdir(const char *pathname, std::vector<std::string> &result)
+{
+    return mImpl->Readdir(pathname, result);
+}
+
+int 
+KfsClient::ReaddirPlus(const char *pathname, std::vector<KfsFileAttr> &result)
+{
+    return mImpl->ReaddirPlus(pathname, result);
+}
+
+int 
+KfsClient::Stat(const char *pathname, struct stat &result, bool computeFilesize)
+{
+    return mImpl->Stat(pathname, result, computeFilesize);
+}
+
+bool 
+KfsClient::Exists(const char *pathname)
+{
+    return mImpl->Exists(pathname);
+}
+
+bool 
+KfsClient::IsFile(const char *pathname)
+{
+    return mImpl->IsFile(pathname);
+}
+
+bool 
+KfsClient::IsDirectory(const char *pathname)
+{
+    return mImpl->IsDirectory(pathname);
+}
+
+int 
+KfsClient::Create(const char *pathname, int numReplicas, bool exclusive)
+{
+    return mImpl->Create(pathname, numReplicas, exclusive);
+}
+
+int 
+KfsClient::Remove(const char *pathname)
+{
+    return mImpl->Remove(pathname);
+}
+
+int 
+KfsClient::Rename(const char *oldpath, const char *newpath, bool overwrite)
+{
+    return mImpl->Rename(oldpath, newpath, overwrite);
+}
+
+int 
+KfsClient::Open(const char *pathname, int openFlags, int numReplicas)
+{
+    return mImpl->Open(pathname, openFlags, numReplicas);
+}
+
+int 
+KfsClient::Fileno(const char *pathname)
+{
+    return mImpl->Fileno(pathname);
+}
+
+int 
+KfsClient::Close(int fd)
+{
+    return mImpl->Close(fd);
+}
+
+ssize_t 
+KfsClient::Read(int fd, char *buf, size_t numBytes)
+{
+    return mImpl->Read(fd, buf, numBytes);
+}
+
+ssize_t 
+KfsClient::Write(int fd, const char *buf, size_t numBytes)
+{
+    return mImpl->Write(fd, buf, numBytes);
+}
+
+int 
+KfsClient::Sync(int fd)
+{
+    return mImpl->Sync(fd);
+}
+
+off_t 
+KfsClient::Seek(int fd, off_t offset, int whence)
+{
+    return mImpl->Seek(fd, offset, whence);
+}
+
+off_t 
+KfsClient::Seek(int fd, off_t offset)
+{
+    return mImpl->Seek(fd, offset, SEEK_SET);
+}
+
+off_t 
+KfsClient::Tell(int fd)
+{
+    return mImpl->Tell(fd);
+}
+
+int 
+KfsClient::Truncate(int fd, off_t offset)
+{
+    return mImpl->Truncate(fd, offset);
+}
+
+int 
+KfsClient::GetDataLocation(const char *pathname, off_t start, size_t len,
+                           std::vector< std::vector <std::string> > &locations)
+{
+    return mImpl->GetDataLocation(pathname, start, len, locations);
+}
+
+int16_t 
+KfsClient::GetReplicationFactor(const char *pathname)
+{
+    return mImpl->GetReplicationFactor(pathname);
+}
+
+int16_t 
+KfsClient::SetReplicationFactor(const char *pathname, int16_t numReplicas)
+{
+    return mImpl->SetReplicationFactor(pathname, numReplicas);
+}
+
+//
+// Now, the real work is done by the impl object....
+//
+
+KfsClientImpl::KfsClientImpl()
+{
     pthread_mutexattr_t mutexAttr;
     int rval;
     const int hostnamelen = 256;
@@ -118,7 +315,7 @@ KfsClient::KfsClient()
 }
 
 int
-KfsClient::Init(const char *propFile)
+KfsClientImpl::Init(const char *propFile)
 {
     bool verbose = false;
 #ifdef DEBUG
@@ -138,7 +335,7 @@ KfsClient::Init(const char *propFile)
     
 }
 
-int KfsClient::Init(const string metaServerHost, int metaServerPort)
+int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
 {
     // Initialize the logger
     MsgLogger::Init(NULL);
@@ -165,7 +362,7 @@ int KfsClient::Init(const string metaServerHost, int metaServerPort)
 }
 
 bool
-KfsClient::ConnectToMetaServer()
+KfsClientImpl::ConnectToMetaServer()
 {
     return mMetaServerSock.Connect(mMetaServerLoc) >= 0;
 }
@@ -174,7 +371,7 @@ KfsClient::ConnectToMetaServer()
 /// A notion of "cwd" in KFS.
 ///
 int
-KfsClient::Cd(const char *pathname)
+KfsClientImpl::Cd(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -200,7 +397,7 @@ KfsClient::Cd(const char *pathname)
 /// To allow tools to get at "pwd"
 ///
 string
-KfsClient::GetCwd()
+KfsClientImpl::GetCwd()
 {
     return mCwd;
 }
@@ -210,7 +407,7 @@ KfsClient::GetCwd()
 /// Make a directory hierarchy in KFS.
 ///
 int
-KfsClient::Mkdirs(const char *pathname)
+KfsClientImpl::Mkdirs(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -253,7 +450,7 @@ KfsClient::Mkdirs(const char *pathname)
 /// @param[in] pathname		The full pathname such as /.../dir
 /// @retval 0 if mkdir is successful; -errno otherwise
 int
-KfsClient::Mkdir(const char *pathname)
+KfsClientImpl::Mkdir(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -286,7 +483,7 @@ KfsClient::Mkdir(const char *pathname)
 /// @param[in] pathname		The full pathname such as /.../dir
 /// @retval 0 if rmdir is successful; -errno otherwise
 int
-KfsClient::Rmdir(const char *pathname)
+KfsClientImpl::Rmdir(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -306,6 +503,41 @@ KfsClient::Rmdir(const char *pathname)
 }
 
 ///
+/// Remove a directory hierarchy in KFS.
+/// @param[in] pathname		The full pathname such as /.../dir
+/// @retval 0 if rmdir is successful; -errno otherwise
+int
+KfsClientImpl::Rmdirs(const char *pathname)
+{
+    MutexLock l(&mMutex);
+
+    vector<KfsFileAttr> entries;
+    int res;
+
+    if ((res = ReaddirPlus(pathname, entries, false)) < 0)
+        return res;
+
+    for (size_t i = 0; i < entries.size(); i++) {
+        if ((entries[i].filename == ".") || (entries[i].filename == ".."))
+            continue;
+
+        string d = pathname;
+        d += "/" + entries[i].filename;
+        if (entries[i].isDirectory) {
+            res = Rmdirs(d.c_str());
+        } else {
+            res = Remove(d.c_str());
+        }
+        if (res < 0)
+            break;
+    }
+    res = Rmdir(pathname);
+
+    return res;
+
+}
+
+///
 /// Read a directory's contents.  This is analogous to READDIR in
 /// NFS---just reads the directory contents and returns the names;
 /// you'll need to lookup the attributes next.  The resulting
@@ -318,7 +550,7 @@ KfsClient::Rmdir(const char *pathname)
 /// @param[out] result	The filenames in the directory
 /// @retval 0 if readdir is successful; -errno otherwise
 int
-KfsClient::Readdir(const char *pathname, vector<string> &result)
+KfsClientImpl::Readdir(const char *pathname, vector<string> &result)
 {
     MutexLock l(&mMutex);
 
@@ -366,7 +598,8 @@ KfsClient::Readdir(const char *pathname, vector<string> &result)
 /// @param[out] result	The filenames in the directory and their attributes
 /// @retval 0 if readdir is successful; -errno otherwise
 int
-KfsClient::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result)
+KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
+                           bool computeFilesize)
 {
     MutexLock l(&mMutex);
 
@@ -398,7 +631,8 @@ KfsClient::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result)
 	result[i].filename = filename;
         // KFS_LOG_VA_DEBUG("Entry: %s", filename);
         // get the file size for files
-	LookupAttr(dirFid, result[i].filename.c_str(), result[i], true);
+	LookupAttr(dirFid, result[i].filename.c_str(), result[i], 
+                   computeFilesize);
     }
     sort(result.begin(), result.end());
 
@@ -406,7 +640,7 @@ KfsClient::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result)
 }
 
 int
-KfsClient::Stat(const char *pathname, struct stat &result, bool computeFilesize)
+KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFilesize)
 {
     MutexLock l(&mMutex);
 
@@ -435,7 +669,7 @@ KfsClient::Stat(const char *pathname, struct stat &result, bool computeFilesize)
 }
 
 bool
-KfsClient::Exists(const char *pathname)
+KfsClientImpl::Exists(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -445,7 +679,7 @@ KfsClient::Exists(const char *pathname)
 }
 
 bool
-KfsClient::IsFile(const char *pathname)
+KfsClientImpl::IsFile(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -458,7 +692,7 @@ KfsClient::IsFile(const char *pathname)
 }
 
 bool
-KfsClient::IsDirectory(const char *pathname)
+KfsClientImpl::IsDirectory(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -471,7 +705,7 @@ KfsClient::IsDirectory(const char *pathname)
 }
 
 int
-KfsClient::LookupAttr(kfsFileId_t parentFid, const char *filename,
+KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
 	              KfsFileAttr &result, bool computeFilesize)
 {
     MutexLock l(&mMutex);
@@ -494,7 +728,7 @@ KfsClient::LookupAttr(kfsFileId_t parentFid, const char *filename,
 }
 
 int
-KfsClient::Create(const char *pathname, int numReplicas, bool exclusive)
+KfsClientImpl::Create(const char *pathname, int numReplicas, bool exclusive)
 {
     MutexLock l(&mMutex);
 
@@ -533,7 +767,7 @@ KfsClient::Create(const char *pathname, int numReplicas, bool exclusive)
 }
 
 int
-KfsClient::Remove(const char *pathname)
+KfsClientImpl::Remove(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -553,7 +787,7 @@ KfsClient::Remove(const char *pathname)
 }
 
 int
-KfsClient::Rename(const char *oldpath, const char *newpath, bool overwrite)
+KfsClientImpl::Rename(const char *oldpath, const char *newpath, bool overwrite)
 {
     MutexLock l(&mMutex);
 
@@ -579,7 +813,7 @@ KfsClient::Rename(const char *oldpath, const char *newpath, bool overwrite)
 }
 
 int
-KfsClient::Fileno(const char *pathname)
+KfsClientImpl::Fileno(const char *pathname)
 {
     kfsFileId_t parentFid;
     string filename;
@@ -591,7 +825,7 @@ KfsClient::Fileno(const char *pathname)
 }
 
 int
-KfsClient::Open(const char *pathname, int openMode, int numReplicas)
+KfsClientImpl::Open(const char *pathname, int openMode, int numReplicas)
 {
     MutexLock l(&mMutex);
 
@@ -648,7 +882,7 @@ KfsClient::Open(const char *pathname, int openMode, int numReplicas)
 }
 
 int
-KfsClient::Close(int fd)
+KfsClientImpl::Close(int fd)
 {
     MutexLock l(&mMutex);
     int status = 0;
@@ -664,7 +898,7 @@ KfsClient::Close(int fd)
 }
 
 int
-KfsClient::Sync(int fd)
+KfsClientImpl::Sync(int fd)
 {
     MutexLock l(&mMutex);
 
@@ -680,7 +914,7 @@ KfsClient::Sync(int fd)
 }
 
 int
-KfsClient::Truncate(int fd, off_t offset)
+KfsClientImpl::Truncate(int fd, off_t offset)
 {
     MutexLock l(&mMutex);
 
@@ -724,7 +958,7 @@ KfsClient::Truncate(int fd, off_t offset)
 }
 
 int
-KfsClient::GetDataLocation(const char *pathname, off_t start, size_t len,
+KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
                            vector< vector <string> > &locations)
 {
     MutexLock l(&mMutex);
@@ -774,7 +1008,7 @@ KfsClient::GetDataLocation(const char *pathname, off_t start, size_t len,
 }
 
 int16_t
-KfsClient::GetReplicationFactor(const char *pathname)
+KfsClientImpl::GetReplicationFactor(const char *pathname)
 {
     MutexLock l(&mMutex);
 
@@ -805,7 +1039,7 @@ KfsClient::GetReplicationFactor(const char *pathname)
 }
 
 int16_t
-KfsClient::SetReplicationFactor(const char *pathname, int16_t numReplicas)
+KfsClientImpl::SetReplicationFactor(const char *pathname, int16_t numReplicas)
 {
     MutexLock l(&mMutex);
 
@@ -843,13 +1077,13 @@ KfsClient::SetReplicationFactor(const char *pathname, int16_t numReplicas)
 }
 
 off_t
-KfsClient::Seek(int fd, off_t offset)
+KfsClientImpl::Seek(int fd, off_t offset)
 {
     return Seek(fd, offset, SEEK_SET);
 }
 
 off_t
-KfsClient::Seek(int fd, off_t offset, int whence)
+KfsClientImpl::Seek(int fd, off_t offset, int whence)
 {
     MutexLock l(&mMutex);
 
@@ -897,7 +1131,7 @@ KfsClient::Seek(int fd, off_t offset, int whence)
     return newOff;
 }
 
-off_t KfsClient::Tell(int fd)
+off_t KfsClientImpl::Tell(int fd)
 {
     MutexLock l(&mMutex);
 
@@ -912,7 +1146,7 @@ off_t KfsClient::Tell(int fd)
 /// @retval 0 if successful; -errno otherwise
 ///
 int
-KfsClient::AllocChunk(int fd)
+KfsClientImpl::AllocChunk(int fd)
 {
     FileAttr *fa = FdAttr(fd);
     assert(valid_fd(fd) && !fa->isDirectory);
@@ -960,7 +1194,7 @@ KfsClient::AllocChunk(int fd)
 ///
 ///
 int
-KfsClient::LocateChunk(int fd, int chunkNum)
+KfsClientImpl::LocateChunk(int fd, int chunkNum)
 {
     assert(valid_fd(fd) && !mFileTable[fd]->fattr.isDirectory);
 
@@ -999,7 +1233,7 @@ KfsClient::LocateChunk(int fd, int chunkNum)
 }
 
 bool
-KfsClient::IsCurrChunkAttrKnown(int fd)
+KfsClientImpl::IsCurrChunkAttrKnown(int fd)
 {
     map <int, ChunkAttr> *c = &FdInfo(fd)->cattr;
     return c->find(FdPos(fd)->chunkNum) != c->end();
@@ -1312,11 +1546,11 @@ KFS::DoOpCommon(KfsOp *op, TcpSocket *sock)
 /// chunks are just holes.
 //
 struct RespondingServer {
-    KfsClient *client;
+    KfsClientImpl *client;
     const ChunkLayoutInfo &layout;
     int *status;
     ssize_t *size;
-    RespondingServer(KfsClient *cli, const ChunkLayoutInfo &lay,
+    RespondingServer(KfsClientImpl *cli, const ChunkLayoutInfo &lay,
 		     ssize_t *sz, int *st):
 	    client(cli), layout(lay), status(st), size(sz) { }
     bool operator() (ServerLocation loc)
@@ -1339,7 +1573,7 @@ struct RespondingServer {
 };
 
 ssize_t
-KfsClient::ComputeFilesize(kfsFileId_t kfsfid)
+KfsClientImpl::ComputeFilesize(kfsFileId_t kfsfid)
 {
     GetLayoutOp lop(nextSeq(), kfsfid);
     (void)DoMetaOpWithRetry(&lop);
@@ -1393,7 +1627,7 @@ public:
 };
 
 int
-KfsClient::OpenChunk(int fd)
+KfsClientImpl::OpenChunk(int fd)
 {
     if (!IsCurrChunkAttrKnown(fd)) {
 	// Nothing known about this chunk
@@ -1436,7 +1670,7 @@ KfsClient::OpenChunk(int fd)
 }
 
 int
-KfsClient::SizeChunk(int fd)
+KfsClientImpl::SizeChunk(int fd)
 {
     ChunkAttr *chunk = GetCurrChunk(fd);
 
@@ -1458,7 +1692,7 @@ KfsClient::SizeChunk(int fd)
 /// Wrapper for retrying ops with the metaserver.
 ///
 int
-KfsClient::DoMetaOpWithRetry(KfsOp *op)
+KfsClientImpl::DoMetaOpWithRetry(KfsOp *op)
 {
     int res;
 
@@ -1499,7 +1733,7 @@ fte_compare(const FileTableEntry *first, const FileTableEntry *second)
 }
 
 int
-KfsClient::FindFreeFileTableEntry()
+KfsClientImpl::FindFreeFileTableEntry()
 {
     vector <FileTableEntry *>::iterator b = mFileTable.begin();
     vector <FileTableEntry *>::iterator e = mFileTable.end();
@@ -1536,7 +1770,7 @@ public:
 };
 
 int
-KfsClient::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
+KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
 {
     FTMatcher match(parentFid, name);
     vector <FileTableEntry *>::iterator i;
@@ -1567,7 +1801,7 @@ KfsClient::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
 }
 
 int
-KfsClient::LookupFileTableEntry(const char *pathname)
+KfsClientImpl::LookupFileTableEntry(const char *pathname)
 {
     kfsFileId_t parentFid;
     string name;
@@ -1579,7 +1813,7 @@ KfsClient::LookupFileTableEntry(const char *pathname)
 }
 
 int
-KfsClient::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name)
+KfsClientImpl::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name)
 {
     int fte = LookupFileTableEntry(parentFid, name);
     if (fte >= 0)
@@ -1589,7 +1823,7 @@ KfsClient::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name)
 }
 
 int
-KfsClient::AllocFileTableEntry(kfsFileId_t parentFid, const char *name)
+KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name)
 {
     int fte = FindFreeFileTableEntry();
 
@@ -1602,7 +1836,7 @@ KfsClient::AllocFileTableEntry(kfsFileId_t parentFid, const char *name)
 }
 
 void
-KfsClient::ReleaseFileTableEntry(int fte)
+KfsClientImpl::ReleaseFileTableEntry(int fte)
 {
     delete mFileTable[fte];
     mFileTable[fte] = NULL;
@@ -1615,7 +1849,7 @@ KfsClient::ReleaseFileTableEntry(int fte)
 /// save it in the file table.
 ///
 int
-KfsClient::Lookup(kfsFileId_t parentFid, const char *name)
+KfsClientImpl::Lookup(kfsFileId_t parentFid, const char *name)
 {
     int fte = LookupFileTableEntry(parentFid, name);
     if (fte >= 0)
@@ -1647,7 +1881,7 @@ KfsClient::Lookup(kfsFileId_t parentFid, const char *name)
 /// @retval 0 on success; -errno on failure
 ///
 int
-KfsClient::GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
+KfsClientImpl::GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
 	                     string &name)
 {
     const char slash = '/';
@@ -1734,7 +1968,7 @@ KFS::ErrorCodeToStr(int status)
 }
 
 int
-KfsClient::GetLease(kfsChunkId_t chunkId)
+KfsClientImpl::GetLease(kfsChunkId_t chunkId)
 {
     int res;
 
@@ -1758,7 +1992,7 @@ KfsClient::GetLease(kfsChunkId_t chunkId)
 }
 
 void
-KfsClient::RenewLease(kfsChunkId_t chunkId)
+KfsClientImpl::RenewLease(kfsChunkId_t chunkId)
 {
     int64_t leaseId;
 
