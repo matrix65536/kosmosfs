@@ -21,3 +21,5 @@ set_target_properties (kfsCommon-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 install (TARGETS kfsCommon kfsCommon-shared
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib-static)
+
+install (FILES kfstypes.h kfsdecls.h DESTINATION include/kfs/common)

@@ -24,6 +24,7 @@
 //----------------------------------------------------------------------------
 
 #include "KfsClient.h"
+#include "KfsClientInt.h"
 #include "common/properties.h"
 #include "common/log.h"
 #include "meta/kfstypes.h"
@@ -63,7 +64,7 @@ NeedToRetryAllocation(int status)
 }
 
 ssize_t
-KfsClient::Write(int fd, const char *buf, size_t numBytes)
+KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 {
     MutexLock l(&mMutex);
 
@@ -138,7 +139,7 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 }
 
 ssize_t
-KfsClient::WriteToBuffer(int fd, const char *buf, size_t numBytes)
+KfsClientImpl::WriteToBuffer(int fd, const char *buf, size_t numBytes)
 {
     ssize_t numIO;
     size_t lastByte;
@@ -202,7 +203,7 @@ KfsClient::WriteToBuffer(int fd, const char *buf, size_t numBytes)
 }
 
 ssize_t
-KfsClient::FlushBuffer(int fd)
+KfsClientImpl::FlushBuffer(int fd)
 {
     ssize_t numIO = 0;
     ChunkBuffer *cb = FdBuffer(fd);
@@ -219,7 +220,7 @@ KfsClient::FlushBuffer(int fd)
 }
 
 ssize_t
-KfsClient::WriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
+KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 {
     assert(KFS::CHUNKSIZE - offset >= 0);
 
@@ -265,7 +266,7 @@ KfsClient::WriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 }
 
 int
-KfsClient::DoAllocation(int fd, bool force)
+KfsClientImpl::DoAllocation(int fd, bool force)
 {
     ChunkAttr *chunk = NULL;
     FileAttr *fa = FdAttr(fd);
@@ -319,7 +320,7 @@ KfsClient::DoAllocation(int fd, bool force)
 }
 
 ssize_t
-KfsClient::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
+KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 {
     ssize_t numIO;
     FilePosition *pos = FdPos(fd);
@@ -406,7 +407,7 @@ KfsClient::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 }
 
 ssize_t
-KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
+KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 {
     size_t numAvail, numWrote = 0;
     ssize_t numIO;
@@ -542,7 +543,7 @@ KfsClient::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t nu
 }
 
 int
-KfsClient::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops)
+KfsClientImpl::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops)
 {
     vector<WriteSyncOp *> syncOps;
     vector<WritePrepareOp *>::size_type first = 0, next = 0;
@@ -656,7 +657,7 @@ KfsClient::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops)
 }
 
 int
-KfsClient::PushDataForWrite(int fd, WritePrepareOp *op)
+KfsClientImpl::PushDataForWrite(int fd, WritePrepareOp *op)
 {
     int res;
     ChunkAttr *chunk = GetCurrChunk(fd);
@@ -687,7 +688,7 @@ KfsClient::PushDataForWrite(int fd, WritePrepareOp *op)
 }
 
 int
-KfsClient::IssueWriteCommit(int fd, WritePrepareOp *op, WriteSyncOp **sop,
+KfsClientImpl::IssueWriteCommit(int fd, WritePrepareOp *op, WriteSyncOp **sop,
 	                    TcpSocket *masterSock)
 {
     vector<ServerLocation>::size_type i;

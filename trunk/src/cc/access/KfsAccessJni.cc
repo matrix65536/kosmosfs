@@ -34,6 +34,7 @@ using std::string;
 using std::cout;
 using std::endl;
 
+#include <fcntl.h>
 #include "libkfsClient/KfsClient.h"
 using namespace KFS;
 

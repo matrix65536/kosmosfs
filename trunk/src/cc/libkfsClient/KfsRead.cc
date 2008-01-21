@@ -23,7 +23,7 @@
 // All the code to deal with read.
 //----------------------------------------------------------------------------
 
-#include "KfsClient.h"
+#include "KfsClientInt.h"
 
 #include "common/config.h"
 #include "common/properties.h"
@@ -54,7 +54,7 @@ NeedToRetryRead(int status)
 }
 
 ssize_t
-KfsClient::Read(int fd, char *buf, size_t numBytes)
+KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
 {
     MutexLock l(&mMutex);
 
@@ -112,7 +112,7 @@ KfsClient::Read(int fd, char *buf, size_t numBytes)
 }
 
 bool
-KfsClient::IsChunkReadable(int fd)
+KfsClientImpl::IsChunkReadable(int fd)
 {
     FilePosition *pos = FdPos(fd);
     int res;
@@ -135,7 +135,7 @@ KfsClient::IsChunkReadable(int fd)
 }
 
 bool
-KfsClient::IsChunkLeaseGood(kfsChunkId_t chunkId)
+KfsClientImpl::IsChunkLeaseGood(kfsChunkId_t chunkId)
 {
     if (chunkId > 0) {
 	if ((!mLeaseClerk.IsLeaseValid(chunkId)) &&
@@ -151,7 +151,7 @@ KfsClient::IsChunkLeaseGood(kfsChunkId_t chunkId)
 }
 
 ssize_t
-KfsClient::ReadChunk(int fd, char *buf, size_t numBytes)
+KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
 {
     ssize_t numIO;
     ChunkAttr *chunk;
@@ -230,7 +230,7 @@ KfsClient::ReadChunk(int fd, char *buf, size_t numBytes)
 }
 
 ssize_t
-KfsClient::ReadFromServer(int fd, char *buf, size_t numBytes)
+KfsClientImpl::ReadFromServer(int fd, char *buf, size_t numBytes)
 {
     size_t numAvail;
     ChunkAttr *chunk = GetCurrChunk(fd);
@@ -261,7 +261,7 @@ KfsClient::ReadFromServer(int fd, char *buf, size_t numBytes)
 // Issue a single read op to the server and get data back.
 //
 ssize_t
-KfsClient::DoSmallReadFromServer(int fd, char *buf, size_t numBytes)
+KfsClientImpl::DoSmallReadFromServer(int fd, char *buf, size_t numBytes)
 {
     ChunkAttr *chunk = GetCurrChunk(fd);
 
@@ -282,7 +282,7 @@ KfsClient::DoSmallReadFromServer(int fd, char *buf, size_t numBytes)
 }
 
 size_t
-KfsClient::ZeroFillBuf(int fd, char *buf, size_t numBytes)
+KfsClientImpl::ZeroFillBuf(int fd, char *buf, size_t numBytes)
 {
     size_t numIO, bytesInFile, bytesInChunk;
     ChunkAttr *chunk = GetCurrChunk(fd);
@@ -323,7 +323,7 @@ KfsClient::ZeroFillBuf(int fd, char *buf, size_t numBytes)
 }
 
 size_t
-KfsClient::CopyFromChunkBuf(int fd, char *buf, size_t numBytes)
+KfsClientImpl::CopyFromChunkBuf(int fd, char *buf, size_t numBytes)
 {
     size_t numIO;
     FilePosition *pos = FdPos(fd);
@@ -355,7 +355,7 @@ KfsClient::CopyFromChunkBuf(int fd, char *buf, size_t numBytes)
 }
 
 ssize_t
-KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
+KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
 {
     FilePosition *pos = FdPos(fd);
     ChunkAttr *chunk = GetCurrChunk(fd);
@@ -434,7 +434,7 @@ KfsClient::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
 /// @retval 0 on success; -1 on failure
 ///
 int
-KfsClient::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
+KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 {
     vector<ReadOp *>::size_type first = 0, next, minOps;
     int res;
