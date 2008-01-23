@@ -17,11 +17,25 @@ Replicator.cc
 Utils.cc
 )
 
-add_library (chunk ${lib_srcs})
+#
+# build both static and dynamic
+#
+add_library (chunk STATIC ${lib_srcs})
+add_library (chunk-shared SHARED ${lib_srcs})
+set_target_properties (chunk-shared PROPERTIES OUTPUT_NAME "chunk")
+set_target_properties (chunk PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+set_target_properties (chunk-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
 add_executable (chunkserver ChunkServer_main)
-add_dependencies (chunkserver kfsCommon kfsIO)
-target_link_libraries (chunkserver chunk kfsIO kfsCommon pthread)
+
+if (USE_STATIC_LIB_LINKAGE)
+   add_dependencies (chunkserver kfsCommon kfsIO)
+   target_link_libraries (chunkserver chunk kfsIO kfsCommon pthread)
+else (USE_STATIC_LIB_LINKAGE)
+   add_dependencies (chunkserver kfsCommon-shared kfsIO-shared)
+   target_link_libraries (chunkserver chunk-shared kfsIO-shared kfsCommon-shared pthread)
+endif (USE_STATIC_LIB_LINKAGE)
+
 if (NOT APPLE)
   target_link_libraries(chunk rt)
   target_link_libraries(chunkserver rt)

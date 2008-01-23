@@ -34,6 +34,12 @@ find_package(JNI)
 # Change this to where the install directory is located
 set (CMAKE_INSTALL_PREFIX .)
 
+# Build with statically linked libraries; the value for this variable has to be defined here
+# overwriting whatever is in the cache.
+# When set to ON, we build with statically linked libraries; when off we 
+# link with dynamically linked libs
+set (USE_STATIC_LIB_LINKAGE ON CACHE BOOL "Build binaries with statically linked libraries" FORCE)
+
 # Change the line to Release to build release binaries
 # For servers, build with debugging info; for tools, build Release
 #

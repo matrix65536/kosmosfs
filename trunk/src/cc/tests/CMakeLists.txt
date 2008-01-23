@@ -16,8 +16,14 @@ KfsWriter
 #
 foreach (exe_file ${exe_files})
         add_executable (${exe_file} ${exe_file}_main.cc)
-        add_dependencies (${exe_file} kfsClient)
-        target_link_libraries (${exe_file} tools kfsClient)
+        if (USE_STATIC_LIB_LINKAGE)
+                add_dependencies (${exe_file} kfsClient)
+                target_link_libraries (${exe_file} tools kfsClient)
+        else (USE_STATIC_LIB_LINKAGE)
+                add_dependencies (${exe_file} kfsClient-shared)
+                target_link_libraries (${exe_file} tools-shared kfsClient-shared)
+        endif (USE_STATIC_LIB_LINKAGE)
+
 endforeach (exe_file)
 
 #

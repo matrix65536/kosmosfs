@@ -10,8 +10,8 @@ file (GLOB sources . *.cc)
 add_library (kfsCommon STATIC ${sources})
 add_library (kfsCommon-shared SHARED ${sources})
 
-target_link_libraries (kfsCommon log4cpp)
-target_link_libraries (kfsCommon-shared log4cpp)
+target_link_libraries (kfsCommon ${Log4cpp_LIBRARY})
+target_link_libraries (kfsCommon-shared ${Log4cpp_LIBRARY})
 
 set_target_properties (kfsCommon-shared PROPERTIES OUTPUT_NAME "kfsCommon")
 set_target_properties (kfsCommon PROPERTIES CLEAN_DIRECT_OUTPUT 1)

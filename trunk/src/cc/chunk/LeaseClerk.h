@@ -37,6 +37,7 @@
 #include "libkfsIO/Chunk.h"
 #include "libkfsIO/Event.h"
 #include "common/kfstypes.h"
+#include "common/cxxutil.h"
 
 namespace KFS
 {
