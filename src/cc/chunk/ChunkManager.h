@@ -37,6 +37,7 @@
 #include "libkfsIO/DiskManager.h"
 #include "KfsOps.h"
 #include "Logger.h"
+#include "common/cxxutil.h"
 
 namespace KFS
 {

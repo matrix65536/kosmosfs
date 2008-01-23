@@ -30,6 +30,7 @@
 
 #include "common/kfstypes.h"
 #include "libkfsIO/Chunk.h"
+#include "common/cxxutil.h"
 #include <tr1/unordered_map>
 
 namespace KFS {

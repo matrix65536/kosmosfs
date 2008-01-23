@@ -14,8 +14,14 @@ set (lib_srcs
     utils.cc
 )
 
-add_library (tools ${lib_srcs})
+add_library (tools STATIC ${lib_srcs})
+add_library (tools-shared SHARED ${lib_srcs})
+set_target_properties (tools-shared PROPERTIES OUTPUT_NAME "tools")
+set_target_properties (tools PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+set_target_properties (tools-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+
 add_dependencies (tools kfsClient)
+add_dependencies (tools-shared kfsClient-shared)
 
 set (exe_files
 cpFs2Kfs
@@ -31,7 +37,11 @@ KfsStats
 #
 foreach (exe_file ${exe_files})
         add_executable (${exe_file} ${exe_file}_main.cc)
-        target_link_libraries (${exe_file} tools kfsClient)
+        if (USE_STATIC_LIB_LINKAGE)
+                target_link_libraries (${exe_file} tools kfsClient)
+        else (USE_STATIC_LIB_LINKAGE)
+                target_link_libraries (${exe_file} tools-shared kfsClient-shared)
+        endif (USE_STATIC_LIB_LINKAGE)
 endforeach (exe_file)
 
 #
