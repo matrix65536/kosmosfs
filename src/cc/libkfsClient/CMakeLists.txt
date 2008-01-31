@@ -24,6 +24,6 @@ target_link_libraries (kfsClient-shared kfsCommon-shared kfsIO-shared)
 #
 install (TARGETS kfsClient kfsClient-shared
         LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib-static)
+        ARCHIVE DESTINATION lib/static)
 
 install (FILES KfsAttr.h KfsClient.h DESTINATION include/kfs)

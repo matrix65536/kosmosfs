@@ -192,7 +192,11 @@ RestoreDir(string &kfsdirname, string &dirname)
                 (fileInfo[i].filename == ".."))
                 continue;
 	    subdir = dirname + "/" + fileInfo[i].filename;
+#if defined (__sun__)
+            mkdir(subdir.c_str(), S_IRWXU|S_IRWXG|S_IRWXO);
+#else
             mkdir(subdir.c_str(), ALLPERMS);
+#endif
             kfssubdir = kfsdirname + "/" + fileInfo[i].filename.c_str();
             RestoreDir(subdir, kfssubdir);
         } else {

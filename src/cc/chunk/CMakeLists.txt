@@ -26,13 +26,13 @@ set_target_properties (chunk-shared PROPERTIES OUTPUT_NAME "chunk")
 set_target_properties (chunk PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties (chunk-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-add_executable (chunkserver ChunkServer_main)
+add_executable (chunkserver ChunkServer_main.cc)
 
 if (USE_STATIC_LIB_LINKAGE)
-   add_dependencies (chunkserver kfsCommon kfsIO)
+   add_dependencies (chunkserver chunk kfsCommon kfsIO)
    target_link_libraries (chunkserver chunk kfsIO kfsCommon pthread)
 else (USE_STATIC_LIB_LINKAGE)
-   add_dependencies (chunkserver kfsCommon-shared kfsIO-shared)
+   add_dependencies (chunkserver chunk-shared kfsCommon-shared kfsIO-shared)
    target_link_libraries (chunkserver chunk-shared kfsIO-shared kfsCommon-shared pthread)
 endif (USE_STATIC_LIB_LINKAGE)
 
@@ -43,7 +43,7 @@ endif (NOT APPLE)
 #
 # Install them
 #
-install (TARGETS chunkserver chunk
+install (TARGETS chunkserver chunk chunk-shared
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib/static)

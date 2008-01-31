@@ -7,19 +7,19 @@ file (GLOB sources . *.cc)
 # with a statically linked library.  Since kfsCommon is the symbol
 # used everywhere, associate that symbol with the STATIC library.
 #
-add_library (kfsCommon STATIC ${sources})
+
 add_library (kfsCommon-shared SHARED ${sources})
-
-target_link_libraries (kfsCommon ${Log4cpp_LIBRARY})
-target_link_libraries (kfsCommon-shared ${Log4cpp_LIBRARY})
-
+add_library (kfsCommon STATIC ${sources})
 set_target_properties (kfsCommon-shared PROPERTIES OUTPUT_NAME "kfsCommon")
 set_target_properties (kfsCommon PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties (kfsCommon-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
+target_link_libraries (kfsCommon ${Log4cpp_LIBRARY})
+target_link_libraries (kfsCommon-shared ${Log4cpp_LIBRARY})
+
 #
-install (TARGETS kfsCommon kfsCommon-shared
+install (TARGETS kfsCommon-shared kfsCommon
         LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib-static)
+        ARCHIVE DESTINATION lib/static)
 
 install (FILES kfstypes.h kfsdecls.h DESTINATION include/kfs/common)
