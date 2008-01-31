@@ -1954,7 +1954,7 @@ KFS::ErrorCodeToStr(int status)
     char buf[4096];
     char *errptr = NULL;
 
-#if defined (__APPLE__)
+#if defined (__APPLE__) || defined(__sun__)
     if (strerror_r(-status, buf, sizeof buf) == 0)
 	errptr = buf;
     else

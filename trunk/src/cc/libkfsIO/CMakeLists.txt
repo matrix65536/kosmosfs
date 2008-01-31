@@ -20,4 +20,4 @@ endif(NOT APPLE)
 #
 install (TARGETS kfsIO kfsIO-shared
         LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib-static)
+        ARCHIVE DESTINATION lib/static)

@@ -46,7 +46,7 @@ MsgLogger::Init(const char *filename, log4cpp::Priority::Value priority)
 
     logger = &(log4cpp::Category::getInstance(std::string("kfs")));
     logger->addAppender(appender);
-    logger->setAdditivity(false);
+    // logger->setAdditivity(false);
     logger->setPriority(priority);
 }
 

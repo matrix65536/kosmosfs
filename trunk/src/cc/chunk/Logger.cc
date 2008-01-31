@@ -27,6 +27,7 @@
 #include<sstream>
 extern "C" {
 #include <sys/stat.h>
+#include <strings.h>
 }
 
 #include "libkfsIO/Globals.h"

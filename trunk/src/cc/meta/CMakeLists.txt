@@ -23,33 +23,33 @@ startup.cc
 util.cc
 )
 
-add_library (meta STATIC ${lib_srcs})
-add_library (meta-shared SHARED ${lib_srcs})
-set_target_properties (meta-shared PROPERTIES OUTPUT_NAME "meta")
-set_target_properties (meta PROPERTIES CLEAN_DIRECT_OUTPUT 1)
-set_target_properties (meta-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+add_library (kfsMeta STATIC ${lib_srcs})
+add_library (kfsMeta-shared SHARED ${lib_srcs})
+set_target_properties (kfsMeta-shared PROPERTIES OUTPUT_NAME "kfsMeta")
+set_target_properties (kfsMeta PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+set_target_properties (kfsMeta-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-add_executable (metaserver metaserver_main)
+add_executable (metaserver metaserver_main.cc)
 
 if (USE_STATIC_LIB_LINKAGE)
    message (STATUS "Linking with static libs")
-   add_dependencies (metaserver kfsCommon kfsIO meta)
-   target_link_libraries (metaserver meta kfsIO kfsCommon pthread)
+   add_dependencies (metaserver kfsCommon kfsIO kfsMeta)
+   target_link_libraries (metaserver kfsMeta kfsIO kfsCommon pthread)
 else (USE_STATIC_LIB_LINKAGE)
    message (STATUS "Linking with dynamic libs")
-   add_dependencies (metaserver kfsCommon-shared kfsIO-shared meta-shared)
-   target_link_libraries (metaserver meta-shared kfsIO-shared kfsCommon-shared pthread)
+   add_dependencies (metaserver kfsCommon-shared kfsIO-shared kfsMeta-shared)
+   target_link_libraries (metaserver kfsMeta-shared kfsIO-shared kfsCommon-shared pthread)
 endif (USE_STATIC_LIB_LINKAGE)
 
 if (NOT APPLE)
-  target_link_libraries(meta rt)
+  target_link_libraries(kfsMeta rt)
   target_link_libraries(metaserver rt)
 endif (NOT APPLE)
 #
 # Install them
 #
-install (TARGETS metaserver meta meta-shared
+install (TARGETS metaserver kfsMeta kfsMeta-shared
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib-static)
+        ARCHIVE DESTINATION lib/static)
 

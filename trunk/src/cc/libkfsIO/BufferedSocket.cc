@@ -25,6 +25,7 @@
 //----------------------------------------------------------------------------
 
 #include <iostream>
+#include <strings.h>
 
 #include "BufferedSocket.h"
 

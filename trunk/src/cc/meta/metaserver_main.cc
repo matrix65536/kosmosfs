@@ -36,6 +36,8 @@
 
 using namespace KFS;
 
+NetDispatch KFS::gNetDispatch;
+
 // Port at which KFS clients connect and send RPCs
 int gClientPort;
 
@@ -46,7 +48,6 @@ int gChunkServerPort;
 string gLogDir, gCPDir;
 
 Properties gProp;
-NetDispatch KFS::gNetDispatch;
 
 int ReadMetaServerProperties(char *fileName);
 

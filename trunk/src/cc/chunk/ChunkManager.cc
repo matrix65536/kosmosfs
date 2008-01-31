@@ -467,7 +467,7 @@ ChunkManager::WriteChunk(WriteOp *op)
 		    op->offset + op->numBytesIO - cih->chunkInfo.chunkSize);
 #else
     size_t addedBytes = max((size_t) 0,
-		    op->offset + op->numBytesIO - cih->chunkInfo.chunkSize);
+			    (size_t) (op->offset + op->numBytesIO - cih->chunkInfo.chunkSize));
 #endif
 
     if (mUsedSpace + addedBytes >= mTotalSpace)

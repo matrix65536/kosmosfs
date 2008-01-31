@@ -45,7 +45,7 @@ foreach (exe_file ${exe_files})
 endforeach (exe_file)
 
 #
-install (TARGETS ${exe_files} tools
+install (TARGETS ${exe_files} tools tools-shared
         RUNTIME DESTINATION bin/tools
         LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib-static)
+        ARCHIVE DESTINATION lib/static)
