@@ -38,7 +38,23 @@ set (CMAKE_INSTALL_PREFIX .)
 # overwriting whatever is in the cache.
 # When set to ON, we build with statically linked libraries; when off we 
 # link with dynamically linked libs
-set (USE_STATIC_LIB_LINKAGE ON CACHE BOOL "Build binaries with statically linked libraries" FORCE)
+
+IF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+   # On solaris, use 64-bit mode
+   set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -m64")
+   set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -m64")
+   set(CMAKE_SHARED_LINKER_FLAGS  "${CMAKE_SHARED_LINKER_FLAGS} -m64")
+   # Statically linked binaries don't work on solaris
+   set (USE_STATIC_LIB_LINKAGE OFF CACHE BOOL "Build binaries with statically linked libraries" FORCE)
+   # Cmake does whacky relink on solaris and messes things up; avoid this
+   set (CMAKE_SKIP_RPATH ON)
+ELSE (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+   set (USE_STATIC_LIB_LINKAGE OFF CACHE BOOL "Build binaries with statically linked libraries" FORCE)
+ENDIF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+
+message (STATUS "CXX FLAGS: ${CMAKE_CXX_FLAGS}")
+message (STATUS "C FLAGS: ${CMAKE_C_FLAGS}")
+message (STATUS "link FLAGS: ${LINK_FLAGS}")
 
 # Change the line to Release to build release binaries
 # For servers, build with debugging info; for tools, build Release
@@ -57,6 +73,7 @@ IF (CMAKE_BUILD_TYPE STREQUAL "Release")
 ENDIF(CMAKE_BUILD_TYPE STREQUAL "Release")
 
 set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wall")
+
 
 #
 # Find the path to libfuse.so
