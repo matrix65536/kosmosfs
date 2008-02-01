@@ -49,12 +49,8 @@ IF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
    # Cmake does whacky relink on solaris and messes things up; avoid this
    set (CMAKE_SKIP_RPATH ON)
 ELSE (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
-   set (USE_STATIC_LIB_LINKAGE OFF CACHE BOOL "Build binaries with statically linked libraries" FORCE)
+   set (USE_STATIC_LIB_LINKAGE ON CACHE BOOL "Build binaries with statically linked libraries" FORCE)
 ENDIF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
-
-message (STATUS "CXX FLAGS: ${CMAKE_CXX_FLAGS}")
-message (STATUS "C FLAGS: ${CMAKE_C_FLAGS}")
-message (STATUS "link FLAGS: ${LINK_FLAGS}")
 
 # Change the line to Release to build release binaries
 # For servers, build with debugging info; for tools, build Release
