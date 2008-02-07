@@ -31,6 +31,7 @@ from ConfigParser import ConfigParser
 # Input file format for machines.cfg
 # [metaserver]
 #   type: metaserver
+#   clusterkey: <cluster name>
 #   node: <value>
 #   rundir: <dir>
 #   baseport: <port>
@@ -66,6 +67,9 @@ def setupMeta(section, config):
     fh.write(s)
     s = "metaServer.chunkServerPort = %d\n" % (baseport + 100)
     fh.write(s)
+    key = config.get(section, 'clusterkey')
+    s = "metaServer.clusterKey = %s\n" % (key)
+    fh.write(s)
     rundir = config.get(section, 'rundir')
     s = "metaServer.cpDir = %s/bin/kfscp\n" % rundir
     fh.write(s)
@@ -87,6 +91,9 @@ def setupChunk(section, config):
     s = "chunkServer.metaServer.port = %d\n" % metaToChunkPort
     fh.write(s)
     s = "chunkServer.clientPort = %d\n" % config.getint(section, 'baseport')
+    fh.write(s)
+    key = config.get('metaserver', 'clusterkey')
+    s = "chunkServer.clusterKey = %s\n" % (key)
     fh.write(s)
     space = config.get(section, 'space')
     s = space.split()
