@@ -253,10 +253,10 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
     
         // We should only get a HELLO message here; anything
         // else is bad.
-        if (ParseCommand(buf.get(), msgLen, &op) != 0) {
+        if (ParseCommand(buf.get(), msgLen, &op) < 0) {
             KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
             iobuf->Consume(msgLen);
-            // got a bogus command
+            // we couldn't parse out hello
             return -1;
         }
 

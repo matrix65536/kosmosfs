@@ -135,6 +135,11 @@ ReadMetaServerProperties(char *fileName)
         cout << "Using meta server chunk server port: " << gChunkServerPort << endl;
 	gLogDir = gProp.getValue("metaServer.logDir","");
 	gCPDir = gProp.getValue("metaServer.cpDir","");
+
+	const char *clusterKey = gProp.getValue("metaServer.clusterKey", "");
+	cout << "Setting cluster key to: " << clusterKey << endl;
+
+	setClusterKey(clusterKey);
 	
         return 0;
 }

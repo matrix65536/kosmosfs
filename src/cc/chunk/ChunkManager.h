@@ -218,7 +218,11 @@ public:
     /// hosted on this server.
     void GetHostedChunks(std::vector<ChunkInfo_t> &result);
 
-    size_t GetTotalSpace() const { return mTotalSpace; };
+    /// Return the total space that is exported by this server.  If
+    /// chunks are stored in a single directory, we use statvfs to
+    /// determine the total space avail; we report the min of statvfs
+    /// value and the configured mTotalSpace.
+    size_t GetTotalSpace() const;
     size_t GetUsedSpace() const { return mUsedSpace; };
 
     /// For a write, the client has pushed data to us.  This is queued

@@ -562,6 +562,9 @@ WriteOp::HandleWriteDone(int code, void *data)
         status = *(int *) data;
         numBytesIO = status;
         SET_HANDLER(this, &WriteOp::HandleSyncDone);
+        if (1) {
+            return HandleSyncDone(EVENT_SYNC_DONE, this);
+        }
         if (gChunkManager.Sync(this) < 0) {
             KFS_LOG_DEBUG("Sync failed...");
             // eat up everything that was sent
@@ -1329,6 +1332,7 @@ HelloMetaOp::Request(ostringstream &os)
     os << "Cseq: " << seq << "\r\n";
     os << "Chunk-server-name: " << myLocation.hostname << "\r\n";
     os << "Chunk-server-port: " << myLocation.port << "\r\n";
+    os << "Cluster-key: " << clusterKey << "\r\n";
     os << "Total-space: " << totalSpace << "\r\n";
     os << "Used-space: " << usedSpace << "\r\n";
 

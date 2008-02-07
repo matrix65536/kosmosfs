@@ -606,11 +606,12 @@ struct LeaseRenewOp : public KfsOp {
 // This is just a helper op for building a hello request to the metaserver.
 struct HelloMetaOp : public KfsOp {
     ServerLocation myLocation;
+    std::string clusterKey;
     size_t totalSpace;
     size_t usedSpace;
     std::vector<ChunkInfo_t> chunks;
-    HelloMetaOp(kfsSeq_t s, ServerLocation &l) :
-        KfsOp(CMD_META_HELLO, s), myLocation(l) {
+    HelloMetaOp(kfsSeq_t s, ServerLocation &l, std::string &k) :
+        KfsOp(CMD_META_HELLO, s), myLocation(l), clusterKey(k) {
     }
     void Execute() { }
     void Request(std::ostringstream &os);
@@ -618,6 +619,7 @@ struct HelloMetaOp : public KfsOp {
         std::ostringstream os;
 
         os << "meta-hello: " << " mylocation = " << myLocation.ToString();
+        os << "cluster key: " << clusterKey;
         return os.str();
     }
 };

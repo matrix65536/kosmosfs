@@ -83,6 +83,9 @@ typedef map<MetaOp, Counter *> OpCounterMap;
 typedef map<MetaOp, Counter *>::iterator OpCounterMapIter;
 OpCounterMap gCounters;
 
+// see the comments in setClusterKey()
+string gClusterKey;
+
 static bool
 file_exists(fid_t fid)
 {
@@ -159,6 +162,17 @@ KFS::ChangeIncarnationNumber(MetaRequest *r)
 	MetaChangeChunkVersionInc *ccvi = new MetaChangeChunkVersionInc(chunkVersionInc, r);
 
 	submit_request(ccvi);
+}
+
+/*
+ * Set the "key" for this cluster.  All chunkservers connecting to the meta-data
+ * server should provide this key in the hello message.
+ * @param[in] key  The desired cluster key
+*/
+void
+KFS::setClusterKey(const char *key)
+{
+	gClusterKey = key;
 }
 
 /*
@@ -506,6 +520,11 @@ static void
 handle_hello(MetaRequest *r)
 {
 	MetaHello *req = static_cast <MetaHello *>(r);
+
+	if (req->status < 0) {
+		// bad hello request...possible cluster key mismatch
+		return;
+	}
 
 	gLayoutManager.AddNewServer(req);
 	req->status = 0;
@@ -1318,6 +1337,7 @@ parseHandlerHello(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
 	MetaHello *hello;
+	string key;
 
 	hello = new MetaHello(seq);
 	hello->location.hostname = prop.getValue("Chunk-server-name", "");
@@ -1325,6 +1345,12 @@ parseHandlerHello(Properties &prop, MetaRequest **r)
 	if (!hello->location.IsValid()) {
 		delete hello;
 		return -1;
+	}
+	key = prop.getValue("Cluster-key", "");
+	if (key != gClusterKey) {
+		KFS_LOG_VA_INFO("cluster key mismatch: we have %s, chunkserver sent us %s", 
+				gClusterKey.c_str(), key.c_str());
+		hello->status = -EBADCLUSTERKEY;
 	}
 	hello->totalSpace = prop.getValue("Total-space", (long long) 0);
 	hello->usedSpace = prop.getValue("Used-space", (long long) 0);
@@ -1649,6 +1675,14 @@ MetaLeaseAcquire::response(ostringstream &os)
 
 void
 MetaLeaseRenew::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
+MetaHello::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";

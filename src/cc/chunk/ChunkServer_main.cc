@@ -62,6 +62,7 @@ size_t gTotalSpace;			// max. storage space to use
 int gChunkServerClientPort;	// Port at which kfs clients connect to us
 
 Properties gProp;
+const char *gClusterKey;
 
 int gChunkServerCleanupOnStart;
 
@@ -97,7 +98,7 @@ main(int argc, char **argv)
     gChunkServer.Init();
     gChunkManager.Init(gChunkDirs, gTotalSpace);
     gLogger.Init(gLogDir);
-    gMetaServerSM.Init(gMetaServerLoc);
+    gMetaServerSM.Init(gMetaServerLoc, gClusterKey);
 
     signal(SIGPIPE, SIG_IGN);
 
@@ -199,5 +200,9 @@ ReadChunkServerProperties(char *fileName)
 
     gChunkServerCleanupOnStart = gProp.getValue("chunkServer.cleanupOnStart", 0);
     cout << "cleanup on start = " << gChunkServerCleanupOnStart << endl;
+
+    gClusterKey = gProp.getValue("chunkServer.clusterKey", "");
+    cout << "using cluster key = " << gClusterKey << endl;
+
     return 0;
 }
