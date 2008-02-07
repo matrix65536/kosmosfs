@@ -48,7 +48,7 @@ public:
     ~MetaServerSM(); 
 
     /// Init function for configuring the metaserver SM.
-    void Init(const ServerLocation &metaLoc);
+    void Init(const ServerLocation &metaLoc, const char *clusterKey);
     /// Send HELLO message
     /// @param[in] chunkServerPort  Port at which chunk-server is
     /// listening for connections from KFS clients.
@@ -78,6 +78,11 @@ private:
     kfsSeq_t mCmdSeq;
     /// where is the server located?
     ServerLocation mLocation;
+
+    /// "shared secret" key for this cluster.  This is used to prevent
+    /// config mishaps: When we connect to a metaserver, we have to
+    /// agree on the cluster key.
+    std::string mClusterKey;
 
     /// the port that the metaserver tells the clients to connect to us at.
     int mChunkServerPort;

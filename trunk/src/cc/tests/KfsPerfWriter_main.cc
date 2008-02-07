@@ -37,6 +37,7 @@ using std::string;
 
 using namespace KFS;
 
+int numReplicas = 3;
 KfsClient *gKfsClient;
 static bool doMkdir(const char *dirname);
 static long doWrite(const string &kfspathname, int numMBytes, size_t writeSizeBytes);
@@ -51,7 +52,7 @@ main(int argc, char **argv)
     size_t writeSizeBytes = 65536;
     bool help = false;
 
-    while ((optchar = getopt(argc, argv, "f:p:m:b:")) != -1) {
+    while ((optchar = getopt(argc, argv, "f:p:m:b:r:")) != -1) {
         switch (optchar) {
             case 'f':
                 kfspathname = optarg;
@@ -64,6 +65,9 @@ main(int argc, char **argv)
                 break;
             case 'm':
                 numMBytes = atoi(optarg);
+                break;
+            case 'r':
+                numReplicas = atoi(optarg);
                 break;
             default:
                 cout << "Unrecognized flag: " << optchar << endl;
@@ -153,7 +157,7 @@ doWrite(const string &filename, int numMBytes, size_t writeSizeBytes)
         dataBuf[bytesWritten] = 'a' + bytesWritten % 26;
     }
     // fd = gKfsClient->Open(filename.c_str(), O_CREAT|O_RDWR);
-    fd = gKfsClient->Create(filename.c_str(), 3);
+    fd = gKfsClient->Create(filename.c_str(), numReplicas);
     if (fd < 0) {
         cout << "Create failed: " << endl;
         exit(0);

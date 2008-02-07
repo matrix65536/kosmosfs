@@ -61,9 +61,10 @@ MetaServerSM::~MetaServerSM()
 }
 
 void 
-MetaServerSM::Init(const ServerLocation &metaLoc)
+MetaServerSM::Init(const ServerLocation &metaLoc, const char *clusterKey)
 {
     mLocation = metaLoc;
+    mClusterKey = clusterKey;
 }
 
 void
@@ -126,7 +127,7 @@ MetaServerSM::SendHello(int chunkServerPort)
     gethostname(hostname, 256);
 
     ServerLocation loc(hostname, chunkServerPort);
-    HelloMetaOp op(nextSeq(), loc);
+    HelloMetaOp op(nextSeq(), loc, mClusterKey);
 
     op.totalSpace = gChunkManager.GetTotalSpace();
     op.usedSpace = gChunkManager.GetUsedSpace();
@@ -237,6 +238,11 @@ MetaServerSM::HandleReply(IOBuffer *iobuf, int msgLen)
     prop.loadProperties(ist, separator, false);
     seq = prop.getValue("Cseq", (kfsSeq_t) -1);
     status = prop.getValue("Status", -1);
+    if (status == -EBADCLUSTERKEY) {
+        KFS_LOG_VA_FATAL("Aborting...due to cluster key mismatch; our key: %s",
+                         mClusterKey.c_str());
+        exit(-1);
+    }
     iter = find_if(mDispatchedOps.begin(), mDispatchedOps.end(), 
                    OpMatcher(seq));
     if (iter == mDispatchedOps.end()) 

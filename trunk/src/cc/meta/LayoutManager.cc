@@ -354,8 +354,13 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 
 	r->servers.reserve(r->numReplicas);
 
+        // bug fix reported by Alexey Timanovsky
+        // used to be i < mChunkServers.size(), which is incorrect
+        //  -- if # of candidates < #  of chunkservers, then we
+        //     are indexing something that is null or corrupting stuff.
+	//
 	for (i = 0; r->servers.size() < (uint32_t) r->numReplicas && 
-			i < mChunkServers.size(); i++) {
+			i < candidates.size(); i++) {
 		r->servers.push_back(candidates[i]);
 	}
         

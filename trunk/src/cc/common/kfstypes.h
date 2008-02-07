@@ -80,6 +80,10 @@ const int ESERVERBUSY = 1004;
 // an error occurring during allocation; the client will see this error
 // code and retry. 
 const int EALLOCFAILED = 1005;
+
+// error to indicate that there is a cluster key mismatch between
+// chunkserver and metaserver.
+const int EBADCLUSTERKEY = 1006;
 }
 
 #endif // COMMON_KFSTYPES_H

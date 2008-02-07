@@ -490,6 +490,7 @@ struct MetaHello: public MetaRequest {
 	vector<ChunkInfo> chunks; //!< Chunks  hosted on this server
 	MetaHello(seq_t s): MetaRequest(META_HELLO, s, false) { }
 	int log(ofstream &file) const;
+	void response(ostringstream &os);
 	string Show()
 	{
 		return "Chunkserver Hello";
@@ -831,6 +832,7 @@ extern void printleaves();
 
 extern void ChangeIncarnationNumber(MetaRequest *r);
 extern void RegisterCounters();
+extern void setClusterKey(const char *key);
 
 }
 #endif /* !defined(KFS_REQUEST_H) */

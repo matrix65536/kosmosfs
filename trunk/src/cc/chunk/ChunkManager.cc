@@ -29,6 +29,8 @@ extern "C" {
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/statvfs.h>
 }
 
 #include "common/log.h"
@@ -1292,4 +1294,24 @@ string
 KFS::GetStaleChunkPath(const string &partition)
 {
     return partition + "/lost+found/";
+}
+
+size_t
+ChunkManager::GetTotalSpace() const
+{
+    if (mChunkDirs.size() > 1) {
+        return mTotalSpace;
+    }
+    struct statvfs result;
+
+    // report the space based on availability
+    if (statvfs(mChunkDirs[0].c_str(), &result) < 0) {
+        KFS_LOG_VA_DEBUG("statvfs failed...returning %ld", mTotalSpace);
+        return mTotalSpace;
+    }
+    if (result.f_frsize == 0)
+        return mTotalSpace;
+
+    // we got all the info...so report true value
+    return min(result.f_bavail * result.f_frsize, mTotalSpace);
 }
