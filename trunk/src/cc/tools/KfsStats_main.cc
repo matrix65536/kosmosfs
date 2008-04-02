@@ -130,7 +130,9 @@ int main(int argc, char **argv)
 static void
 PrintRpcStat(const string &statName, Properties &prop)
 {
-    cout << statName << " = " << prop.getValue(statName, (long long) 0) << endl;
+    // cout << statName << " = " << prop.getValue(statName, (long
+    // long) 0) << endl;
+    cout << statName << " = " << prop.getValue(statName, "0") << endl;
 }
 
 
@@ -268,6 +270,7 @@ RpcStatsChunkServer(TcpSocket &chunkServerSock, int numSecs)
         PrintRpcStat("Size", op.stats);
         PrintRpcStat("Open", op.stats);
         PrintRpcStat("Read", op.stats);
+        PrintRpcStat("Write Prepare->Sync", op.stats);
         PrintRpcStat("Write Prepare", op.stats);
         PrintRpcStat("Write Commit", op.stats);
         PrintRpcStat("Write Sync", op.stats);
