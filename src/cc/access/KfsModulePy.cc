@@ -35,6 +35,7 @@
 extern "C" {
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <fcntl.h>
 }
 
 // XXX This is part of newer versions of Python; take out after
