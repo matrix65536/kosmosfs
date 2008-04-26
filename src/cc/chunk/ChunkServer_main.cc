@@ -58,7 +58,7 @@ string gLogDir;
 vector<string> gChunkDirs;
 
 ServerLocation gMetaServerLoc;
-size_t gTotalSpace;			// max. storage space to use
+int64_t gTotalSpace;			// max. storage space to use
 int gChunkServerClientPort;	// Port at which kfs clients connect to us
 
 Properties gProp;

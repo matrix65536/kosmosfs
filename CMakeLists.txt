@@ -52,6 +52,12 @@ ELSE (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
    set (USE_STATIC_LIB_LINKAGE ON CACHE BOOL "Build binaries with statically linked libraries" FORCE)
 ENDIF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
 
+
+IF (CMAKE_SYSTEM_PROCESSOR MATCHES "i[1-9]86")
+   message (STATUS "Enabling largefile source flags")
+   add_definitions (-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGE_FILES)
+ENDIF (CMAKE_SYSTEM_PROCESSOR MATCHES "i[1-9]86")
+
 # Change the line to Release to build release binaries
 # For servers, build with debugging info; for tools, build Release
 #

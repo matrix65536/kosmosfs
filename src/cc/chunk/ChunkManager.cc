@@ -95,7 +95,7 @@ ChunkManager::~ChunkManager()
 }
 
 void 
-ChunkManager::Init(const vector<string> &chunkDirs, size_t totalSpace)
+ChunkManager::Init(const vector<string> &chunkDirs, int64_t totalSpace)
 {
     mTotalSpace = totalSpace;
     mChunkDirs = chunkDirs;
@@ -1039,7 +1039,7 @@ ChunkManager::ReplayDeleteChunk(kfsChunkId_t chunkId)
 
 void
 ChunkManager::ReplayWriteDone(kfsChunkId_t chunkId, size_t chunkSize,
-                              uint32_t offset, vector<uint32_t> checksums)
+                              off_t offset, vector<uint32_t> checksums)
 {
     ChunkInfoHandle_t *cih;
     int res;
@@ -1055,7 +1055,7 @@ ChunkManager::ReplayWriteDone(kfsChunkId_t chunkId, size_t chunkSize,
     
     for (vector<uint32_t>::size_type i = 0; i < checksums.size(); i++) {
         off_t currOffset = offset + i * CHECKSUM_BLOCKSIZE;
-        uint32_t checksumBlock = OffsetToChecksumBlockNum(currOffset);
+        off_t checksumBlock = OffsetToChecksumBlockNum(currOffset);
         
         if (cih->chunkInfo.chunkBlockChecksum.size() <= checksumBlock)
             cih->chunkInfo.chunkBlockChecksum.resize(checksumBlock + 1);
@@ -1069,7 +1069,7 @@ ChunkManager::ReplayTruncateDone(kfsChunkId_t chunkId, size_t chunkSize)
 {
     ChunkInfoHandle_t *cih;
     int res;
-    uint32_t lastChecksumBlock;
+    off_t lastChecksumBlock;
 
     res = GetChunkInfoHandle(chunkId, &cih);
     if (res < 0)
@@ -1296,22 +1296,38 @@ KFS::GetStaleChunkPath(const string &partition)
     return partition + "/lost+found/";
 }
 
-size_t
+int64_t
 ChunkManager::GetTotalSpace() const
 {
+
+    int64_t availableSpace;
     if (mChunkDirs.size() > 1) {
         return mTotalSpace;
     }
-    struct statvfs result;
 
     // report the space based on availability
+#if defined(__i386__)
+    struct statvfs64 result;
+
+    if (statvfs64(mChunkDirs[0].c_str(), &result) < 0) {
+        KFS_LOG_VA_DEBUG("statvfs failed...returning %ld", mTotalSpace);
+        return mTotalSpace;
+    }
+
+#else
+    struct statvfs result;
+
     if (statvfs(mChunkDirs[0].c_str(), &result) < 0) {
         KFS_LOG_VA_DEBUG("statvfs failed...returning %ld", mTotalSpace);
         return mTotalSpace;
     }
+
+#endif
+
     if (result.f_frsize == 0)
         return mTotalSpace;
 
+    availableSpace = result.f_bavail * result.f_frsize;
     // we got all the info...so report true value
-    return min(result.f_bavail * result.f_frsize, mTotalSpace);
+    return min(availableSpace, mTotalSpace);
 }
