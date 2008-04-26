@@ -27,7 +27,7 @@
 #ifndef COMMON_CXXUTIL_H
 #define COMMON_CXXUTIL_H
 
-#if defined (__APPLE__)
+#if defined (__APPLE__) || defined (__i386__)
 #include <tr1/functional>
 namespace std
 {

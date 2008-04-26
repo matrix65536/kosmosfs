@@ -232,8 +232,8 @@ struct ReplicateChunkOp : public KfsOp {
 };
 
 struct HeartbeatOp : public KfsOp {
-    ssize_t totalSpace;
-    ssize_t usedSpace;
+    int64_t totalSpace;
+    int64_t usedSpace;
     HeartbeatOp(kfsSeq_t s) :
         KfsOp(CMD_HEARTBEAT, s)
     {
@@ -540,8 +540,8 @@ struct SizeOp : public KfsOp {
 
 // used for pinging the server and checking liveness
 struct PingOp : public KfsOp {
-    size_t totalSpace;
-    size_t usedSpace;
+    int64_t totalSpace;
+    int64_t usedSpace;
     PingOp(kfsSeq_t s) :
         KfsOp(CMD_PING, s) { }
     void Response(std::ostringstream &os);
@@ -607,8 +607,8 @@ struct LeaseRenewOp : public KfsOp {
 struct HelloMetaOp : public KfsOp {
     ServerLocation myLocation;
     std::string clusterKey;
-    size_t totalSpace;
-    size_t usedSpace;
+    int64_t totalSpace;
+    int64_t usedSpace;
     std::vector<ChunkInfo_t> chunks;
     HelloMetaOp(kfsSeq_t s, ServerLocation &l, std::string &k) :
         KfsOp(CMD_META_HELLO, s), myLocation(l), clusterKey(k) {

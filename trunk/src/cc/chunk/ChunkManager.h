@@ -75,7 +75,7 @@ public:
     ~ChunkManager();
     
     /// Init function to configure the chunk manager object.
-    void Init(const std::vector<std::string> &chunkDirs, size_t totalSpace);
+    void Init(const std::vector<std::string> &chunkDirs, int64_t totalSpace);
 
     /// Allocate a file to hold a chunk on disk.  The filename is the
     /// chunk id itself.
@@ -205,7 +205,7 @@ public:
     /// completion of a write.
     /// @param[in] chunkSize The new size of the chunk
     void ReplayWriteDone(kfsChunkId_t chunkId, size_t chunkSize,
-                         uint32_t offset, std::vector<uint32_t> checksum);
+                         off_t offset, std::vector<uint32_t> checksum);
 
     /// Replay a truncation done on a chunk.
     /// @param[in] chunkId  Update the size of chunk to reflect the
@@ -222,8 +222,8 @@ public:
     /// chunks are stored in a single directory, we use statvfs to
     /// determine the total space avail; we report the min of statvfs
     /// value and the configured mTotalSpace.
-    size_t GetTotalSpace() const;
-    size_t GetUsedSpace() const { return mUsedSpace; };
+    int64_t GetTotalSpace() const;
+    int64_t GetUsedSpace() const { return mUsedSpace; };
 
     /// For a write, the client has pushed data to us.  This is queued
     /// for a commit later on.
@@ -263,9 +263,9 @@ private:
     static const int MAX_PENDING_WRITE_LRU_SECS = 300;
 
     /// space available for allocation 
-    size_t	mTotalSpace;
+    int64_t	mTotalSpace;
     /// how much is used up by chunks
-    size_t	mUsedSpace;
+    int64_t	mUsedSpace;
     
     /// directories for storing the chunks
     std::vector<std::string> mChunkDirs;

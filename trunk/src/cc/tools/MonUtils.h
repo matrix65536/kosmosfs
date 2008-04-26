@@ -64,8 +64,8 @@ namespace KFS_MON
 
     struct ChunkPingOp : public KfsMonOp {
         KFS::ServerLocation location;
-        size_t totalSpace;
-        size_t usedSpace;
+        int64_t totalSpace;
+        int64_t usedSpace;
         ChunkPingOp(int32_t s) :
             KfsMonOp(CMD_CHUNKPING, s) { };
         void Request(std::ostringstream &os);
