@@ -24,12 +24,12 @@ add_dependencies (tools kfsClient)
 add_dependencies (tools-shared kfsClient-shared)
 
 set (exe_files
-cpFs2Kfs
-cpKfs2Fs
-KfsShell
-KfsPing
-KfsPut
-KfsStats
+cptokfs
+cpfromkfs
+kfsshell
+kfsping
+kfsput
+kfsstats
 )
 
 #
