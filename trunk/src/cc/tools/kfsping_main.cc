@@ -50,7 +50,7 @@ PingMetaServer(const ServerLocation &location);
 static void
 PingChunkServer(const ServerLocation &location);
 
-float convertToMB(int64_t bytes)
+float convertToMB(long bytes)
 {
     return bytes / (1024.0 * 1024.0);
 }
