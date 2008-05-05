@@ -100,14 +100,17 @@ It is advisable to build both debug/release binaries.  For the
 purposes of deployment,
  - use DEBUG binaries for metaserver/chunkserver
  - use RELEASE binaries for the tools.  This makes the tools less chatty
+ - for performance reasons, you may want to use release binaries with debugging
+   info enabled (such as, compile flags of "-O2 -g")
 
-Having binaries with DEBUG info simplifies debugging core-dumps :)
+Having binaries with debugging info simplifies debugging core-dumps :)
 
 To build DEBUG/RELEASE binaries, here is a suggested directory
 hierarchy:
  ~/code/kfs/build --- is the build root
                  /debug -- is the debug build area
                  /release -- is the release build area
+                 /reldbg -- is the release binares with debugging info build area
 
 Next,
  - cd ~/code/kfs/build/debug
@@ -115,7 +118,12 @@ Next,
    info. are built by default.
  
  - cd ~/code/kfs/build/release
- - cmake -D CMAKE_BUILD_TYPE="Release" ~/code/kfs
+ - cmake -DCMAKE_BUILD_TYPE:STRING="Release" ~/code/kfs
+ - Follow the steps from #5 from the previous section to compile the
+ tree
+
+ - cd ~/code/kfs/build/reldbg
+ - cmake -DCMAKE_BUILD_TYPE:STRING="RelWithDebInfo" ~/code/kfs
  - Follow the steps from #5 from the previous section to compile the
  tree
 
