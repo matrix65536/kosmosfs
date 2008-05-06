@@ -232,9 +232,16 @@ replay_allocate(deque <string> &c)
 		status = metatree.allocateChunkId(fid, offset, &cid, 
 						&chunkVersion, NULL);
 		if (status == -EEXIST) {
-			// if the entry exists in the tree, the versions
-			// better be different.
-			assert(chunkVersion != logChunkVersion);
+			// allocates are particularly nasty: we can have
+			// allocate requests that retrieve the info for an
+			// existing chunk; since there is no tree mutation,
+			// there is no way to turn off logging for the request
+			// (the mutation field of a request is const).  so, if
+			// we end up in a situation where what we get from the
+			// log matches what is in the tree, ignore it and move
+			// on
+			if (chunkVersion == logChunkVersion)
+				return ok;
 			status = 0;
 		}
 
@@ -245,7 +252,19 @@ replay_allocate(deque <string> &c)
 							cid, chunkVersion);
 			if (status == 0) {
 				gLayoutManager.AddChunkToServerMapping(cid, fid, NULL);
-				updateSeed(chunkID, cid);
+				if (cid > chunkID.getseed()) {
+					// chunkID are handled by a two-stage
+					// allocation: the seed is updated in
+					// the first part of the allocation and
+					// the chunk is attached to the file
+					// after the chunkservers have ack'ed
+					// the allocation.  We can have a run
+					// where: (1) the seed is updated, (2)
+					// a checkpoint is taken, (3) allocation
+					// is done and written to log file.  If
+					// we crash, then the cid in log < seed in ckpt.
+					updateSeed(chunkID, cid);
+				}
 			}
 		}
 	}
