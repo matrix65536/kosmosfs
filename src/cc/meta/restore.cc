@@ -150,8 +150,12 @@ restore_fattr(deque <string> &c)
 	if (!ok)
 		return false;
 
+	// chunkcount is an estimate; recompute it as we add chunks to the file.
+	// reason for it being estimate: if a CP is in progress while the
+	// metatree is updated, we have cases where the chunkcount is off by 1
+	// and the checkpoint contains the newly added chunk.
 	MetaFattr *f = new MetaFattr(type, fid, mtime, ctime, crtime, 
-					chunkcount, numReplicas);
+					0, numReplicas);
 	return (metatree.insert(f) == 0);
 }
 
@@ -173,6 +177,10 @@ restore_chunkinfo(deque <string> &c)
 
 	MetaChunkInfo *ch = new MetaChunkInfo(fid, offset, cid, chunkVersion);
 	if (metatree.insert(ch) == 0) {
+		MetaFattr *fa = metatree.getFattr(fid);
+
+		assert(fa != NULL);
+		fa->chunkcount++;
 		gLayoutManager.AddChunkToServerMapping(cid, fid, NULL);
 		return true;
 	}
