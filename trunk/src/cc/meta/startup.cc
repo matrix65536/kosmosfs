@@ -37,6 +37,7 @@
 #include <cassert>
 
 extern "C" {
+#include <sys/resource.h>
 #include <signal.h>
 }
 
@@ -99,10 +100,19 @@ request_consumer(void *dummy)
 void
 KFS::kfs_startup(const string &logdir, const string &cpdir)
 {
+	struct rlimit rlim;
+	int status = getrlimit(RLIMIT_NOFILE, &rlim);
+	if (status == 0) {
+		// bump up the # of open fds to as much as possible
+		rlim.rlim_cur = rlim.rlim_max;
+		setrlimit(RLIMIT_NOFILE, &rlim);
+	}
+	std::cout << "Setting the # of open files to: " << rlim.rlim_cur << std::endl;
+
 	sigset_t sset;
 	sigemptyset(&sset);
 	sigaddset(&sset, SIGALRM);
-	int status = sigprocmask(SIG_BLOCK, &sset, NULL);
+	status = sigprocmask(SIG_BLOCK, &sset, NULL);
 	if (status != 0)
 		panic("kfs_startup: sigprocmask", true);
 	// get the paths setup before we get going
