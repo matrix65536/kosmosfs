@@ -161,8 +161,10 @@ replay_remove(deque <string> &c)
 	int status = 0;
 	bool ok = pop_parent(parent, c);
 	ok = pop_name(myname, "name", c, ok);
+
 	if (ok)
 		status = metatree.remove(parent, myname);
+
 	return (ok && status == 0);
 }
 
@@ -221,12 +223,27 @@ replay_allocate(deque <string> &c)
 	chunkOff_t offset;
 	seq_t chunkVersion, logChunkVersion;
 	int status = 0;
+	MetaFattr *fa;
 
 	c.pop_front();
 	bool ok = pop_fid(fid, "file", c, true);
 	ok = pop_fid(offset, "offset", c, ok);
 	ok = pop_fid(logChunkId, "chunkId", c, ok);
 	ok = pop_fid(logChunkVersion, "chunkVersion", c, ok);
+
+	// during normal operation, if a file that has a valid 
+	// lease is removed, we move the file to the dumpster and log it.
+	// a subsequent allocation on that file will succeed.
+	// the remove/allocation is recorded in the logs in that order.
+	// during replay, we do the remove first and then we try to
+	// replay allocation; for the allocation, we won't find
+	// the file attributes.  we move on...when the chunkservers
+	// that has the associated chunks for the file contacts us, we won't
+	// find the fid and so those chunks will get nuked as stale.
+	fa = metatree.getFattr(fid);
+	if (fa == NULL)
+		return ok;
+
 	if (ok) {
 		cid = logChunkId;
 		status = metatree.allocateChunkId(fid, offset, &cid, 
