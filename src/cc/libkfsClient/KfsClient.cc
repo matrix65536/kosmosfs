@@ -797,10 +797,6 @@ KfsClientImpl::Rename(const char *oldpath, const char *newpath, bool overwrite)
     if (res < 0)
 	return res;
 
-    int fte = LookupFileTableEntry(parentFid, oldfilename.c_str());
-    if (fte > 0)
-	ReleaseFileTableEntry(fte);
-
     string absNewpath = build_path(mCwd, newpath);
     RenameOp op(nextSeq(), parentFid, oldfilename.c_str(),
 		    absNewpath.c_str(), overwrite);
@@ -1549,9 +1545,9 @@ struct RespondingServer {
     KfsClientImpl *client;
     const ChunkLayoutInfo &layout;
     int *status;
-    ssize_t *size;
+    off_t *size;
     RespondingServer(KfsClientImpl *cli, const ChunkLayoutInfo &lay,
-		     ssize_t *sz, int *st):
+		     off_t *sz, int *st):
 	    client(cli), layout(lay), status(st), size(sz) { }
     bool operator() (ServerLocation loc)
     {
@@ -1572,7 +1568,7 @@ struct RespondingServer {
     }
 };
 
-ssize_t
+off_t
 KfsClientImpl::ComputeFilesize(kfsFileId_t kfsfid)
 {
     GetLayoutOp lop(nextSeq(), kfsfid);
@@ -1594,8 +1590,8 @@ KfsClientImpl::ComputeFilesize(kfsFileId_t kfsfid)
 	return 0;
 
     vector <ChunkLayoutInfo>::reverse_iterator last = lop.chunks.rbegin();
-    ssize_t filesize = last->fileOffset;
-    ssize_t endsize = 0;
+    off_t filesize = last->fileOffset;
+    off_t endsize = 0;
     int rstatus = 0;
     RespondingServer responder(this, *last, &endsize, &rstatus);
     vector <ServerLocation>::iterator s =
@@ -1960,8 +1956,10 @@ KFS::ErrorCodeToStr(int status)
     else
 	errptr = "<unknown error>";
 #else
-    if ((errptr = strerror_r(-status, buf, sizeof buf)) == NULL)
-	errptr = "<unknown error>";
+    if ((errptr = strerror_r(-status, buf, sizeof buf)) == NULL) {
+      strcpy(buf, "<unknown error>");
+      errptr = buf;
+    }
 #endif
     return string(errptr);
 

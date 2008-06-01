@@ -67,7 +67,7 @@ main(int argc, char **argv)
     strcpy(dirname, "/dir1");
 
     doMkdir(dirname);
-    doMkdir("/dir2");
+
     if (doFileOps(argv[1], dirname, 0, 1) < 0) {
         cout << "File ops failed" << endl;
     }

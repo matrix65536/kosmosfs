@@ -28,6 +28,7 @@
 
 #include <aio.h>
 #include <boost/shared_ptr.hpp>
+#include <string.h>
 
 #include "Chunk.h"
 #include "Event.h"

@@ -183,7 +183,7 @@ namespace KFS
                 /// truncated
 		/// @param[in] sz    The size to which the should be
                 /// truncated to.
-		void TruncateChunk(chunkId_t chunkId, size_t sz);
+		void TruncateChunk(chunkId_t chunkId, off_t sz);
 
 		/// Handlers to acquire and renew leases.  Unexpired leases
 		/// will typically be renewed.

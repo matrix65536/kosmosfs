@@ -574,7 +574,7 @@ ChunkServer::DeleteChunk(chunkId_t chunkId)
 }
 
 int
-ChunkServer::TruncateChunk(chunkId_t chunkId, size_t s)
+ChunkServer::TruncateChunk(chunkId_t chunkId, off_t s)
 {
 	MetaChunkTruncate *r;
 
@@ -756,12 +756,12 @@ ChunkServer::FailPendingOps()
 	reqs.clear();
 }
 
-inline float convertToMB(long bytes)
+inline float convertToMB(off_t bytes)
 {
 	return bytes / (1024.0 * 1024.0);
 }
 
-inline float convertToGB(long bytes)
+inline float convertToGB(off_t bytes)
 {
 	return bytes / (1024.0 * 1024.0 * 1024.0);
 }

@@ -186,7 +186,7 @@ public:
 
 	void DeleteChunk();
 	//!< size to which this chunk should be truncated to
-	void TruncateChunk(size_t s);
+	void TruncateChunk(off_t s);
 
 	const string show() const;
 	int checkpoint(ofstream &file) const;

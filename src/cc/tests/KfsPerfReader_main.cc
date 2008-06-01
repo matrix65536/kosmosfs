@@ -40,7 +40,7 @@ using std::string;
 using namespace KFS;
 KfsClient *gKfsClient;
 
-static long doRead(const string &kfspathname, int numMBytes, int readSizeBytes);
+static off_t doRead(const string &kfspathname, int numMBytes, int readSizeBytes);
 
 int
 main(int argc, char **argv)
@@ -101,7 +101,7 @@ main(int argc, char **argv)
 
     struct timeval startTime, endTime;
     double timeTaken;
-    long bytesRead;
+    off_t bytesRead;
 
     gettimeofday(&startTime, NULL);
 
@@ -117,13 +117,13 @@ main(int argc, char **argv)
     
 }
 
-long
+off_t
 doRead(const string &filename, int numMBytes, int readSizeBytes)
 {
     const int mByte = 1024 * 1024;
     boost::scoped_array<char> dataBuf;
     int res, bytesRead = 0, nMBytes = 0, fd;
-    long nread = 0;
+    off_t nread = 0;
 
     dataBuf.reset(new char [mByte]);
 

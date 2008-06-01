@@ -366,7 +366,7 @@ struct WriteOp : public KfsOp {
     ssize_t	 numBytesIO; /* output: # of bytes actually written */
     DiskConnectionPtr diskConnection; /* disk connection used for writing data */
     IOBuffer *dataBuf; /* buffer with the data to be written */
-    size_t	 chunkSize; /* store the chunk size for logging purposes */
+    off_t	 chunkSize; /* store the chunk size for logging purposes */
     std::vector<uint32_t> checksums; /* store the checksum for logging purposes */
     /* 
      * for writes that are smaller than a checksum block, we need to
@@ -521,7 +521,7 @@ struct ReadOp : public KfsOp {
 struct SizeOp : public KfsOp {
     kfsChunkId_t chunkId;
     int64_t	 chunkVersion;
-    size_t     size; /* result */
+    off_t     size; /* result */
     SizeOp(kfsSeq_t s) :
         KfsOp(CMD_SIZE, s) { }
     SizeOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :

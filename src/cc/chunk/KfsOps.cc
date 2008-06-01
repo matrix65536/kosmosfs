@@ -509,7 +509,7 @@ int
 ReadOp::HandleDone(int code, void *data)
 {
     IOBuffer *b;
-    size_t chunkSize = 0;
+    off_t chunkSize = 0;
 
     if (code == EVENT_DISK_ERROR)
         status = -1;

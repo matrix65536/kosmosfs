@@ -11,6 +11,7 @@
 node: hostA
 rundir: /Users/kosmix/kfsRun/meta
 baseport: 20000
+clusterkey: test-cluster
 [chunkserver1]
 node: host1
 rundir: /Users/kosmix/kfsRun/chunk

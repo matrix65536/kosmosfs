@@ -28,6 +28,7 @@
 #ifndef LIBKFSIO_COUNTER_H
 #define LIBKFSIO_COUNTER_H
 
+#include <algorithm>
 #include <string>
 #include <sstream>
 #include <tr1/unordered_map>
@@ -103,11 +104,6 @@ public:
     CounterManager() { };
     ~CounterManager() {
         
-        for (CounterMapIterator iter = mCounters.begin();
-             iter != mCounters.end(); ++iter) {
-            Counter *c = iter->second;
-            delete c;
-        }
         mCounters.clear();
     }
     
@@ -153,7 +149,7 @@ public:
             return;
         }
 
-        for_each(mCounters.begin(), mCounters.end(), ShowCounter(os));
+	std::for_each(mCounters.begin(), mCounters.end(), ShowCounter(os));
     }
 
 private:

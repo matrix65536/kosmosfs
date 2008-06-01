@@ -89,6 +89,10 @@ For the metaserver, an additional variable is defined:
  without password---from the machine on which the metaserver
  is running to the remote node to which the checkpoint files have to
  be backed up to.
+ * clusterkey: This string defines the "key" for the cluster.  Whenever
+ a chunkserver joins, it passes its value of the key to the metaserver.  
+ Only if the keys match is the chunkserver allowed to join the cluster.
+ This is used to prevent config mismatches.
 
 For the chunkservers, there is are two additional variables that are defined:
   * space:  This variable specifies the amount of storage

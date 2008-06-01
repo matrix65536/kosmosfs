@@ -40,7 +40,7 @@ using namespace KFS;
 int numReplicas = 3;
 KfsClient *gKfsClient;
 static bool doMkdir(const char *dirname);
-static long doWrite(const string &kfspathname, int numMBytes, size_t writeSizeBytes);
+static off_t doWrite(const string &kfspathname, int numMBytes, size_t writeSizeBytes);
 
 int
 main(int argc, char **argv)
@@ -106,7 +106,7 @@ main(int argc, char **argv)
 
     struct timeval startTime, endTime;
     double timeTaken;
-    long bytesWritten;
+    off_t bytesWritten;
 
     gettimeofday(&startTime, NULL);
 
@@ -138,7 +138,7 @@ doMkdir(const char *dirname)
     return fd > 0;
 }
 
-long
+off_t
 doWrite(const string &filename, int numMBytes, size_t writeSizeBytes)
 {
     const size_t mByte = 1024 * 1024;
@@ -146,7 +146,7 @@ doWrite(const string &filename, int numMBytes, size_t writeSizeBytes)
     int res, fd;
     size_t bytesWritten = 0;
     int nMBytes = 0;
-    long nwrote = 0;
+    off_t nwrote = 0;
 
     if (writeSizeBytes > mByte) {
         cout << "Setting write size to: " << mByte << endl;

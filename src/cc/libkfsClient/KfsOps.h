@@ -26,6 +26,7 @@
 #ifndef _LIBKFSCLIENT_KFSOPS_H
 #define _LIBKFSCLIENT_KFSOPS_H
 
+#include <algorithm>
 #include <string>
 #include <sstream>
 #include <vector>
@@ -410,7 +411,7 @@ struct CloseOp : public KfsOp {
 struct SizeOp : public KfsOp {
     kfsChunkId_t chunkId;
     int64_t chunkVersion;
-    size_t     size; /* result */
+    off_t     size; /* result */
     SizeOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
         KfsOp(CMD_SIZE, s), chunkId(c), chunkVersion(v)
     {
@@ -514,7 +515,7 @@ struct WriteSyncOp : public KfsOp {
         ostringstream os;
 
         os << "write-sync: chunkid=" << chunkId << " version=" << chunkVersion;
-        for_each(writeInfo.begin(), writeInfo.end(), ShowWriteInfo(os));
+	std::for_each(writeInfo.begin(), writeInfo.end(), ShowWriteInfo(os));
         return os.str();
     }
 };

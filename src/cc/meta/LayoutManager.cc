@@ -637,9 +637,9 @@ LayoutManager::DeleteChunk(chunkId_t chunkId)
 
 class Truncator {
     chunkId_t chunkId;
-    size_t sz;
+    off_t sz;
 public:
-    Truncator(chunkId_t c, size_t s) : chunkId(c), sz(s) { }
+    Truncator(chunkId_t c, off_t s) : chunkId(c), sz(s) { }
     void operator () (ChunkServerPtr &c) { c->TruncateChunk(chunkId, sz); }
 };
 
@@ -648,7 +648,7 @@ public:
 /// submit an RPC request to it.
 ///
 void
-LayoutManager::TruncateChunk(chunkId_t chunkId, size_t sz)
+LayoutManager::TruncateChunk(chunkId_t chunkId, off_t sz)
 {
 	vector<ChunkServerPtr> c;
 
