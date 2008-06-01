@@ -29,6 +29,7 @@
 
 #if defined (__APPLE__) || defined (__i386__)
 #include <tr1/functional>
+#if ((__GNUC__ == 4) && (__GNUC_MINOR__ < 3))
 namespace std
 {
 namespace tr1
@@ -38,6 +39,7 @@ namespace tr1
     };
   }
 }
+#endif
 #endif
 
 #endif

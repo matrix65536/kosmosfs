@@ -193,7 +193,7 @@ ChunkManager::StaleChunk(kfsChunkId_t chunkId)
 }
 
 int
-ChunkManager::TruncateChunk(kfsChunkId_t chunkId, size_t chunkSize)
+ChunkManager::TruncateChunk(kfsChunkId_t chunkId, off_t chunkSize)
 {
     string chunkPathname;
     ChunkInfoHandle_t *cih;
@@ -382,7 +382,7 @@ ChunkManager::CloseChunk(kfsChunkId_t chunkId)
 }
 
 int
-ChunkManager::ChunkSize(kfsChunkId_t chunkId, size_t *chunkSize)
+ChunkManager::ChunkSize(kfsChunkId_t chunkId, off_t *chunkSize)
 {
     ChunkInfoHandle_t *cih;
 
@@ -583,7 +583,7 @@ ChunkManager::WriteChunkDone(WriteOp *op)
 
     mIsChunkTableDirty = true;
 
-    size_t endOffset = op->offset + op->numBytesIO;
+    off_t endOffset = op->offset + op->numBytesIO;
 
     for (vector<uint32_t>::size_type i = 0; i < op->checksums.size(); i++) {
         off_t offset = op->offset + i * CHECKSUM_BLOCKSIZE;
@@ -1038,7 +1038,7 @@ ChunkManager::ReplayDeleteChunk(kfsChunkId_t chunkId)
 }
 
 void
-ChunkManager::ReplayWriteDone(kfsChunkId_t chunkId, size_t chunkSize,
+ChunkManager::ReplayWriteDone(kfsChunkId_t chunkId, off_t chunkSize,
                               off_t offset, vector<uint32_t> checksums)
 {
     ChunkInfoHandle_t *cih;
@@ -1065,7 +1065,7 @@ ChunkManager::ReplayWriteDone(kfsChunkId_t chunkId, size_t chunkSize,
 }
 
 void
-ChunkManager::ReplayTruncateDone(kfsChunkId_t chunkId, size_t chunkSize)
+ChunkManager::ReplayTruncateDone(kfsChunkId_t chunkId, off_t chunkSize)
 {
     ChunkInfoHandle_t *cih;
     int res;

@@ -117,7 +117,7 @@ namespace KFS
                 /// @param[in] s   size to which chunk is being truncated to.
                 /// @retval 0 on success; -1 on failure
                 ///
-		int TruncateChunk(chunkId_t chunkId, size_t s);
+		int TruncateChunk(chunkId_t chunkId, off_t s);
 
 		/// Methods to handle (re) replication of a chunk.  If there are
 		/// insufficient copies of a chunk, we replicate it.

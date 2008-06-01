@@ -55,7 +55,7 @@ ENDIF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
 
 IF (CMAKE_SYSTEM_PROCESSOR MATCHES "i[1-9]86")
    message (STATUS "Enabling largefile source flags")
-   add_definitions (-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGE_FILES)
+   add_definitions (-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_LARGE_FILES)
 ENDIF (CMAKE_SYSTEM_PROCESSOR MATCHES "i[1-9]86")
 
 # Change the line to Release to build release binaries

@@ -268,7 +268,7 @@ KfsClientImpl::DoSmallReadFromServer(int fd, char *buf, size_t numBytes)
     ReadOp op(nextSeq(), chunk->chunkId, chunk->chunkVersion);
     op.offset = mFileTable[fd]->currPos.chunkOffset;
 
-    op.numBytes = min(chunk->chunkSize, numBytes);
+    op.numBytes = min(chunk->chunkSize, (off_t) numBytes);
     op.AttachContentBuf(buf, numBytes);
 
     // make sure we aren't overflowing...

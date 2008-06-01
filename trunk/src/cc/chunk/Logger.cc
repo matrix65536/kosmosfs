@@ -402,7 +402,7 @@ static void
 ParseWrite(istringstream &ist)
 {
     kfsChunkId_t chunkId;
-    size_t chunkSize;
+    off_t chunkSize;
     vector<uint32_t> checksums;
     uint32_t offset;
     vector<uint32_t>::size_type n;
@@ -424,8 +424,8 @@ static void
 ParseTruncateChunk(istringstream &ist)
 {
     kfsChunkId_t chunkId;
-    size_t chunkSize;
-
+    off_t chunkSize;
+    
     ist >> chunkId;
     ist >> chunkSize;
     gChunkManager.ReplayTruncateDone(chunkId, chunkSize);

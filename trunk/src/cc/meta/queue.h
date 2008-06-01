@@ -68,9 +68,6 @@ public:
 	void operator () (T *arg) {
 		(*func)(arg);
 	}
-	bool operator () (T *arg) {
-		return (*func)(arg);
-	}
 };
 
 /*

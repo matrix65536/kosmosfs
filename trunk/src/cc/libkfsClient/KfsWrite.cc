@@ -392,7 +392,7 @@ KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_
 	// be full.  So, take the size of the last chunk and to that
 	// add the size of the "full" chunks to get the size
 	FileAttr *fa = FdAttr(fd);
-	ssize_t eow = chunk->chunkSize + (pos->chunkNum  * KFS::CHUNKSIZE);
+	off_t eow = chunk->chunkSize + (pos->chunkNum  * KFS::CHUNKSIZE);
 	fa->fileSize = max(fa->fileSize, eow);
     }
 
@@ -527,7 +527,7 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	// be full.  So, take the size of the last chunk and to that
 	// add the size of the "full" chunks to get the size
 	FileAttr *fa = FdAttr(fd);
-	ssize_t eow = chunk->chunkSize + (pos->chunkNum  * KFS::CHUNKSIZE);
+	off_t eow = chunk->chunkSize + (pos->chunkNum  * KFS::CHUNKSIZE);
 	fa->fileSize = max(fa->fileSize, eow);
     }
 

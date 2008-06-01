@@ -115,7 +115,7 @@ MetaChunkInfo::DeleteChunk()
 }
 
 void
-MetaChunkInfo::TruncateChunk(size_t s)
+MetaChunkInfo::TruncateChunk(off_t s)
 {
 	gLayoutManager.TruncateChunk(chunkId, s);
 }

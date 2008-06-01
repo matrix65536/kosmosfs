@@ -36,3 +36,14 @@ Changes from version 0.1
  - Use log4cpp to write out metaserver/chunkserver log files.  log4cpp
  provides log file rotation support.
  - Bug fixes
+
+Changes from version 0.1.1
+==========================
+ - Bug fixes
+
+Changes from version 0.1.2
+=========================
+ - Support for compiling on 32-bit Linux platforms
+ - Support for compiling with gcc 4.3
+ - Bug fixes
+

@@ -8,6 +8,7 @@
 node: localhost
 rundir: /Users/kosmix/kfsRun/meta
 baseport: 20000
+clusterkey: test-cluster
 [chunkserver1]
 node: localhost
 rundir: /Users/kosmix/kfsRun/chunk1

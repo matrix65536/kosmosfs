@@ -148,7 +148,7 @@ bool doFileOps(char *testDataFile,
     kfsBuf1 = new char[KFS_DATA_BUF_SIZE];
 
 #if 1
-    seekPt = 5000 * 1024 * 1024;
+    seekPt = ((off_t) 5000) * 1024 * 1024;
     gKfsClient->Seek(fd, seekPt, SEEK_CUR);
 
     if (gKfsClient->Write(fd, kfsBuf, 512) < 0) {

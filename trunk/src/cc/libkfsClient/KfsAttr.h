@@ -57,7 +57,7 @@ struct ChunkAttr {
     /// did we request an allocation for this chunk?
     bool didAllocation;
     /// what is the size of this chunk
-    size_t	chunkSize;
+    off_t	chunkSize;
     ChunkAttr(): chunkId(-1), chunkVersion(-1), didAllocation(false),
                  chunkSize(0) { }
 };
@@ -92,7 +92,7 @@ struct FileAttr {
     /// is this a directory?
     bool	isDirectory;
     /// the size of this file in bytes---computed value
-    ssize_t	fileSize;
+    off_t	fileSize;
     
     /// how many chunks does it have
     long long	chunkCount;
@@ -148,7 +148,7 @@ struct KfsFileAttr {
     /// is this a directory?
     bool	isDirectory;
     /// the size of this file in bytes
-    ssize_t	fileSize;
+    off_t	fileSize;
 
     KfsFileAttr& operator= (const KfsServerAttr &other) {
         fileId = other.fileId;

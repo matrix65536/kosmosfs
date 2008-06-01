@@ -104,7 +104,7 @@ public:
     /// @param[in] chunkId id of the chunk being truncated.
     /// @param[in] chunkSize  size to which chunk should be truncated.
     /// @retval status code
-    int		TruncateChunk(kfsChunkId_t chunkId, size_t chunkSize);
+    int		TruncateChunk(kfsChunkId_t chunkId, off_t chunkSize);
 
     /// Change a chunk's version # to what the server says it should be.
     /// @param[in] fileId  id of the file that has chunk chunkId
@@ -145,7 +145,7 @@ public:
     /// @param[in] chunkId  The chunk whose size is needed
     /// @param[out] chunkSize  The size of the chunk
     /// @retval status code
-    int 	ChunkSize(kfsChunkId_t chunkId, size_t *chunkSize);
+    int 	ChunkSize(kfsChunkId_t chunkId, off_t *chunkSize);
 
     /// Cancel a previously scheduled chunk operation.
     /// @param[in] cont   The callback object that scheduled the
@@ -204,14 +204,14 @@ public:
     /// @param[in] chunkId  Update the size of chunk to reflect the
     /// completion of a write.
     /// @param[in] chunkSize The new size of the chunk
-    void ReplayWriteDone(kfsChunkId_t chunkId, size_t chunkSize,
+    void ReplayWriteDone(kfsChunkId_t chunkId, off_t chunkSize,
                          off_t offset, std::vector<uint32_t> checksum);
 
     /// Replay a truncation done on a chunk.
     /// @param[in] chunkId  Update the size of chunk to reflect the
     /// completion of a truncation
     /// @param[in] chunkSize The new size of the chunk
-    void ReplayTruncateDone(kfsChunkId_t chunkId, size_t chunkSize);
+    void ReplayTruncateDone(kfsChunkId_t chunkId, off_t chunkSize);
     
     /// Retrieve the chunks hosted on this chunk server.
     /// @param[out] result  A vector containing info of all chunks

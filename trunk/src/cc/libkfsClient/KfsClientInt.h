@@ -642,7 +642,7 @@ private:
     /// Given a kfsfid with some # of chunks, compute the size of the
     /// file.  This involves looking up the size of the last chunk of
     /// the file and then adding with the size of the remaining (full) chunks.
-    ssize_t ComputeFilesize(kfsFileId_t kfsfid);
+    off_t ComputeFilesize(kfsFileId_t kfsfid);
 
     FileTableEntry *FdInfo(int fd) { return mFileTable[fd]; }
     FilePosition *FdPos(int fd) { return &FdInfo(fd)->currPos; }
