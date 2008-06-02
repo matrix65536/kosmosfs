@@ -60,7 +60,7 @@ struct ChunkInfo_t {
     }
     kfsFileId_t fileId;
     kfsChunkId_t chunkId;
-    size_t  chunkSize;
+    off_t  chunkSize;
     uint32_t chunkVersion;
     std::vector<uint32_t> chunkBlockChecksum;
 };

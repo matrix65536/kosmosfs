@@ -202,7 +202,7 @@ ChunkManager::TruncateChunk(kfsChunkId_t chunkId, off_t chunkSize)
     CMI tableEntry = mChunkTable.find(chunkId);
 
     // the truncated size should not exceed chunk size.
-    if (chunkSize > KFS::CHUNKSIZE)
+    if (chunkSize > (off_t) KFS::CHUNKSIZE)
         return -EINVAL;
 
     if (tableEntry == mChunkTable.end())
@@ -418,9 +418,9 @@ ChunkManager::ReadChunk(ReadOp *op)
     op->diskConnection.reset(d);
 
     // schedule a read based on the chunk size
-    if (op->offset >= (off_t) cih->chunkInfo.chunkSize) {
+    if (op->offset >= cih->chunkInfo.chunkSize) {
         op->numBytesIO = 0;
-    } else if (op->offset + op->numBytes > cih->chunkInfo.chunkSize) {
+    } else if ((off_t) (op->offset + op->numBytes) > cih->chunkInfo.chunkSize) {
         op->numBytesIO = cih->chunkInfo.chunkSize - op->offset;
     } else {
         op->numBytesIO = op->numBytes;
@@ -439,7 +439,7 @@ ChunkManager::ReadChunk(ReadOp *op)
 
     // Make sure we don't try to read past EOF; the checksumming will
     // do the necessary zero-padding. 
-    if (offset + numBytesIO > cih->chunkInfo.chunkSize)
+    if ((off_t) (offset + numBytesIO) > cih->chunkInfo.chunkSize)
         numBytesIO = cih->chunkInfo.chunkSize - offset;
     
     if ((res = op->diskConnection->Read(offset, numBytesIO)) < 0)
@@ -472,7 +472,7 @@ ChunkManager::WriteChunk(WriteOp *op)
 			    (size_t) (op->offset + op->numBytesIO - cih->chunkInfo.chunkSize));
 #endif
 
-    if (mUsedSpace + addedBytes >= mTotalSpace)
+    if ((off_t) (mUsedSpace + addedBytes) >= mTotalSpace)
 	return -ENOSPC;
 
     if ((OffsetToChecksumBlockStart(op->offset) == op->offset) &&
@@ -1055,7 +1055,7 @@ ChunkManager::ReplayWriteDone(kfsChunkId_t chunkId, off_t chunkSize,
     
     for (vector<uint32_t>::size_type i = 0; i < checksums.size(); i++) {
         off_t currOffset = offset + i * CHECKSUM_BLOCKSIZE;
-        off_t checksumBlock = OffsetToChecksumBlockNum(currOffset);
+        size_t checksumBlock = OffsetToChecksumBlockNum(currOffset);
         
         if (cih->chunkInfo.chunkBlockChecksum.size() <= checksumBlock)
             cih->chunkInfo.chunkBlockChecksum.resize(checksumBlock + 1);
