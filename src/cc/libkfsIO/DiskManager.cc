@@ -90,6 +90,7 @@ DiskManager::Timeout()
         aioStatus = aio_error(&(event->aio_cb));
         switch (aioStatus) {
             case EINPROGRESS:
+                iter++;
                 break;
             case ECANCELED:
                 // remove the event from the queue.
