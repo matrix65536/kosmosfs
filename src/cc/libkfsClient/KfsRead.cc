@@ -309,7 +309,7 @@ KfsClientImpl::ZeroFillBuf(int fd, char *buf, size_t numBytes)
     bytesInFile = mFileTable[fd]->fattr.fileSize -
         mFileTable[fd]->currPos.fileOffset;
 
-    assert(chunk->chunkSize <= KFS::CHUNKSIZE);
+    assert(chunk->chunkSize <= (off_t) KFS::CHUNKSIZE);
 
     bytesInChunk = KFS::CHUNKSIZE - chunk->chunkSize;
     numIO = min(bytesInChunk, bytesInFile);
