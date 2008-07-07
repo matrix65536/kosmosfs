@@ -3,7 +3,8 @@
 //
 // Created 2006/08/15
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -39,7 +40,7 @@ using std::endl;
 using std::ifstream;
 
 using namespace KFS;
-KfsClient *gKfsClient;
+KfsClientPtr gKfsClient;
 bool doMkdir(char *dirname);
 bool doFileOps(char *testDataFile, char *dirname, int seqNum, int numIter);
 bool compareData(char *dst, char *src, int numBytes);
@@ -54,9 +55,8 @@ main(int argc, char **argv)
         exit(0);
     }
 
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(argv[2]);
-    if (!gKfsClient->IsInitialized()) {
+    gKfsClient = getKfsClientFactory()->GetClient(argv[2]);
+    if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(0);
     }

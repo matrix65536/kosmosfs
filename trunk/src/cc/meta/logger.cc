@@ -1,7 +1,8 @@
 /*!
  * $Id$ 
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -22,20 +23,36 @@
  * \author Blake Lewis (Kosmix Corp.)
  */
 
+#include <csignal>
+
 #include "logger.h"
 #include "queue.h"
 #include "checkpoint.h"
 #include "util.h"
 #include "replay.h"
 #include "common/log.h"
+#include "libkfsIO/Globals.h"
 
 using namespace KFS;
 
 // default values
-string LOGDIR("./kfslog");
-string LASTLOG(LOGDIR + "/last");
+string KFS::LOGDIR("./kfslog");
+string KFS::LASTLOG(LOGDIR + "/last");
 
 Logger KFS::oplog(LOGDIR);
+
+
+/*!
+ * \brief log the request and flush the result to the fs buffer.
+*/
+int
+Logger::log(MetaRequest *r)
+{
+	int res = r->log(file);
+	if (res >= 0)
+		flushResult(r);
+	return res;
+}
 
 /*!
  * \brief flush log entries to disk
@@ -57,6 +74,18 @@ Logger::flushLog()
 	thread.lock();
 	committed = last;
 	thread.unlock();
+}
+
+/*!
+ * \brief set the log filename/log # to seqno
+ * \param[in] seqno	the next log sequence number (lognum)
+ */
+void
+Logger::setLog(int seqno)
+{
+	assert(seqno >= 0);
+	lognum = seqno;
+	logname = logfile(lognum);
 }
 
 /*!
@@ -106,8 +135,9 @@ Logger::finishLog()
 		warn("link_latest", true);
 	incp = committed;
 	int status = startLog(lognum + 1);
+	cp.resetMutationCount();
 	thread.unlock();
-	cp.start_CP();
+	// cp.start_CP();
 	return status;
 }
 
@@ -131,14 +161,12 @@ Logger::flushResult(MetaRequest *r)
  * \brief return next available result
  * \return result that was at the head of the result queue
  *
- * Return the next available result, making sure that it is
- * committed to disk
+ * Return the next available result.
  */
 MetaRequest *
 Logger::next_result()
 {
 	MetaRequest *r = logged.dequeue();
-	flushResult(r);
 	return r;
 }
 
@@ -152,8 +180,6 @@ MetaRequest *
 Logger::next_result_nowait()
 {
 	MetaRequest *r = logged.dequeue_nowait();
-	if (r != NULL)
-		flushResult(r);
 	return r;
 }
 
@@ -164,26 +190,59 @@ Logger::next_result_nowait()
  * log routine to write them into the log file.  Note any mutations
  * in the checkpoint structure (so that it will realize that there
  * are changes to record), and finally, move the request onto the
- * result queue for return to the clients.
+ * result queue for return to the clients.  Before the result is released
+ * to the network dispatcher, we flush the log.
  */
 void *
 logger_main(void *dummy)
 {
 	for (;;) {
 		MetaRequest *r = oplog.get_pending();
-		bool is_cp = (r->op == META_CHECKPOINT);
+		bool is_cp = (r->op == META_LOG_ROLLOVER);
 		if (r->mutation && r->status == 0) {
 			oplog.log(r);
-			if (!is_cp)
+			if (!is_cp) {
 				cp.note_mutation();
+			}
 		}
 		if (is_cp) {
 			oplog.save_cp(r);
 		} else
 			oplog.add_logged(r);
+		if (oplog.isPendingEmpty()) 
+			// notify the net-manager that things are ready to go
+			libkfsio::globals().netKicker.Kick();
 	}
 	return NULL;
 }
+
+void *
+logtimer(void *dummy)
+{
+	int status, sig;
+	sigset_t sset;
+	sigemptyset(&sset);
+	sigaddset(&sset, SIGALRM);
+
+	alarm(LOG_ROLLOVER_MAXSEC);
+	for (;;) {
+		status = sigwait(&sset, &sig);
+		if (status == EINTR)	// happens under gdb for some reason
+			continue;
+		assert(status == 0 && sig == SIGALRM);
+		alarm(LOG_ROLLOVER_MAXSEC);
+		MetaLogRollover logreq;
+		// if the metatree hasn't been mutated, avoid a log file
+		// rollover
+		if (!cp.isCPNeeded())
+			continue;
+		submit_request(&logreq);
+		(void) oplog.wait_for_cp();
+	}
+
+	return NULL;
+}
+
 
 void
 KFS::logger_setup_paths(const string &logdir)
@@ -201,4 +260,6 @@ KFS::logger_init()
 	if (oplog.startLog(replayer.logno()) < 0)
 		panic("KFS::logger_init, startLog", true);
 	oplog.start(logger_main);
+	// use a timer to rotate logs
+	oplog.start_timer(logtimer);
 }

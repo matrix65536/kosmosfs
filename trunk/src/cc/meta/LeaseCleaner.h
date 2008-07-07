@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/16
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -28,11 +29,14 @@
 #define META_LEASECLEANER_H
 
 #include "libkfsIO/KfsCallbackObj.h"
+#include "libkfsIO/ITimeout.h"
 #include "libkfsIO/Event.h"
 #include "request.h"
 
 namespace KFS
 {
+
+class LeaseCleanerTimeoutImpl;
 
 class LeaseCleaner : public KfsCallbackObj {
 public:
@@ -41,15 +45,27 @@ public:
 	static const int CLEANUP_INTERVAL_MSECS = CLEANUP_INTERVAL_SECS * 1000;
 
 	LeaseCleaner();
+	~LeaseCleaner();
 	int HandleEvent(int code, void *data);
 
 private:
 	/// If a cleanup op is in progress, skip a send
 	bool mInProgress;
-	/// The event registered with the Event Manager to signify timeout events
-	EventPtr mEvent;
+	LeaseCleanerTimeoutImpl *mTimer;
 	/// The op for doing the cleanup
 	MetaLeaseCleanup mOp;
+};
+
+class LeaseCleanerTimeoutImpl : public ITimeout {
+public:
+	LeaseCleanerTimeoutImpl(LeaseCleaner *l) : mOwner(l) {
+		SetTimeoutInterval(LeaseCleaner::CLEANUP_INTERVAL_MSECS);
+	}
+	void Timeout() {
+		mOwner->HandleEvent(EVENT_TIMEOUT, NULL);
+	}
+private:
+	LeaseCleaner *mOwner;
 };
 
 }

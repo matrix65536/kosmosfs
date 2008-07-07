@@ -2,9 +2,10 @@
 // $Id$
 //
 // Created 2007/09/20
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -36,34 +37,34 @@ using namespace KFS;
 
 // Make the directory hierarchy in KFS defined by path.
 
-bool
+int
 KFS::tools::doMkdirs(const char *path)
 {
     int res;
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     res = kfsClient->Mkdirs((char *) path);
     if ((res < 0) && (res != -EEXIST)) {
         cout << "Mkdir failed: " << ErrorCodeToStr(res) << endl;
-        return false;
+        return res;
     }
-    return true;
+    return res;
 }
 
 // remove a single directory in kfs
 
-bool
+int
 KFS::tools::doRmdir(const char *dirname)
 {
     int res;
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     res = kfsClient->Rmdir(dirname);
     if (res < 0) {
         cout << "unable to rmdir: " << dirname <<  ':' << ErrorCodeToStr(res) << endl;
-        return false;
+        return res;
     }
-    return true;
+    return 0;
 }
 
 void

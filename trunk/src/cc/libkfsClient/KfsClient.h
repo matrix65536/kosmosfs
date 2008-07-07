@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/04/18
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -33,6 +34,7 @@
 #include <sstream>
 #include <algorithm>
 
+#include <boost/shared_ptr.hpp>
 #include <sys/stat.h>
 
 #include "KfsAttr.h"
@@ -47,26 +49,19 @@ const size_t MAX_FILENAME_LEN = 256;
 ///
 /// \brief The KfsClient is the "bridge" between applications and the
 /// KFS servers (either the metaserver or chunkserver): there can be
-/// only one client per application; the client can interface with
-/// only one metaserver.
+/// only one client per metaserver.
 ///
-class KfsClient {
-    // Make the constructor private to get a Singleton.
-    KfsClient();
-    KfsClient(const KfsClient &other);
-    const KfsClient & operator=(const KfsClient &other);
+/// The KfsClientFactory class can be used to produce KfsClient
+/// objects, where each client is used to interface with a different
+/// metaserver. The preferred method of creating a client object is
+/// thru the client factory.
+///
 
+
+class KfsClient {
 public:
-    static KfsClient *Instance() {
-        static KfsClient instance;
-        return &instance;
-    }
-    ///
-    /// @param[in] propFile that describes where the server is and
-    /// other client configuration info.
-    /// @retval 0 on success; -1 on failure
-    ///
-    int Init(const char *propFile);
+    KfsClient();
+    ~KfsClient();
 
     ///
     /// @param[in] metaServerHost  Machine on meta is running
@@ -148,6 +143,21 @@ public:
     bool Exists(const char *pathname);
     bool IsFile(const char *pathname);
     bool IsDirectory(const char *pathname);
+
+    ///
+    /// For testing/debugging purposes, would be nice to know where
+    /// the blocks of a file are and what their sizes happen to be.
+    /// @param[in] pathname   The full path to the file that is being
+    /// queried
+    /// @retval status code
+    ///
+    int EnumerateBlocks(const char *pathname);
+
+    /// Given a vector of checksums, one value per checksum block,
+    /// verify that it matches with what is stored at each of the
+    /// replicas in KFS.
+    /// @retval status code
+    bool VerifyDataChecksums(const char *pathname, const std::vector<uint32_t> &checksums);
 
     ///
     /// Create a file which is specified by a complete path.
@@ -278,16 +288,59 @@ public:
     ///
     int16_t SetReplicationFactor(const char *pathname, int16_t numReplicas);
 
+    ServerLocation GetMetaserverLocation() const;
 private:
     KfsClientImpl *mImpl;
 };
+
+typedef boost::shared_ptr<KfsClient> KfsClientPtr;
+
+class KfsClientFactory {
+    // Make the constructor private to get a Singleton.
+    KfsClientFactory() { }
+
+    KfsClientFactory(const KfsClientFactory &other);
+    const KfsClientFactory & operator=(const KfsClientFactory &other);
+    KfsClientPtr mDefaultClient;
+    std::vector<KfsClientPtr> mClients;
+public:
+    static KfsClientFactory *Instance() {
+        static KfsClientFactory instance;
+        return &instance;
+    }
+
+    void SetDefaultClient(KfsClientPtr &clnt) {
+        mDefaultClient = clnt;
+    }
+
+    KfsClientPtr GetClient() {
+        return mDefaultClient;
+    }
+
+    ///
+    /// @param[in] propFile that describes where the server is and
+    /// other client configuration info.
+    ///
+    KfsClientPtr GetClient(const char *propFile);
+
+    ///
+    /// Get the client object corresponding to the specified
+    /// metaserver.  If an object hasn't been created previously,
+    /// create a new one and return it.  The client object returned is
+    /// all setup---connected to metaserver and such.
+    /// @retval if connection to metaserver succeeds, a client object
+    /// that is "ready" for use; NULL if there was an error
+    ///
+    KfsClientPtr GetClient(const std::string metaServerHost, int metaServerPort);
+};
+
 
 /// Given a error status code, return a string describing the error.
 /// @param[in] status  The status code for an error.
 /// @retval String that describes what the error is.
 extern std::string ErrorCodeToStr(int status);
 
-extern KfsClient *getKfsClient();
+extern KfsClientFactory *getKfsClientFactory();
 
 }
 

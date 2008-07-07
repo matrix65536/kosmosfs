@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/09/27
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -26,6 +27,7 @@
 #include "Utils.h"
 #include "common/log.h"
 
+using std::vector;
 using std::string;
 using namespace KFS;
 
@@ -66,3 +68,30 @@ void KFS::die(const string &msg)
     abort();
 }
 
+void KFS::split(std::vector<std::string> &component, const string &path, char separator)
+{
+    string::size_type curr = 0, nextsep = 0;
+    string v;
+
+    while (nextsep != string::npos) {
+        nextsep = path.find(separator, curr);
+        v = path.substr(curr, nextsep - curr);
+        curr = nextsep + 1;
+        component.push_back(v);
+    }
+}
+
+float KFS::ComputeTimeDiff(const struct timeval &startTime, const struct timeval &endTime)
+{
+    float timeSpent;
+
+    if (endTime.tv_usec >= startTime.tv_usec) {
+        timeSpent = (endTime.tv_sec - startTime.tv_sec) +
+            (endTime.tv_usec - startTime.tv_usec) * 1e-6;
+    }
+    else {
+        timeSpent = (endTime.tv_sec - 1 - startTime.tv_sec) +
+            ((1000000 + endTime.tv_usec) - startTime.tv_usec) * 1e-6;
+    }
+    return timeSpent;
+}

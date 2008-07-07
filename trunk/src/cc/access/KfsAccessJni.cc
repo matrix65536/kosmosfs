@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2007/08/24
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -29,6 +30,8 @@
 #include <cstddef>
 #include <iostream>
 #include <vector>
+#include <netinet/in.h>
+
 using std::vector;
 using std::string;
 using std::cout;
@@ -39,89 +42,89 @@ using std::endl;
 using namespace KFS;
 
 extern "C" {
-    jint Java_org_kosmix_kosmosfs_access_KfsAccess_initF(
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_initF(
         JNIEnv *jenv, jclass jcls, jstring jpath);
 
-    jint Java_org_kosmix_kosmosfs_access_KfsAccess_initS(
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_initS(
         JNIEnv *jenv, jclass jcls, jstring jmetaServerHost, jint metaServerPort);
     
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_cd(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_mkdirs(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_remove(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_rename(
-        JNIEnv *jenv, jclass jcls, jstring joldpath, jstring jnewpath,
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring joldpath, jstring jnewpath,
         jboolean joverwrite);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_exists(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_isFile(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_isDirectory(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jlong Java_org_kosmix_kosmosfs_access_KfsAccess_filesize(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_getDataLocation(
-        JNIEnv *jenv, jclass jcls, jstring jpath, jlong jstart, jlong jlen);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jlong jstart, jlong jlen);
 
     jshort Java_org_kosmix_kosmosfs_access_KfsAccess_getReplication(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jshort Java_org_kosmix_kosmosfs_access_KfsAccess_setReplication(
-        JNIEnv *jenv, jclass jcls, jstring jpath, jint jnumReplicas);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jint jnumReplicas);
 
     jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
-        JNIEnv *jenv, jclass jcls, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_open(
-        JNIEnv *jenv, jclass jcls, jstring jpath, jstring jmode, jint jnumReplicas);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jstring jmode, jint jnumReplicas);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_create(
-        JNIEnv *jenv, jclass jcls, jstring jpath, jint jnumReplicas, jboolean jexclusive);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jint jnumReplicas, jboolean jexclusive);
 
     /* Input channel methods */
     jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_read(
-        JNIEnv *jenv, jclass jcls, jint jfd, jobject buf, jint begin, jint end);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jobject buf, jint begin, jint end);
 
     jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_seek(
-        JNIEnv *jenv, jclass jcls, jint jfd, jlong joffset);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jlong joffset);
 
     jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_tell(
-        JNIEnv *jenv, jclass jcls, jint jfd);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd);
 
     jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_close(
-        JNIEnv *jenv, jclass jcls, jint jfd);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd);
 
     /* Output channel methods */
     jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_write(
-        JNIEnv *jenv, jclass jcls, jint jfd, jobject buf, jint begin, jint end);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jobject buf, jint begin, jint end);
 
     jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_sync(
-        JNIEnv *jenv, jclass jcls, jint jfd);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd);
 
     jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_seek(
-        JNIEnv *jenv, jclass jcls, jint jfd, jlong joffset);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jlong joffset);
 
     jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_tell(
-        JNIEnv *jenv, jclass jcls, jint jfd);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd);
 
     jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_close(
-        JNIEnv *jenv, jclass jcls, jint jfd);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd);
 
 }
 
@@ -135,30 +138,36 @@ namespace
     }
 }
 
-jint Java_org_kosmix_kosmosfs_access_KfsAccess_initF(
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_initF(
     JNIEnv *jenv, jclass jcls, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClientPtr clnt;
 
     string path;
     setStr(path, jenv, jpath);
-    return clnt->Init(path.c_str());
+    clnt = getKfsClientFactory()->GetClient(path.c_str());
+    if (!clnt)
+        return 0;
+    return (jlong) (clnt.get());
 }
 
-jint Java_org_kosmix_kosmosfs_access_KfsAccess_initS(
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_initS(
     JNIEnv *jenv, jclass jcls, jstring jmetaServerHost, jint metaServerPort)
 {
-    KfsClient *clnt = KfsClient::Instance();
-
+    KfsClientPtr clnt;
     string path;
     setStr(path, jenv, jmetaServerHost);
-    return clnt->Init(path, metaServerPort);
+
+    clnt = getKfsClientFactory()->GetClient(path, metaServerPort);
+    if (!clnt)
+        return 0;
+    return (jlong) (clnt.get());
 }
     
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_cd(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     setStr(path, jenv, jpath);
@@ -166,9 +175,9 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_cd(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_mkdirs(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     setStr(path, jenv, jpath);
@@ -176,9 +185,9 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_mkdirs(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     setStr(path, jenv, jpath);
@@ -186,9 +195,9 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     vector<string> entries;
@@ -216,9 +225,9 @@ jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_open(
-    JNIEnv *jenv, jclass jcls, jstring jpath, jstring jmode, jint jnumReplicas)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jstring jmode, jint jnumReplicas)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path, mode;
     int openMode = 0;
@@ -239,25 +248,25 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_open(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_close(
-    JNIEnv *jenv, jclass jcls, jint jfd)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
     
     return clnt->Close(jfd);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_close(
-    JNIEnv *jenv, jclass jcls, jint jfd)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
     
     return clnt->Close(jfd);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_create(
-    JNIEnv *jenv, jclass jcls, jstring jpath, jint jnumReplicas, jboolean jexclusive)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jint jnumReplicas, jboolean jexclusive)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     setStr(path, jenv, jpath);
@@ -265,9 +274,9 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_create(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_remove(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     setStr(path, jenv, jpath);
@@ -275,10 +284,10 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_remove(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_rename(
-    JNIEnv *jenv, jclass jcls, jstring joldpath, 
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring joldpath, 
     jstring jnewpath, jboolean joverwrite)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string opath, npath;
     setStr(opath, jenv, joldpath);
@@ -288,49 +297,49 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rename(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_sync(
-    JNIEnv *jenv, jclass jcls, jint jfd)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
     
     return clnt->Sync(jfd);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_seek(
-    JNIEnv *jenv, jclass jcls, jint jfd, jlong joffset)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jlong joffset)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
     
     return clnt->Seek(jfd, joffset);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_tell(
-    JNIEnv *jenv, jclass jcls, jint jfd)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
     
     return clnt->Tell(jfd);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_seek(
-    JNIEnv *jenv, jclass jcls, jint jfd, jlong joffset)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jlong joffset)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
     
     return clnt->Seek(jfd, joffset);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_tell(
-    JNIEnv *jenv, jclass jcls, jint jfd)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
     
     return clnt->Tell(jfd);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_exists(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     setStr(path, jenv, jpath);
@@ -342,9 +351,9 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_exists(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_isFile(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     setStr(path, jenv, jpath);
@@ -355,9 +364,9 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_isFile(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_isDirectory(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     setStr(path, jenv, jpath);
@@ -368,9 +377,9 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_isDirectory(
 }
 
 jlong Java_org_kosmix_kosmosfs_access_KfsAccess_filesize(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     struct stat result;
     string path;
@@ -383,9 +392,9 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_filesize(
 }
 
 jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     struct stat result;
     string path;
@@ -394,13 +403,14 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
     if (clnt->Stat(path.c_str(), result) != 0)
         return -1;
     
-    return result.st_mtime;
+    // The expected return value is in ms
+    return ((jlong) result.st_mtime) * 1000;
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_getDataLocation(
-    JNIEnv *jenv, jclass jcls, jstring jpath, jlong jstart, jlong jlen)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jlong jstart, jlong jlen)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
     // for each block, there could be multiple locations due to replication; return them all here
@@ -436,9 +446,9 @@ jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_getDataLocation(
 }
 
 jshort Java_org_kosmix_kosmosfs_access_KfsAccess_getReplication(
-    JNIEnv *jenv, jclass jcls, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
 
@@ -447,9 +457,9 @@ jshort Java_org_kosmix_kosmosfs_access_KfsAccess_getReplication(
 }
 
 jshort Java_org_kosmix_kosmosfs_access_KfsAccess_setReplication(
-    JNIEnv *jenv, jclass jcls, jstring jpath, jint jnumReplicas)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jint jnumReplicas)
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     string path;
 
@@ -458,9 +468,9 @@ jshort Java_org_kosmix_kosmosfs_access_KfsAccess_setReplication(
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_read(
-    JNIEnv *jenv, jclass jcls, jint jfd, jobject buf, jint begin, jint end) 
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jobject buf, jint begin, jint end) 
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     if(!buf)
         return 0;
@@ -481,9 +491,9 @@ jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_read(
 
 
 jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_write(
-    JNIEnv *jenv, jclass jcls, jint jfd, jobject buf, jint begin, jint end) 
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jobject buf, jint begin, jint end) 
 {
-    KfsClient *clnt = KfsClient::Instance();
+    KfsClient *clnt = (KfsClient *) jptr;
 
     if(!buf)
         return 0;

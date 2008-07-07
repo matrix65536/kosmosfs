@@ -47,16 +47,19 @@ installServer()
 
     case $serverType in
 	-m|--meta) 
+	    mv tmp/fn.* $serverDir/bin/MetaServer.prp 
 	    mkdir -p $serverDir/bin/kfscp
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	-c|--chunk)
+	    mv tmp/fn.* $serverDir/bin/ChunkServer.prp 
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	*)
 	    echo "Unknown server"
 	    ;;
     esac
+    rm -rf tmp
     RETVAL=0
     return $RETVAL
 }
@@ -72,6 +75,19 @@ upgradeServer()
     sh $serverDir/scripts/kfsrun.sh -S $serverType 
 
     cd $serverDir; gtar -zxf /tmp/kfspkg.tgz 
+    case $serverType in
+	-m|--meta) 
+	    mv tmp/fn.* $serverDir/bin/MetaServer.prp 
+	    ;;
+	-c|--chunk)
+	    mv tmp/fn.* $serverDir/bin/ChunkServer.prp 
+	    ;;
+	*)
+	    echo "Unknown server"
+	    ;;
+    esac
+
+    rm -rf tmp
     RETVAL=0
     return $RETVAL
 }

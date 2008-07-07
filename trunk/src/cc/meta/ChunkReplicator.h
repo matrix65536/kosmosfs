@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2007/01/18
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -32,30 +33,47 @@
 #define META_CHUNKREPLICATOR_H
 
 #include "libkfsIO/KfsCallbackObj.h"
+#include "libkfsIO/ITimeout.h"
 #include "libkfsIO/Event.h"
 #include "request.h"
 
 namespace KFS
 {
 
+class ChunkReplicatorTimeoutImpl;
+
 class ChunkReplicator : public KfsCallbackObj {
 public:
 	/// The interval with which we check if chunks are sufficiently replicated
-	static const int REPLICATION_CHECK_INTERVAL_SECS = 300;
+	static const int REPLICATION_CHECK_INTERVAL_SECS = 120;
 	static const int REPLICATION_CHECK_INTERVAL_MSECS = 
 				REPLICATION_CHECK_INTERVAL_SECS * 1000;
 
 	ChunkReplicator();
+	~ChunkReplicator();
 	int HandleEvent(int code, void *data);
 
 private:
 	/// If a replication op is in progress, skip a send
 	bool mInProgress;
-	/// The event registered with the Event Manager to signify timeout events
-	EventPtr mEvent;
+	ChunkReplicatorTimeoutImpl *mTimer;
 	/// The op for checking
 	MetaChunkReplicationCheck mOp;
 };
+
+class ChunkReplicatorTimeoutImpl : public ITimeout {
+public:
+	ChunkReplicatorTimeoutImpl(ChunkReplicator *c) : mOwner(c) {
+		SetTimeoutInterval(ChunkReplicator::REPLICATION_CHECK_INTERVAL_MSECS);
+	}
+	void Timeout() {
+		mOwner->HandleEvent(EVENT_TIMEOUT, NULL);
+	}
+private:
+	ChunkReplicator *mOwner;
+};
+
+
 
 }
 

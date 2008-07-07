@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/22
-// Author: Blake Lewis (Kosmix Corp.)
+// Author: Blake Lewis 
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -36,7 +37,7 @@
 
 using namespace KFS;
 
-NetDispatch KFS::gNetDispatch;
+// NetDispatch KFS::gNetDispatch;
 
 // Port at which KFS clients connect and send RPCs
 int gClientPort;
@@ -46,6 +47,9 @@ int gChunkServerPort;
 
 // paths for logs and checkpoints
 string gLogDir, gCPDir;
+
+// min # of chunk servers to exit recovery mode
+uint32_t gMinChunkservers;
 
 Properties gProp;
 
@@ -77,7 +81,7 @@ main(int argc, char **argv)
 
 	libkfsio::InitGlobals();
 
-        kfs_startup(gLogDir, gCPDir);
+        kfs_startup(gLogDir, gCPDir, gMinChunkservers);
 
         // Ignore SIGPIPE's that generated when clients break TCP
         // connection.
@@ -117,6 +121,13 @@ main(int argc, char **argv)
 int
 ReadMetaServerProperties(char *fileName)
 {
+	string logLevel;
+#ifdef NDEBUG
+	const char *defLogLevel = "INFO";
+#else
+	const char *defLogLevel = "DEBUG";
+#endif
+
         if (gProp.loadProperties(fileName, '=', true) != 0)
                 return -1;
 
@@ -135,11 +146,26 @@ ReadMetaServerProperties(char *fileName)
         cout << "Using meta server chunk server port: " << gChunkServerPort << endl;
 	gLogDir = gProp.getValue("metaServer.logDir","");
 	gCPDir = gProp.getValue("metaServer.cpDir","");
+	bool wormMode = gProp.getValue("metaServer.wormMode", false);
 
 	const char *clusterKey = gProp.getValue("metaServer.clusterKey", "");
 	cout << "Setting cluster key to: " << clusterKey << endl;
-
 	setClusterKey(clusterKey);
+
+	// min # of chunkservers that should connect to exit recovery mode
+	gMinChunkservers = gProp.getValue("metaServer.minChunkservers", 1);
+	cout << "min. # of chunkserver that should connect: " << gMinChunkservers << endl;
+
+	if (wormMode) {
+		cout << "Enabling WORM mode" << endl;
+		setWORMMode();
+	}
+
+	logLevel = gProp.getValue("metaServer.loglevel", defLogLevel);
+        if (logLevel == "INFO")
+	        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+	else
+		KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
 	
         return 0;
 }

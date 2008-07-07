@@ -1,7 +1,8 @@
 /*!
  * $Id$ 
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -98,7 +99,7 @@ request_consumer(void *dummy)
  * specifying a checkpoint file instead of just using "latest".
  */
 void
-KFS::kfs_startup(const string &logdir, const string &cpdir)
+KFS::kfs_startup(const string &logdir, const string &cpdir, uint32_t minChunkServers)
 {
 	struct rlimit rlim;
 	int status = getrlimit(RLIMIT_NOFILE, &rlim);
@@ -122,10 +123,11 @@ KFS::kfs_startup(const string &logdir, const string &cpdir)
 	status = setup_initial_tree();
 	if (status != 0)
 		panic("setup_initial_tree failed", false);
-	status = replayer.playlog();
+	status = replayer.playAllLogs();
 	if (status != 0)
 		panic("log replay failed", false);
 	ChangeIncarnationNumber(NULL);
+	gLayoutManager.SetMinChunkserversToExitRecovery(minChunkServers);
 	// empty the dumpster dir on startup; if it doesn't exist, create it
 	// whatever is in the dumpster needs to be nuked anyway; if we
 	// remove all the file entries from that dir, the space for the

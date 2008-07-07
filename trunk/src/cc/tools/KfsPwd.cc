@@ -2,9 +2,10 @@
 // $Id$
 //
 // Created 2007/09/20
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -49,17 +50,19 @@ using std::string;
 
 using namespace KFS;
 
-void 
+int
 KFS::tools::handlePwd(const vector<string> &args)
 {
     if ((args.size() >= 1) && (args[0] == "--help")) {
         cout << "Usage: pwd " << endl;
-        return;
+        return 0;
     }
 
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
+
     string pwd = kfsClient->GetCwd();
     
     cout << pwd << endl;
+    return 0;
 }
 

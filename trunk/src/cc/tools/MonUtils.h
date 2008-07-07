@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/07/18
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -39,7 +40,8 @@ namespace KFS_MON
         CMD_METAPING,
         CMD_CHUNKPING,
         CMD_METASTATS,
-        CMD_CHUNKSTATS
+        CMD_CHUNKSTATS,
+        CMD_RETIRE_CHUNKSERVER
     };
 
     struct KfsMonOp {
@@ -84,6 +86,14 @@ namespace KFS_MON
         KFS::Properties stats; // result
         ChunkStatsOp(int32_t s) :
             KfsMonOp(CMD_CHUNKPING, s) { };
+        void Request(std::ostringstream &os);
+        void ParseResponse(const char *resp, int len);
+    };
+
+    struct RetireChunkserverOp : public KfsMonOp {
+        KFS::ServerLocation chunkLoc;
+        RetireChunkserverOp(int32_t s, const KFS::ServerLocation &c) :
+            KfsMonOp(CMD_RETIRE_CHUNKSERVER, s), chunkLoc(c) { };
         void Request(std::ostringstream &os);
         void ParseResponse(const char *resp, int len);
     };

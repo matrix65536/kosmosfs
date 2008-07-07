@@ -25,6 +25,7 @@
 #
 
 import os,sys,os.path,getopt
+import socket,threading
 from ConfigParser import ConfigParser
 
 # Use the python config parser to parse out machines setup
@@ -58,10 +59,12 @@ from ConfigParser import ConfigParser
 #
 
 unitsScale = {'g' : 1 << 30, 'm' : 1 << 20, 'k' : 1 << 10, 'b' : 1}
+tarProg = 'gtar'
+maxConcurrent = 25
 
-def setupMeta(section, config):
+def setupMeta(section, config, outputFn, packageFn):
     """ Setup the metaserver binaries/config files on a node. """
-    fh = open('bin/MetaServer.prp', 'w')
+    fh = open(outputFn, 'w')
     baseport = config.getint(section, 'baseport')
     s = "metaServer.clientPort = %d\n" % baseport
     fh.write(s)
@@ -75,17 +78,30 @@ def setupMeta(section, config):
     fh.write(s)
     s = "metaServer.logDir = %s/bin/kfslog\n" % rundir
     fh.write(s)
+    if config.has_option(section, 'loglevel'):
+        s = "metaServer.loglevel = %s\n" % config.get(section, 'loglevel')
+        fh.write(s)
+    
+    if config.has_option(section, 'numservers'):
+        n = config.get(section, 'numservers')
+        s = "metaServer.minChunkservers = %s" % n
+        fh.write(s)
     fh.close()
-    cmd = "gtar -zcf kfspkg.tgz bin/metaserver bin/MetaServer.prp scripts/*"
+    cmd = "%s -zcf %s bin/logcompactor bin/metaserver %s lib scripts/*" % (tarProg, packageFn, outputFn)
     os.system(cmd)
     installArgs = "-d %s -m" % (rundir)
     return installArgs    
 
-def setupChunk(section, config):
+def setupChunk(section, config, outputFn, packageFn):
     """ Setup the chunkserver binaries/config files on a node. """    
     metaNode = config.get('metaserver', 'node')
     metaToChunkPort = config.getint('metaserver', 'baseport') + 100
-    fh = open ('bin/ChunkServer.prp', 'w')
+    hostname = config.get(section, 'node')
+    # for rack-aware replication, we assume that nodes on different racks are on different subnets
+    s = socket.gethostbyname(hostname)
+    ipoctets = s.split('.')
+    rackId = int(ipoctets[2])
+    fh = open (outputFn, 'w')
     s = "chunkServer.metaServer.hostname = %s\n" % metaNode
     fh.write(s)
     s = "chunkServer.metaServer.port = %d\n" % metaToChunkPort
@@ -95,6 +111,8 @@ def setupChunk(section, config):
     key = config.get('metaserver', 'clusterkey')
     s = "chunkServer.clusterKey = %s\n" % (key)
     fh.write(s)
+    s = "chunkServer.rackId = %d\n" % (rackId)
+    fh.write(s)    
     space = config.get(section, 'space')
     s = space.split()
     if (len(s) >= 2):
@@ -115,37 +133,39 @@ def setupChunk(section, config):
     fh.write(s)
     s = "chunkServer.logDir = %s/bin/kfslog\n" % (rundir)
     fh.write(s)
+
+    if config.has_option(section, 'loglevel'):
+        s = "chunkServer.loglevel = %s\n" % config.get(section, 'loglevel')
+        fh.write(s)
+        
     fh.close()
-    cmd = "gtar -zcf kfspkg.tgz bin/chunkserver bin/ChunkServer.prp scripts/*"
+    cmd = "%s -zcf %s bin/chunkupgrade bin/chunkscrubber bin/chunkserver %s lib scripts/*" % (tarProg, packageFn, outputFn)
     os.system(cmd)
     installArgs = "-d %s -c \"%s\" " % (rundir, chunkDir)
     return installArgs
 
 def usage():
     """ Print out the usage for this program. """
-    print "%s [-f, --file <machines.cfg>] [ [-b, --bin <dir with binaries>] {-u, --upgrade} | [-U, --uninstall] ]\n" \
+    print "%s [-f, --file <machines.cfg>] [-t, --tar <tar|gtar>] [ [-b, --bin <dir with binaries>] {-u, --upgrade} | [-U, --uninstall] ]\n" \
           % sys.argv[0]
     return
 
 def copyDir(srcDir, dstDir):
-    """ Copy files from src to dest; make the dest dir if it doesn't
-    exist"""
-    files = os.listdir(srcDir)
-    if not os.path.exists(dstDir):
-        os.mkdir(dstDir)
-    for f in files:
-        cmd = 'cp %s/%s %s' % (srcDir, f, dstDir)
-        os.system(cmd)
+    """ Copy files from src to dest"""
+    cmd = "cp -r %s %s" % (srcDir, dstDir)
+    os.system(cmd)
 
     
-def getFiles(bindir):
-    """ Copy files from bin and . to ./bin and ./scripts
+def getFiles(buildDir):
+    """ Copy files from buildDir/bin, buildDir/lib and . to ./bin, ./lib, and ./scripts
     respectively."""
 
-    copyDir('.', './scripts')
-    cmd = "chmod u+w scripts/*"
+    cmd = "mkdir -p ./scripts; cp ./* scripts; chmod u+w scripts/*"
     os.system(cmd)
-    copyDir(bindir, './bin')
+    s = "%s/bin" % buildDir
+    copyDir(s, './bin')
+    s = "%s/lib" % buildDir
+    copyDir(s, './lib')
 
 def cleanup():
     """ Cleanout the dirs we created. """
@@ -153,41 +173,106 @@ def cleanup():
     os.system(cmd)
     cmd = "rm -rf ./bin"
     os.system(cmd)
+    cmd = "rm -rf ./lib"
+    os.system(cmd)
 
-def doInstall(config, bindir, upgrade):
+class InstallWorker(threading.Thread):
+    """InstallWorker thread that runs a command on remote node"""
+    def __init__(self, sec, conf, tmpdir, i, m):
+        threading.Thread.__init__(self)
+        self.section = sec
+        self.config = conf
+        self.tmpdir = tmpdir
+        self.id = i
+        self.mode = m
+
+    def buildPackage(self):
+        if (self.section == 'metaserver'):
+            self.installArgs = setupMeta(self.section, self.config, self.configOutputFn, self.packageFn)
+        else:
+            self.installArgs = setupChunk(self.section, self.config, self.configOutputFn, self.packageFn)
+
+    def doInstall(self):
+        fn = os.path.basename(self.packageFn)
+        c = "scp -q %s kfsinstall.sh %s:/tmp/; ssh %s 'mv /tmp/%s /tmp/kfspkg.tgz; sh /tmp/kfsinstall.sh %s %s ' " % \
+            (self.packageFn, self.dest, self.dest, fn, self.mode, self.installArgs)
+        os.system(c)
+        
+    def cleanup(self):
+        c = "rm -f %s %s" % (self.configOutputFn, self.packageFn)
+        os.system(c)
+        c = "ssh %s 'rm -f /tmp/install.sh /tmp/kfspkg.tgz' " % self.dest
+        os.system(c)
+        
+    def run(self):
+        self.configOutputFn = "%s/fn.%d" % (self.tmpdir, self.id)
+        self.packageFn = "%s/kfspkg.%d.tgz" % (self.tmpdir, self.id)
+        self.dest = config.get(self.section, 'node')
+        self.buildPackage()
+        self.doInstall()
+        self.cleanup()
+        
+def doInstall(config, builddir, tmpdir, upgrade, serialMode):
     if not config.has_section('metaserver'):
         raise config.NoSectionError, "No metaserver section"
 
-    if not os.path.exists(bindir):
-        print "%s : directory doesn't exist\n" % bindir
+    if not os.path.exists(builddir):
+        print "%s : directory doesn't exist\n" % builddir
         sys.exit(-1)
 
-    getFiles(bindir)
-    
+    getFiles(builddir)
+
+    workers = []
+    i = 0
     sections = config.sections()
+    if upgrade == 1:
+        mode = "-u"
+    else:
+        mode = "-i"
+    
     for s in sections:
-        if (s == 'metaserver'):
-            installArgs = setupMeta(s, config)
-        else:
-            installArgs = setupChunk(s, config)
-        node = config.get(s, 'node')
-        if upgrade == 1:
-            mode = "-u"
-        else:
-            mode = "-i"
-        cmd = "scp -q kfspkg.tgz kfsinstall.sh %s:/tmp; ssh %s 'sh /tmp/kfsinstall.sh %s %s ' " % \
-              (node, node, mode, installArgs)
-        print "Install cmd: %s\n" % cmd
-        os.system(cmd)
-        os.remove('kfspkg.tgz')
-        # Cleanup remote
-        cmd = "ssh %s 'rm -f /tmp/kfsinstall.sh /tmp/kfspkg.tgz' " % (node)
-        os.system(cmd)
+        w = InstallWorker(s, config, tmpdir, i, mode)
+        workers.append(w)
+        if serialMode == 1:
+            w.start()
+            w.join()
+        i = i + 1
+
+    if serialMode == 0:
+        for i in xrange(len(workers)):
+            #start a bunch 
+            for j in xrange(maxConcurrent):
+                idx = i * maxConcurrent + j
+                if idx >= len(workers):
+                    break
+                workers[idx].start()
+            #wait for each one to finish
+            for j in xrange(maxConcurrent):
+                idx = i * maxConcurrent + j
+                if idx >= len(workers):
+                    break
+                workers[idx].join()
+                
+            
+    print "Started all the workers..waiting for them to finish"
+    for i in xrange(len(workers)):
+        workers[i].join(120.0)
         
     cleanup()
 
+class UnInstallWorker(threading.Thread):
+    """UnInstallWorker thread that runs a command on remote node"""
+    def __init__(self, c):
+        threading.Thread.__init__(self)
+        self.cmd = c
+    def run(self):
+        print "Running cmd %s" % (self.cmd)
+        os.system(self.cmd)
+
 def doUninstall(config):
     sections = config.sections()
+    workers = []
+
     for s in sections:
         rundir = config.get(s, 'rundir')
         node = config.get(s, 'node')
@@ -204,28 +289,45 @@ def doUninstall(config):
         
         cmd = "ssh %s 'cd %s; sh scripts/kfsinstall.sh -U -d %s %s' " % \
               (node, rundir, rundir, otherArgs)
-        print "Uninstall cmd: %s\n" % cmd
-        os.system(cmd)
+        # print "Uninstall cmd: %s\n" % cmd
+        # os.system(cmd)
+        w = UnInstallWorker(cmd)
+        workers.append(w)
+        w.start()
+
+    print "Started all the workers..waiting for them to finish"        
+    for i in xrange(len(workers)):
+        workers[i].join(120.0)
+    sys.exit(0)
     
 if __name__ == '__main__':
-    (opts, args) = getopt.getopt(sys.argv[1:], "b:f:hUu",
-                                 ["bin=", "file=", "help", "uninstall", "upgrade"])
+    (opts, args) = getopt.getopt(sys.argv[1:], "b:f:r:t:hsUu",
+                                 ["build=", "file=", "tar=", "tmpdir=", "help", "serialMode", "uninstall", "upgrade"])
     filename = ""
-    bindir = ""
+    builddir = ""
     uninstall = 0
     upgrade = 0
+    serialMode = 0
+    # Script probably won't work right if you change tmpdir from /tmp location
+    tmpdir = "/tmp"
     for (o, a) in opts:
         if o in ("-h", "--help"):
             usage()
             sys.exit(2)
         if o in ("-f", "--file"):
             filename = a
-        elif o in ("-b", "--bin"):
-            bindir = a
+        elif o in ("-b", "--build"):
+            builddir = a
+        elif o in ("-r", "--tar"):
+            tarProg = a
+        elif o in ("-t", "--tmpdir"):
+            tmpdir = a
         elif o in ("-U", "--uninstall"):
             uninstall = 1
         elif o in ("-u", "--upgrade"):
             upgrade = 1
+        elif o in ("-s", "--serialMode"):
+            serialMode = 1
 
     if not os.path.exists(filename):
         print "%s : directory doesn't exist\n" % filename
@@ -237,5 +339,5 @@ if __name__ == '__main__':
     if uninstall == 1:
         doUninstall(config)
     else:
-        doInstall(config, bindir, upgrade)
+        doInstall(config, builddir, tmpdir, upgrade, serialMode)
         

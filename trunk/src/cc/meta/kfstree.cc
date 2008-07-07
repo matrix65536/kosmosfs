@@ -5,7 +5,8 @@
  * \brief Tree-manipulating routines for the KFS metadata server.
  * \author Blake Lewis (Kosmix Corp.)
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -51,26 +52,14 @@ Node::addChild(Key *k, MetaNode *child, int pos)
  * \brief remove child and shift remaining entries to fill in the hole
  * \param[in] pos index of the child node
  *
- * If a CP is in progress and this deletion falls ahead
- * of its current write point, mark the item as a "zombie" so
- * that it will get included in the CP.
  */
 void
 Node::remove(int pos)
 {
 	assert(pos >= 0 && pos < count);
 	Meta *m = leaf(pos);
-	if (cp.lock_running()) {
-		cp.wait_if_active(this);
-		if (!cp.visited(this) && !m->skip())
-			cp.zombify(m);
-		else
-			delete m;
-	}
-	else
-		delete m;
+	delete m;
 	closeHole(pos, 1);
-	cp.unlock_running();
 }
 
 void
@@ -154,22 +143,12 @@ Node::closeHole(int pos, int skip)
  * Insert a new metadata item at the specified position
  * in this node, after making space by moving everything
  * with index >= pos to the right.
- *
- * If a CP is in progress and this insertion falls ahead
- * of its current write point, mark the item "new" so that
- * it will not be included in the CP.
  */
 void
 Node::insertData(Key *k, Meta *item, int pos)
 {
 	assert(hasleaves());
-	if (cp.lock_running()) {
-		cp.wait_if_active(this);
-		if (cp.visited(this))
-			item->markskip();
-	}
 	addChild(k, item, pos);
-	cp.unlock_running();
 }
 
 /*

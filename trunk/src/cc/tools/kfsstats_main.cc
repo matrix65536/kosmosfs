@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/07/20
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -187,12 +188,14 @@ RpcStatsMetaServer(TcpSocket &metaServerSock, int numSecs)
         PrintRpcStat("Chunkserver Hello", op.stats);
         PrintRpcStat("Chunkserver Bye", op.stats);
         PrintRpcStat("Replication Checker", op.stats);
-        PrintRpcStat("Chunkserver Done", op.stats);
         PrintRpcStat("Num Ongoing Replications", op.stats);
         PrintRpcStat("Num Failed Replications", op.stats);
         PrintRpcStat("Total Num Replications", op.stats);
+        PrintRpcStat("Num Stale Chunks", op.stats);
 
         cout << "----------------------------------" << endl;
+        if (numSecs == 0)
+            break;
         sleep(numSecs);
     }
 }
@@ -220,6 +223,8 @@ BasicStatsMetaServer(TcpSocket &metaServerSock, int numSecs)
         cout << op.stats.getValue("Bytes read from network", (long long) 0) << '\t';
         cout << op.stats.getValue("Bytes written to network", (long long) 0) << endl;
 
+        if (numSecs == 0)
+            break;
         sleep(numSecs);
     }
 }
@@ -279,7 +284,11 @@ RpcStatsChunkServer(TcpSocket &chunkServerSock, int numSecs)
         PrintRpcStat("Truncate", op.stats);
         PrintRpcStat("Heartbeat", op.stats);
         PrintRpcStat("Change Chunk Vers", op.stats);
+        PrintRpcStat("Num aios", op.stats);
+        PrintRpcStat("Num ops", op.stats);
         cout << "----------------------------------" << endl;
+        if (numSecs == 0)
+            break;
         sleep(numSecs);
     }
 }
@@ -309,6 +318,9 @@ BasicStatsChunkServer(TcpSocket &chunkServerSock, int numSecs)
         cout << op.stats.getValue("Open disk fds", (long long) 0) << '\t';
         cout << op.stats.getValue("Bytes read from disk", (long long) 0) << '\t';
         cout << op.stats.getValue("Bytes written to disk", (long long) 0) << endl;
+
+        if (numSecs == 0)
+            break;
 
         sleep(numSecs);
     }

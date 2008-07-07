@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 #
 # $Id: kfsrun.sh 36 2007-11-12 02:43:36Z sriramsrao $
 #
@@ -42,18 +42,21 @@ startServer()
 	exit -1
     fi
     echo "Starting $server..."
+    export LD_LIBRARY_PATH=`pwd`/lib:$LD_LIBRARY_PATH
+#    export UMEM_DEBUG=default
+#    export UMEM_LOGGING=transaction
     bin/$server $config $SERVER_LOG_FILE > /dev/null 2>&1 &
     echo $! > $SERVER_PID_FILE
 
     if [ ! -e $CLEANER_PID_FILE ];
 	then
 	echo "Starting cleaner..."
-	if [ -n "$backup_dir" ];
+	if [ -n "$backup_node" ];
 	    then
-	    # Once in 10 mins, clean/backup stuff
-	    cleaner_args="-b $backup_dir -s 600"
+	    # Once an hour, clean/backup stuff
+	    cleaner_args="-b $backup_node -p $backup_path -s 3600"
 	else
-	    cleaner_args="-s 600"
+	    cleaner_args="-s 3600"
 	fi
 	    
 	scripts/kfsclean.sh $cleaner_args > $CLEANER_LOG_FILE < /dev/null 2>&1 &
@@ -103,9 +106,10 @@ stopServer()
 # 	-n kfsrun.sh -- "$@"`
 # eval set -- "$TEMP"
 
-backup_dir=
+backup_node=
+backup_path=
 
-set -- `getopt f:b:sSmch $*`
+set -- `getopt f:b:p:sSmch $*`
 
 #while true
 for i in $*
@@ -116,7 +120,8 @@ do
 	-m|--meta) server="metaserver";;
 	-c|--chunk) server="chunkserver";;
 	-f|--file) config=$2;;
-	-b|--backup) backup_dir=$2;;
+	-b|--backup_node) backup_node=$2;;
+	-p|--backup_path) backup_path=$2;;
 	-h|--help) echo "usage: $0 [-s | -S] [-m | -c] [-f <config>]"; 
 		echo " -s: start";
 		echo " -S: stop";

@@ -26,21 +26,26 @@
 # TEMP=`getopt -o d:b:R:h -l dir:,backup:,recover:help -n metabkup.sh -- "$@"`
 # eval set -- "$TEMP"
 
-set -- `getopt d:b:R:h $*`
+set -- `getopt d:b:p:R:h $*`
 
 recover=0
+backup_path=
 # while true
 for i in $*
 do
 	case "$i" in
-	-d|--dir) cpdir=$2;;
-	-b|--backup) backup_dir=$2;;
+	-d|--dir) kfs_dir=$2;;
+	-b|--backup_node) backup_node=$2;;
+	-p|--backup_path) backup_path=$2;;
 	-R|--recover) recover=1;;
-	-h|--help) echo "usage: $0 [-d cpdir] [-b backup] {-recover}"; exit ;;
+	-h|--help) echo "usage: $0 [-d kfsdir] [-b backup_node] [-b backup_path] {-recover}"; exit ;;
 	--) break ;;
 	esac
+	shift
 done
 
+cpdir="$kfs_dir/bin/kfscp"
+logdir="$kfs_dir/bin/kfslog"
 if [ ! -d $cpdir ];
     then
     echo "$cpdir is non-existent"
@@ -49,8 +54,10 @@ fi
 
 if [ $recover -eq 0 ];
     then
-    rsync -avz --delete $cpdir $backup_dir
+    rsync -avz --delete $cpdir $backup_node:$backup_path
+    rsync -avz $logdir $backup_node:$backup_path
 else
     # Restore the checkpoint files from remote node
-    rsync -avz $backup_dir $cpdir
+    rsync -avz $backup_node:$backup_path/"kfscp" .
+    rsync -avz $backup_node:$backup_path/"kfslog" .
 fi    

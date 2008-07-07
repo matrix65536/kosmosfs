@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/04/18
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -37,10 +38,12 @@
 
 extern "C" {
 #include <signal.h>
+#include <stdlib.h>
 }
 #include <cerrno>
 #include <iostream>
 #include <string>
+#include <boost/scoped_array.hpp>
 
 using std::string;
 using std::ostringstream;
@@ -50,6 +53,7 @@ using std::max;
 using std::map;
 using std::vector;
 using std::sort;
+using std::transform;
 
 using std::cout;
 using std::endl;
@@ -71,21 +75,70 @@ namespace {
     }
 }   
 
-KfsClient *
-KFS::getKfsClient()
+KfsClientFactory *
+KFS::getKfsClientFactory()
 {
-    return KfsClient::Instance();
+    return KfsClientFactory::Instance();
 }
+
+KfsClientPtr
+KfsClientFactory::GetClient(const char *propFile)
+{
+    bool verbose = false;
+#ifdef DEBUG
+    verbose = true;
+#endif
+    if (theProps().loadProperties(propFile, '=', verbose) != 0) {
+        KfsClientPtr clnt;
+	return clnt;
+    }
+
+    return GetClient(theProps().getValue("metaServer.name", ""),
+                     theProps().getValue("metaServer.port", -1));
+
+}
+
+class MatchingServer {
+    ServerLocation loc;
+public:
+    MatchingServer(const ServerLocation &l) : loc(l) { }
+    bool operator()(KfsClientPtr &clnt) const {
+        return clnt->GetMetaserverLocation() == loc;
+    }
+};
+
+KfsClientPtr
+KfsClientFactory::GetClient(const std::string metaServerHost, int metaServerPort)
+{
+    vector<KfsClientPtr>::iterator iter;
+    ServerLocation loc(metaServerHost, metaServerPort);
+
+    iter = find_if(mClients.begin(), mClients.end(), MatchingServer(loc));
+    if (iter != mClients.end())
+        return *iter;
+
+    KfsClientPtr clnt;
+
+    clnt.reset(new KfsClient());
+
+    clnt->Init(metaServerHost, metaServerPort);
+    if (clnt->IsInitialized())
+        mClients.push_back(clnt);
+    else
+        clnt.reset();
+
+    return clnt;
+}
+
 
 KfsClient::KfsClient()
 {
     mImpl = new KfsClientImpl();
 }
 
-int
-KfsClient::Init(const char *propFile)
+KfsClient::~KfsClient()
 {
-    return mImpl->Init(propFile);
+    delete mImpl;
 }
 
 int 
@@ -170,6 +223,18 @@ bool
 KfsClient::IsDirectory(const char *pathname)
 {
     return mImpl->IsDirectory(pathname);
+}
+
+int
+KfsClient::EnumerateBlocks(const char *pathname)
+{
+    return mImpl->EnumerateBlocks(pathname);
+}
+
+bool
+KfsClient::VerifyDataChecksums(const char *pathname, const vector<uint32_t> &checksums)
+{
+    return mImpl->VerifyDataChecksums(pathname, checksums);
 }
 
 int 
@@ -269,6 +334,12 @@ KfsClient::SetReplicationFactor(const char *pathname, int16_t numReplicas)
     return mImpl->SetReplicationFactor(pathname, numReplicas);
 }
 
+ServerLocation
+KfsClient::GetMetaserverLocation() const
+{
+    return mImpl->GetMetaserverLocation();
+}
+
 //
 // Now, the real work is done by the impl object....
 //
@@ -314,31 +385,12 @@ KfsClientImpl::KfsClientImpl()
     srand(getpid());
 }
 
-int
-KfsClientImpl::Init(const char *propFile)
-{
-    bool verbose = false;
-#ifdef DEBUG
-    verbose = true;
-#endif
-
-    if (mIsInitialized)
-        return 0;
-
-    if (theProps().loadProperties(propFile, '=', verbose) != 0) {
-	mIsInitialized = false;
-	return -1;
-    }
-
-    return Init(theProps().getValue("metaServer.name", ""),
-                theProps().getValue("metaServer.port", -1));
-    
-}
-
 int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
 {
     // Initialize the logger
     MsgLogger::Init(NULL);
+
+    mRandSeed = time(NULL);
 
     mMetaServerLoc.hostname = metaServerHost;
     mMetaServerLoc.port = metaServerPort;
@@ -387,6 +439,14 @@ KfsClientImpl::Cd(const char *pathname)
     if (!S_ISDIR(s.st_mode)) {
 	KFS_LOG_VA_DEBUG("Non-existent dir: %s", pathname);
 	return -ENOTDIR;
+    }
+
+    // strip the trailing '/'
+    string::size_type pathlen = path.size();
+    string::size_type rslash = path.rfind('/');
+    if (rslash + 1 == pathlen) {
+        // path looks like: /.../; so, get rid of the last '/'
+        path.erase(rslash);
     }
 
     mCwd = path;
@@ -647,9 +707,19 @@ KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFiles
     KfsFileAttr kfsattr;
 
     int fte = LookupFileTableEntry(pathname);
+
     if (fte >= 0) {
 	kfsattr = mFileTable[fte]->fattr;
-    } else {
+    }
+
+    // either we don't have the attributes cached or it is a file and
+    // we are asked to compute the size and we don't know the size,
+    // lookup the attributes
+    if ((fte < 0) || ((!kfsattr.isDirectory) && computeFilesize && 
+                      (kfsattr.fileSize < 0))) {
+        if (fte >= 0) {
+            ReleaseFileTableEntry(fte);
+        }
 	kfsFileId_t parentFid;
 	string filename;
 	int res = GetPathComponents(pathname, &parentFid, filename);
@@ -712,17 +782,37 @@ KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
 
     if (parentFid < 0)
 	return -EINVAL;
-
+    
+    int fte = LookupFileTableEntry(parentFid, filename);
     LookupOp op(nextSeq(), parentFid, filename);
-    (void)DoMetaOpWithRetry(&op);
-    if (op.status < 0)
-	return op.status;
 
-    result = op.fattr;
+    if (fte >= 0) {
+	result = mFileTable[fte]->fattr;
+    } else {
+        (void)DoMetaOpWithRetry(&op);
+        if (op.status < 0)
+            return op.status;
+
+        result = op.fattr;
+    }
     if ((!result.isDirectory) && computeFilesize)
 	result.fileSize = ComputeFilesize(result.fileId);
     else
-        result.fileSize = 0;
+        result.fileSize = -1;
+
+    if (fte >= 0)
+        return 0;
+
+    // cache the entry if possible
+    fte = AllocFileTableEntry(parentFid, filename);
+    if (fte < 0)		
+	return op.status;
+    
+    mFileTable[fte]->fattr = op.fattr;
+    mFileTable[fte]->openMode = 0;
+    // if we computed the filesize, then we stash it; otherwise, we'll
+    // set the value to -1 and force a recompute later...
+    mFileTable[fte]->fattr.fileSize = result.fileSize;
 
     return op.status;
 }
@@ -857,8 +947,11 @@ KfsClientImpl::Open(const char *pathname, int openMode, int numReplicas)
 	mFileTable[fte]->openMode = O_RDWR;
     else if (openMode & O_WRONLY)
 	mFileTable[fte]->openMode = O_WRONLY;
-    else
+    else if (openMode & O_RDONLY)
 	mFileTable[fte]->openMode = O_RDONLY;
+    else
+        // in this mode, we open the file to cache the attributes
+        mFileTable[fte]->openMode = 0;
 
     // We got a path...get the fattr
     mFileTable[fte]->fattr = op.fattr;
@@ -960,7 +1053,6 @@ KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
     MutexLock l(&mMutex);
 
     int res, fd;
-    bool didOpen = false;
 
     // Non-existent
     if (!IsFile(pathname)) 
@@ -969,12 +1061,11 @@ KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
     // load up the fte
     fd = LookupFileTableEntry(pathname);
     if (fd < 0) {
-        // Open the file for reading...this'll get the attributes setup
-        fd = Open(pathname, O_RDONLY);
+        // Open the file and cache the attributes
+        fd = Open(pathname, 0);
         // we got too many open files?
         if (fd < 0)
             return fd;
-        didOpen = true;
     }
 
     // locate each chunk and get the hosts that are storing the chunk.
@@ -983,8 +1074,6 @@ KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
         int chunkNum = pos / KFS::CHUNKSIZE;
 
         if ((res = LocateChunk(fd, chunkNum)) < 0) {
-            if (didOpen)
-                Close(fd);
             return res;
         }
 
@@ -997,9 +1086,6 @@ KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
         locations.push_back(hosts);
     }
 
-    if (didOpen)
-        Close(fd);
-
     return 0;
 }
 
@@ -1009,8 +1095,6 @@ KfsClientImpl::GetReplicationFactor(const char *pathname)
     MutexLock l(&mMutex);
 
     int fd;
-    bool didOpen = false;
-    int16_t numReplicas;
 
     // Non-existent
     if (!IsFile(pathname)) 
@@ -1020,18 +1104,12 @@ KfsClientImpl::GetReplicationFactor(const char *pathname)
     fd = LookupFileTableEntry(pathname);
     if (fd < 0) {
         // Open the file for reading...this'll get the attributes setup
-        fd = Open(pathname, O_RDONLY);
+        fd = Open(pathname, 0);
         // we got too many open files?
         if (fd < 0)
             return fd;
-        didOpen = true;
     }
-    numReplicas = mFileTable[fd]->fattr.numReplicas;
-
-    if (didOpen)
-        Close(fd);
-
-    return numReplicas;
+    return mFileTable[fd]->fattr.numReplicas;
 }
 
 int16_t
@@ -1040,7 +1118,6 @@ KfsClientImpl::SetReplicationFactor(const char *pathname, int16_t numReplicas)
     MutexLock l(&mMutex);
 
     int res, fd;
-    bool didOpen = false;
 
     // Non-existent
     if (!IsFile(pathname)) 
@@ -1049,12 +1126,11 @@ KfsClientImpl::SetReplicationFactor(const char *pathname, int16_t numReplicas)
     // load up the fte
     fd = LookupFileTableEntry(pathname);
     if (fd < 0) {
-        // Open the file for reading...this'll get the attributes setup
-        fd = Open(pathname, O_RDONLY);
+        // Open the file and get the attributes cached
+        fd = Open(pathname, 0);
         // we got too many open files?
         if (fd < 0)
             return fd;
-        didOpen = true;
     }
     ChangeFileReplicationOp op(nextSeq(), FdAttr(fd)->fileId, numReplicas);
     (void) DoMetaOpWithRetry(&op);
@@ -1064,10 +1140,6 @@ KfsClientImpl::SetReplicationFactor(const char *pathname, int16_t numReplicas)
         res = op.numReplicas;
     } else
         res = op.status;
-
-    if (didOpen)
-        Close(fd);
-
 
     return res;
 }
@@ -1147,6 +1219,12 @@ KfsClientImpl::AllocChunk(int fd)
     FileAttr *fa = FdAttr(fd);
     assert(valid_fd(fd) && !fa->isDirectory);
 
+    struct timeval startTime, endTime;
+    double timeTaken;
+    
+    gettimeofday(&startTime, NULL);
+
+
     AllocateOp op(nextSeq(), fa->fileId);
     FilePosition *pos = FdPos(fd);
     op.fileOffset = ((pos->fileOffset / KFS::CHUNKSIZE) * KFS::CHUNKSIZE);
@@ -1175,6 +1253,13 @@ KfsClientImpl::AllocChunk(int fd)
     for (uint32_t i = 0; i < op.chunkServers.size(); i++) {
 	KFS_LOG_VA_DEBUG("%s", op.chunkServers[i].ToString().c_str());
     }
+
+    gettimeofday(&endTime, NULL);
+    
+    timeTaken = (endTime.tv_sec - startTime.tv_sec) +
+        (endTime.tv_usec - startTime.tv_usec) * 1e-6;
+
+    KFS_LOG_VA_DEBUG("Total Time to allocate chunk: %.4f secs", timeTaken);
 
     return op.status;
 }
@@ -1274,40 +1359,6 @@ KFS::DoOpSend(KfsOp *op, TcpSocket *sock)
     return 0;
 }
 
-///
-/// Helper function that does the work for sending out an op to a set of
-/// servers.  Op push is done concurrently.
-///
-/// @param[in] op the op to be sent out
-/// @param[in] targets the set of socket on which we communicate with servers
-/// @retval 0 on success; -1 on failure
-///   Here, send succeeds if it is succeeds to all servers; otherwise failure
-///
-int
-KFS::DoOpSend(KfsOp *op, vector<TcpSocket *> &targets)
-{
-    ostringstream os;
-
-    op->Request(os);
-
-    // When we "simulcast" the data, the status we get back says
-    // everything was sent to all the targets; or it failed at least
-    // one of the targets.
-    int numIO = Simulcast(os.str().c_str(), os.str().length(), targets);
-    if (numIO < 0) {
-        op->status = -EHOSTUNREACH;
-        return -1;
-    }
-    if (op->contentLength > 0) {
-        numIO = Simulcast(op->contentBuf, op->contentLength, targets);
-        if (numIO < 0) {
-            op->status = -EHOSTUNREACH;
-            return -1;
-        }
-    }
-    return 0;
-}
-
 /// Get a response from the server.  The response is assumed to
 /// terminate with "\r\n\r\n".
 /// @param[in/out] buf that should be filled with data from server
@@ -1386,6 +1437,7 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
     ssize_t navail, nleft;
     kfsSeq_t resSeq;
     int contentLen;
+    bool printMatchingResponse = false;
 
     if ((sock == NULL) || (!sock->IsGood())) {
 	op->status = -EHOSTUNREACH;
@@ -1420,11 +1472,16 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
 	GetSeqContentLen(buf, len, &resSeq, &contentLen);
 
 	if (resSeq == op->seq) {
+            if (printMatchingResponse) {
+                KFS_LOG_VA_DEBUG("Seq #'s match (after mismatch seq): Expect: %ld, got: %ld",
+                                 op->seq, resSeq);
+
+            }
 	    break;
 	}
 	KFS_LOG_VA_DEBUG("Seq #'s dont match: Expect: %ld, got: %ld",
                          op->seq, resSeq);
-        // assert(!"Seq # mismatch");
+        printMatchingResponse = true;
 
         if (contentLen > 0) {
             struct timeval timeout = gDefaultTimeout;
@@ -1553,18 +1610,46 @@ struct RespondingServer {
     {
 	TcpSocket sock;
 
-        if (sock.Connect(loc) < 0)
+        if (sock.Connect(loc) < 0) {
+            *size = 0;
+            *status = -1;
 	    return false;
+        }
 
 	SizeOp sop(client->nextSeq(), layout.chunkId, layout.chunkVersion);
 	int numIO = DoOpCommon(&sop, &sock);
-	if (numIO < 0 && !sock.IsGood())
-	    return false;
+	if (numIO < 0 && !sock.IsGood()) {
+            return false;
+        }
 
 	*status = sop.status;
 	if (*status >= 0)
-		*size = sop.size;
-	return true;
+            *size = sop.size;
+
+        return *status >= 0;
+    }
+};
+
+struct RespondingServer2 {
+    KfsClientImpl *client;
+    const ChunkLayoutInfo &layout;
+    RespondingServer2(KfsClientImpl *cli, const ChunkLayoutInfo &lay) :
+        client(cli), layout(lay) { }
+    ssize_t operator() (ServerLocation loc)
+    {
+	TcpSocket sock;
+
+        if (sock.Connect(loc) < 0) {
+            return -1;
+        }
+
+	SizeOp sop(client->nextSeq(), layout.chunkId, layout.chunkVersion);
+	int numIO = DoOpCommon(&sop, &sock);
+	if (numIO < 0 && !sock.IsGood()) {
+            return -1;
+        }
+
+        return sop.size;
     }
 };
 
@@ -1623,7 +1708,7 @@ public:
 };
 
 int
-KfsClientImpl::OpenChunk(int fd)
+KfsClientImpl::OpenChunk(int fd, bool nonblockingConnect)
 {
     if (!IsCurrChunkAttrKnown(fd)) {
 	// Nothing known about this chunk
@@ -1642,24 +1727,27 @@ KfsClientImpl::OpenChunk(int fd)
         find_if(chunk->chunkServerLoc.begin(), chunk->chunkServerLoc.end(), 
                 ChunkserverMatcher(mHostname));
     if (s != chunk->chunkServerLoc.end()) {
-        FdPos(fd)->SetPreferredServer(*s);
+        FdPos(fd)->SetPreferredServer(*s, nonblockingConnect);
         if (FdPos(fd)->GetPreferredServer() != NULL) {
             KFS_LOG_VA_DEBUG("Picking local server: %s", s->ToString().c_str());
             return SizeChunk(fd);
         }
     }
 
-    // else pick one at random
+    // if they are on different subnets, pick the one on the same subnet as us
+
+
     vector<ServerLocation> loc = chunk->chunkServerLoc;
 
+    // else pick one at random
     for (vector<ServerLocation>::size_type i = 0;
          (FdPos(fd)->GetPreferredServer() == NULL && i != loc.size());
          ++i) {
-        FdPos(fd)->SetPreferredServer(loc[i]);
-#ifdef DEBUG
+        uint32_t j = rand_r(&mRandSeed) % loc.size();
+
+        FdPos(fd)->SetPreferredServer(loc[j], nonblockingConnect);
         if (FdPos(fd)->GetPreferredServer() != NULL)
-            KFS_LOG_VA_DEBUG("Randomly chose: %s", loc[i].ToString().c_str());
-#endif
+            KFS_LOG_VA_DEBUG("Randomly chose: %s", loc[j].ToString().c_str());
     }
 
     return (FdPos(fd)->GetPreferredServer() == NULL) ? -EHOSTUNREACH : SizeChunk(fd);
@@ -1719,13 +1807,17 @@ null_fte(const FileTableEntry *ft)
 static bool
 fte_compare(const FileTableEntry *first, const FileTableEntry *second)
 {
-	bool dir1 = first->fattr.isDirectory;
-	bool dir2 = second->fattr.isDirectory;
+    bool dir1 = first->fattr.isDirectory;
+    bool dir2 = second->fattr.isDirectory;
 
-	if (dir1 == dir2)
-		return first->lastAccessTime < second->lastAccessTime;
-	else
-		return dir1;
+    if (dir1 == dir2)
+        return first->lastAccessTime < second->lastAccessTime;
+    else if ((!dir1) && (first->openMode == 0))
+        return dir1;
+    else if ((!dir2) && (second->openMode == 0))
+        return dir2;
+
+    return dir1;
 }
 
 int
@@ -1739,15 +1831,15 @@ KfsClientImpl::FindFreeFileTableEntry()
 
     int last = mFileTable.size();
     if (last != MAX_FILES) {	// Grow vector up to max. size
-	    mFileTable.push_back(NULL);
-	    return last;
+        mFileTable.push_back(NULL);
+        return last;
     }
 
-    // recycle directory entries
+    // recycle directory entries or files open for attribute caching
     vector <FileTableEntry *>::iterator oldest = min_element(b, e, fte_compare);
-    if ((*oldest)->fattr.isDirectory) {
-	    ReleaseFileTableEntry(oldest - b);
-	    return oldest - b;
+    if ((*oldest)->fattr.isDirectory || ((*oldest)->openMode == 0)) {
+        ReleaseFileTableEntry(oldest - b);
+        return oldest - b;
     }
 
     return -EMFILE;		// No luck
@@ -1776,13 +1868,14 @@ KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
     time_t now = time(NULL);
     int fte = i - mFileTable.begin();
     
-    // The entries for files are valid.  This is a handle that is
-    // given to the application. The entries for directories need to
-    // be revalidated every N secs.  The one exception for directory
-    // entries is that for "/"; that is always 2 and is valid.  That
-    // entry will never be deleted from the fs.  Any other directory
-    // can be deleted and we don't want to hold on to stale entries. 
-    if ((!FdAttr(fte)->isDirectory) ||
+    // The entries for files open for read/write are valid.  This is a
+    // handle that is given to the application. The entries for
+    // directories need to be revalidated every N secs.  The one
+    // exception for directory entries is that for "/"; that is always
+    // 2 and is valid.  That entry will never be deleted from the fs.
+    // Any other directory can be deleted and we don't want to hold on
+    // to stale entries.
+    if (((!FdAttr(fte)->isDirectory) && (FdInfo(fte)->openMode != 0)) ||
         (FdAttr(fte)->fileId == KFS::ROOTFID) ||
         (now - FdInfo(fte)->validatedTime < FILE_CACHE_ENTRY_VALID_TIME))
         return fte;
@@ -1824,6 +1917,12 @@ KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name)
     int fte = FindFreeFileTableEntry();
 
     if (fte >= 0) {
+        /*
+          if (parentFid != KFS::ROOTFID)
+            KFS_LOG_VA_INFO("Alloc'ing fte: %d for %d, %s", fte,
+            parentFid, name);
+        */
+
 	mFileTable[fte] = new FileTableEntry(parentFid, name);
         mFileTable[fte]->validatedTime = mFileTable[fte]->lastAccessTime = 
             time(NULL);
@@ -1953,12 +2052,14 @@ KFS::ErrorCodeToStr(int status)
 #if defined (__APPLE__) || defined(__sun__)
     if (strerror_r(-status, buf, sizeof buf) == 0)
 	errptr = buf;
-    else
-	errptr = "<unknown error>";
+    else {
+        strcpy(buf, "<unknown error>");
+        errptr = buf;
+    }
 #else
     if ((errptr = strerror_r(-status, buf, sizeof buf)) == NULL) {
-      strcpy(buf, "<unknown error>");
-      errptr = buf;
+        strcpy(buf, "<unknown error>");
+        errptr = buf;
     }
 #endif
     return string(errptr);
@@ -2007,4 +2108,156 @@ KfsClientImpl::RenewLease(kfsChunkId_t chunkId)
     if (op.status == -EINVAL) {
 	mLeaseClerk.UnRegisterLease(op.chunkId);
     }
+}
+
+int
+KfsClientImpl::EnumerateBlocks(const char *pathname)
+{
+    struct stat s;
+    int res, fte;
+
+    MutexLock l(&mMutex);
+
+    if ((res = Stat(pathname, s, false))  < 0) {
+        cout << "Unable to stat path: " << pathname << ' ' <<
+            ErrorCodeToStr(res) << endl;
+        return -ENOENT;
+    }
+
+    if (S_ISDIR(s.st_mode)) {
+        cout << "Path: " << pathname << " is a directory" << endl;
+        return -EISDIR;
+    }
+    
+    fte = LookupFileTableEntry(pathname);
+    assert(fte >= 0);
+    
+    GetLayoutOp lop(nextSeq(), FdAttr(fte)->fileId);
+    (void)DoMetaOpWithRetry(&lop);
+    if (lop.status < 0) {
+        cout << "Get layout failed on path: " << pathname << " "
+             << ErrorCodeToStr(lop.status) << endl;
+	return lop.status;
+    }
+
+    if (lop.ParseLayoutInfo()) {
+        cout << "Unable to parse layout for path: " << pathname << endl;
+	return -1;
+    }
+
+    ssize_t filesize = 0;
+
+    for (vector<ChunkLayoutInfo>::const_iterator i = lop.chunks.begin();
+         i != lop.chunks.end(); ++i) {
+        RespondingServer2 responder(this, *i);
+        vector<ssize_t> chunksize;
+
+        // Get the size for the chunk from all the responding servers
+        chunksize.reserve(i->chunkServers.size());
+        transform(i->chunkServers.begin(), i->chunkServers.end(), chunksize.begin(), responder);
+
+        cout << i->fileOffset << '\t' << i->chunkId << endl;
+        for (uint32_t k = 0; k < i->chunkServers.size(); k++) {
+            cout << "\t\t" << i->chunkServers[k].ToString() << '\t' << chunksize[k] << endl;
+        }
+
+        for (uint32_t k = 0; k < i->chunkServers.size(); k++) {
+            if (chunksize[k] >= 0) {
+                filesize += chunksize[k];
+                break;
+            }
+        }
+    }
+    cout << "File size computed from chunksizes: " << filesize << endl;
+    return 0;
+}
+
+
+bool KfsClientImpl::GetDataChecksums(const ServerLocation &loc, 
+                                     kfsChunkId_t chunkId, 
+                                     uint32_t *checksums)
+{
+    TcpSocket sock;
+    GetChunkMetadataOp op(nextSeq(), chunkId);
+    uint32_t numChecksums = CHUNKSIZE / CHECKSUM_BLOCKSIZE;
+
+    if (sock.Connect(loc) < 0) {
+        return false;
+    }
+
+    int numIO = DoOpCommon(&op, &sock);
+    if (numIO < 0 && !sock.IsGood()) {
+        return false;
+    }
+    if (op.contentLength < numChecksums * sizeof(uint32_t)) {
+        return false;
+    }
+    memcpy((char *) checksums, op.contentBuf, numChecksums * sizeof(uint32_t));
+    return true;
+}
+
+
+bool
+KfsClientImpl::VerifyDataChecksums(const char *pathname, const vector<uint32_t> &checksums)
+{
+    struct stat s;
+    int res, fte;
+
+    MutexLock l(&mMutex);
+
+    if ((res = Stat(pathname, s, false))  < 0) {
+        cout << "Unable to stat path: " << pathname << ' ' <<
+            ErrorCodeToStr(res) << endl;
+        return false;
+    }
+
+    if (S_ISDIR(s.st_mode)) {
+        cout << "Path: " << pathname << " is a directory" << endl;
+        return false;
+    }
+    
+    fte = LookupFileTableEntry(pathname);
+    assert(fte >= 0);
+    
+    GetLayoutOp lop(nextSeq(), FdAttr(fte)->fileId);
+    (void)DoMetaOpWithRetry(&lop);
+    if (lop.status < 0) {
+        cout << "Get layout failed on path: " << pathname << " "
+             << ErrorCodeToStr(lop.status) << endl;
+	return false;
+    }
+
+    if (lop.ParseLayoutInfo()) {
+        cout << "Unable to parse layout for path: " << pathname << endl;
+	return false;
+    }
+
+    int blkstart = 0;
+    uint32_t numChecksums = CHUNKSIZE / CHECKSUM_BLOCKSIZE;
+
+    for (vector<ChunkLayoutInfo>::const_iterator i = lop.chunks.begin();
+         i != lop.chunks.end(); ++i) {
+        boost::scoped_array<uint32_t> chunkChecksums;
+
+        chunkChecksums.reset(new uint32_t[numChecksums]);
+
+        for (uint32_t k = 0; k < i->chunkServers.size(); k++) {
+            
+            if (!GetDataChecksums(i->chunkServers[k], i->chunkId, chunkChecksums.get())) {
+                KFS_LOG_VA_INFO("Didn't get checksums from server %s", i->chunkServers[k].ToString().c_str());
+                return false;
+            }
+
+            for (uint32_t v = 0; v < numChecksums; v++) {
+                if (blkstart + v >= checksums.size())
+                    break;
+                if (chunkChecksums[v] != checksums[blkstart + v])  {
+                    KFS_LOG_VA_INFO("Checksum mismatch for %s on server %s", i->chunkServers[k].ToString().c_str());
+                    return false;
+                }
+            }
+        }
+        blkstart += numChecksums;
+    }
+    return true;
 }

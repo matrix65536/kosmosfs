@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/06
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -46,8 +47,10 @@ using boost::scoped_array;
 ChunkServer::ChunkServer(NetConnectionPtr &conn) :
 	mSeqNo(1), mNetConnection(conn), 
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
-	mHeartbeatSkipped(false), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
-	mNumChunkWrites(0), mNumChunkReplications(0)
+	mHeartbeatSkipped(false), mIsRetiring(false), mRackId(-1), 
+	mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
+	mNumChunks(0), mNumChunkWrites(0), 
+	mNumChunkWriteReplications(0), mNumChunkReadReplications(0)
 {
         mTimer = new ChunkServerTimeoutImpl(this);
         // Receive HELLO message
@@ -163,7 +166,9 @@ ChunkServer::HandleRequest(int code, void *data)
 
 	case EVENT_CMD_DONE:
 		op = (MetaRequest *) data;
-		SendResponse(op);
+		if (!mDown) {
+			SendResponse(op);
+		}	
 		// nothing left to be done...get rid of it
 		delete op;
 		break;
@@ -382,8 +387,10 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
 
         op = FindMatchingRequest(cseq);
         if (op == NULL) {
-            // Uh-oh...
-            assert(!"Unable to find command for a response");
+            // Uh-oh...this can happen if the server restarts between sending
+	    // the message and getting reply back
+            // assert(!"Unable to find command for a response");
+	    KFS_LOG_VA_WARN("Unable to find command for response (cseq = %d)", cseq);
             return -1;
         }
         // KFS_LOG_VA_DEBUG("Got response for cseq=%d", cseq);
@@ -393,6 +400,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
         if (submittedOp->op == META_CHUNK_HEARTBEAT) {
             mTotalSpace = prop.getValue("Total-space", (long long) 0);
             mUsedSpace = prop.getValue("Used-space", (long long) 0);
+            mNumChunks = prop.getValue("Num-chunks", 0);
 	    mAllocSpace = mUsedSpace + mNumChunkWrites * CHUNKSIZE;
 	    mHeartbeatSent = false;
 	} else if (submittedOp->op == META_CHUNK_REPLICATE) {
@@ -456,7 +464,8 @@ ChunkServer::ResumeOp(MetaRequest *op)
 		 (submittedOp->op == META_CHUNK_TRUNCATE) ||
 		 (submittedOp->op == META_CHUNK_HEARTBEAT) ||
 		 (submittedOp->op == META_CHUNK_STALENOTIFY) ||
-		 (submittedOp->op == META_CHUNK_VERSCHANGE)) {
+		 (submittedOp->op == META_CHUNK_VERSCHANGE) ||
+		 (submittedOp->op == META_CHUNK_RETIRE)) {
                 assert(req == NULL);
 		delete submittedOp;                
         }
@@ -464,8 +473,9 @@ ChunkServer::ResumeOp(MetaRequest *op)
 		// This op is internally generated.  We need to notify
 		// the layout manager of this op's completion.  So, send
 		// it there.
-		KFS_LOG_VA_INFO("Meta chunk replicate finished with status: %d",
-				submittedOp->status);
+		MetaChunkReplicate *mcr = static_cast<MetaChunkReplicate *>(submittedOp);
+		KFS_LOG_VA_DEBUG("Meta chunk replicate for chunk %lld finished with status: %d",
+				mcr->chunkId, submittedOp->status);
 		submit_request(submittedOp);
 		// the op will get nuked after it is processed
 	}
@@ -539,6 +549,13 @@ ChunkServer::FindMatchingRequest(seq_t cseq)
 ///
 /// Queue an RPC request
 ///
+void
+ChunkServer::Enqueue(MetaRequest *r) 
+{
+        mPendingReqs.enqueue(r);
+	globals().netKicker.Kick();
+}
+
 int
 ChunkServer::AllocateChunk(MetaAllocate *r, int64_t leaseId)
 {
@@ -552,7 +569,7 @@ ChunkServer::AllocateChunk(MetaAllocate *r, int64_t leaseId)
 
         // save a pointer to the request so that we can match up the
         // response whenever we get it.
-        mPendingReqs.enqueue(ca);
+	Enqueue(ca);
 
         return 0;
 }
@@ -568,7 +585,7 @@ ChunkServer::DeleteChunk(chunkId_t chunkId)
 
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
-	mPendingReqs.enqueue(r);
+	Enqueue(r);
 
 	return 0;
 }
@@ -584,7 +601,7 @@ ChunkServer::TruncateChunk(chunkId_t chunkId, off_t s)
 
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
-	mPendingReqs.enqueue(r);
+	Enqueue(r);
 
 	return 0;
 }
@@ -597,10 +614,10 @@ ChunkServer::ReplicateChunk(fid_t fid, chunkId_t chunkId, seq_t chunkVersion,
 
 	r = new MetaChunkReplicate(NextSeq(), this, fid, chunkId, chunkVersion, loc);
 	r->server = shared_from_this();
-	mNumChunkReplications++;
+	mNumChunkWriteReplications++;
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
-	mPendingReqs.enqueue(r);
+	Enqueue(r);
 
 	return 0;
 }
@@ -630,7 +647,7 @@ ChunkServer::Heartbeat()
 
         // save a pointer to the request so that we can match up the
         // response whenever we get it.
-        mPendingReqs.enqueue(r);
+	Enqueue(r);
 }
 
 void
@@ -645,7 +662,7 @@ ChunkServer::NotifyStaleChunks(const vector<chunkId_t> &staleChunkIds)
 
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
-	mPendingReqs.enqueue(r);
+	Enqueue(r);
 
 }
 
@@ -661,7 +678,7 @@ ChunkServer::NotifyStaleChunk(chunkId_t staleChunkId)
 
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
-	mPendingReqs.enqueue(r);
+	Enqueue(r);
 }
 
 void
@@ -673,7 +690,24 @@ ChunkServer::NotifyChunkVersChange(fid_t fid, chunkId_t chunkId, seq_t chunkVers
 
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
-	mPendingReqs.enqueue(r);
+	Enqueue(r);
+}
+
+void
+ChunkServer::EvacuateChunkDone(chunkId_t chunkId)
+{
+	if (!mIsRetiring)
+		return;
+	mEvacuatingChunks.erase(chunkId);
+	if (mEvacuatingChunks.empty()) {
+		KFS_LOG_VA_INFO("Evacuation of chunks on %s is done; retiring",
+				ServerID().c_str());
+
+		MetaChunkRetire *r;
+
+		r = new MetaChunkRetire(NextSeq(), this);
+		Enqueue(r);
+	}
 }
 
 //
@@ -694,6 +728,7 @@ public:
                 	// Server is dead...so, drop the op
                 	r->status = -EIO;
                 	server->ResumeOp(r);
+			return;
         	}
         	assert(cr != NULL);
 
@@ -775,12 +810,14 @@ ChunkServer::Ping(string &result)
 		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
 	    		<< ", total=" << convertToMB(mTotalSpace) 
 			<< "(MB), used=" << convertToMB(mUsedSpace)
-			<< "(MB), util=" << GetSpaceUtilization() * 100.0 << "% \t";
+			<< "(MB), util=" << GetSpaceUtilization() * 100.0 
+			<< "%, nblocks=" << mNumChunks << " \t";
 	} else {
 		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
 	    		<< ", total=" << convertToGB(mTotalSpace) 
 			<< "(GB), used=" << convertToGB(mUsedSpace)
-			<< "(GB), util=" << GetSpaceUtilization() * 100.0 << "% \t";
+			<< "(GB), util=" << GetSpaceUtilization() * 100.0 
+			<< "%, nblocks=" << mNumChunks << " \t";
 	}
 	result += ost.str();
 }

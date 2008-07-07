@@ -5,7 +5,8 @@
  * \brief KFS checkpointer
  * \author Blake Lewis (Kosmix Corp.)
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -49,29 +50,18 @@ namespace KFS {
  * whether the CP is running, whether the server has any recent
  * updates that would make a new CP worthwhile, etc.
  *
- * It contains two threads.  One is just a timer that wakes up
- * periodically and schedules a CP if needed.  The other is a
- * writer that iterates through the leaf nodes recording their
- * contents in the checkpoint file.
+ * Writing out a checkpoint involves walking the leaves of the
+ * metatree and saving them to disk.  The on-disk checkpoint file stores 
+ * the name of the log that contains all the operations after the checkpoint
+ * was taken.  For failure recovery, there is a notion of a "LATEST" checkpoint
+ * file (created via a hardlink) that identifies the checkpoint that should be
+ * used for restore purposes.
  *
- * Updates to the metatree can go on currently with checkpointing.
- * If such an update deletes a leaf node, we must preserve its
- * contents until it is recorded in the checkpoint.  Such nodes
- * are placed on the "zombie" queue; they are written out and
- * deleted at the end of the checkpoint.  The code also takes
- * care not to include any modifications that occur after the
- * checkpoint has begun.
  */
 class Checkpoint {
 	string cpdir;		//!< dir for CP files
 	string cpname;		//!< name of CP file
 	ofstream file;		//!< current CP file
-	MetaThread writer;	//!< leaf writing thread
-	MetaThread timer;	//!< timer thread to start CP
-	MetaQueue <Meta> zombie; //!< deleted but needed in current CP
-	bool running;		//!< CP currently in progress?
-	bool nostart;		//!< don't allow CP to start
-	bool startblocked;	//!< wanted to start but blocked
 	int mutations;		//!< changes since last CP
 	int cpcount;		//!< number of CP's since startup
 	Node *activeNode;	//!< level-1 node currently being written
@@ -81,40 +71,25 @@ class Checkpoint {
 		return makename(cpdir, "chkpt", highest);
 	}
 	int write_leaves();
-	int write_zombies();
 public:
 	static const int VERSION = 1;
-	Checkpoint(string d): cpdir(d), running(false), nostart(false),
-			      startblocked(false), cpcount(0) { }
+	Checkpoint(string d): cpdir(d), cpcount(0) { } 
 	~Checkpoint() { }
 	void setCPDir(const string &d) 
 	{
 		cpdir = d;
 	}
 	const string name() const { return cpname; }
-	bool isCPNeeded(); 	//!< return true if a CP will be taken
+	//!< return true if a CP will be taken
+	bool isCPNeeded() { return mutations != 0; }
 	void initial_CP();	//!< schedule a checkpoint on startup if needed
-	void start_CP();	//!< schedule a checkpoint
 	int do_CP();		//!< do the actual work
-	bool lock_running();	//!< prevent new CP from starting
-	void unlock_running();
-	bool visited(Node *n) { return n->cpbit() == (cpcount & 1); }
 	void note_mutation() { ++mutations; }
-	void wait_if_active(Node *n);
-	void start_writer(MetaThread::thread_start_t func)
-	{
-		writer.start(func, NULL);
-	}
-	void start_timer(MetaThread::thread_start_t func)
-	{
-		timer.start(func, NULL);
-	}
-	void zombify(Meta *m) { zombie.enqueue(m); }
+	void resetMutationCount() { mutations = 0; }
 };
 
 extern string CPDIR;		//!< directory for CP files
 extern string LASTCP;		//!< most recent CP file (link)
-const unsigned int CPMAXSEC = 60;	//!< max. seconds between CP's
 
 extern Checkpoint cp;
 extern void checkpointer_setup_paths(const string &cpdir);

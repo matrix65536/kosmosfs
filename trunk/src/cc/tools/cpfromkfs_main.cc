@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/23
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -48,11 +49,11 @@ using std::endl;
 using std::ofstream;
 
 using namespace KFS;
-KfsClient *gKfsClient;
+KfsClientPtr gKfsClient;
 
 // Given a kfsdirname, restore it to dirname.  Dirname will be created
 // if it doesn't exist. 
-void RestoreDir(string &dirname, string &kfsdirname);
+int RestoreDir(string &dirname, string &kfsdirname);
 
 // Given a kfsdirname/filename, restore it to dirname/filename.  The
 // operation here is simple: read the file from KFS and dump it to filename.
@@ -105,9 +106,8 @@ main(int argc, char **argv)
         exit(0);
     }
 
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(serverHost, port);
-    if (!gKfsClient->IsInitialized()) {
+    gKfsClient = getKfsClientFactory()->GetClient(serverHost, port);
+    if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(0);
     }
@@ -117,12 +117,14 @@ main(int argc, char **argv)
 	exit(-1);
     }
 
-    if (!S_ISDIR(statInfo.st_mode)) {
-	RestoreFile(kfsPath, localPath);
-	exit(0);
-    }
+    int retval;
 
-    RestoreDir(kfsPath, localPath);
+    if (!S_ISDIR(statInfo.st_mode)) {
+	retval = RestoreFile(kfsPath, localPath);
+    } else {
+        retval = RestoreDir(kfsPath, localPath);
+    }
+    exit(retval);
 }
 
 int
@@ -173,17 +175,17 @@ RestoreFile(string &kfsPath, string &localPath)
 
 }
 
-void
+int
 RestoreDir(string &kfsdirname, string &dirname)
 {
     string kfssubdir, subdir;
-    int res;
+    int res, retval = 0;
     vector<KfsFileAttr> fileInfo;
     vector<KfsFileAttr>::size_type i;
 
     if ((res = gKfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
         cout << "Readdir plus failed: " << res << endl;
-        return;
+        return res;
     }
     
     for (i = 0; i < fileInfo.size(); ++i) {
@@ -198,12 +200,18 @@ RestoreDir(string &kfsdirname, string &dirname)
             mkdir(subdir.c_str(), ALLPERMS);
 #endif
             kfssubdir = kfsdirname + "/" + fileInfo[i].filename.c_str();
-            RestoreDir(subdir, kfssubdir);
+            res = RestoreDir(subdir, kfssubdir);
+            if (res < 0)
+                retval = res;
+
         } else {
-            RestoreFile2(kfsdirname + "/" + fileInfo[i].filename,
-			 dirname + "/" + fileInfo[i].filename);
+            res = RestoreFile2(kfsdirname + "/" + fileInfo[i].filename,
+                               dirname + "/" + fileInfo[i].filename);
+            if (res < 0)
+                retval = res;
         }
     }
+    return retval;
 }
 
 // 
@@ -222,13 +230,13 @@ RestoreFile2(string kfsfilename, string localfilename)
     kfsfd = gKfsClient->Open((char *) kfsfilename.c_str(), O_RDONLY);
     if (kfsfd < 0) {
         cout << "Open failed: " << endl;
-        exit(0);
+        exit(-1);
     }
 
     ofs.open(localfilename.c_str(), std::ios_base::out);
     if (!ofs) {
         cout << "Unable to open: " << localfilename << endl;
-        exit(0);
+        exit(-1);
     }
     
     while (!ofs.eof()) {

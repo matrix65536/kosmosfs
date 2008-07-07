@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/22
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -33,10 +34,10 @@ class ClientSM; // forward declaration to get things to build...
 
 #include <deque>
 
-#include "libkfsIO/Chunk.h"
 #include "libkfsIO/KfsCallbackObj.h"
 #include "libkfsIO/DiskConnection.h"
 #include "libkfsIO/NetConnection.h"
+#include "Chunk.h"
 #include "KfsOps.h"
 
 namespace KFS

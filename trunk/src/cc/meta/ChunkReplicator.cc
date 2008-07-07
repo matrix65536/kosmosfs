@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2007/01/18
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -24,18 +25,24 @@
 //----------------------------------------------------------------------------
 
 #include "ChunkReplicator.h"
-using namespace KFS;
-
 #include "libkfsIO/Globals.h"
 #include <cassert>
+
+using namespace KFS;
+using namespace libkfsio;
 
 ChunkReplicator::ChunkReplicator() :
 	mInProgress(false), mOp(1, this) 
 { 
 	SET_HANDLER(this, &ChunkReplicator::HandleEvent);
-	/// setup a periodic event to do the cleanup
-	mEvent.reset(new Event(this, NULL, REPLICATION_CHECK_INTERVAL_MSECS, true));
-	libkfsio::globals().eventManager.Schedule(mEvent, REPLICATION_CHECK_INTERVAL_MSECS);
+	mTimer = new ChunkReplicatorTimeoutImpl(this);
+	globals().netManager.RegisterTimeoutHandler(mTimer);
+}
+
+ChunkReplicator::~ChunkReplicator()
+{
+	globals().netManager.UnRegisterTimeoutHandler(mTimer);
+	delete mTimer;
 }
 
 /// Use the main loop to process the request.

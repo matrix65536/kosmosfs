@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/28
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -45,15 +46,15 @@ using std::vector;
 
 using namespace KFS;
 
-static void dirList(string kfsdirname, bool longMode, bool humanReadable);
-static void doDirList(string kfsdirname);
-static void doDirListPlusAttr(string kfsdirname, bool humanReadable);
+static int dirList(string kfsdirname, bool longMode, bool humanReadable);
+static int doDirList(string kfsdirname);
+static int doDirListPlusAttr(string kfsdirname, bool humanReadable);
 static void printFileInfo(const string &filename, time_t mtime, size_t filesize, bool humanReadable);
 static void getTimeString(time_t time, char *buf, int bufLen = 256);
 
 
 // may want to do "ls -r"
-void
+int
 KFS::tools::handleLs(const vector<string> &args)
 {
     bool longMode = false, humanReadable = false;
@@ -61,7 +62,7 @@ KFS::tools::handleLs(const vector<string> &args)
 
     if ((args.size() >= 1) && (args[0] == "--help")) {
         cout << "Usage: ls {-lh} {<dir>} " << endl;
-        return;
+        return 0;
     }
 
     if (args.size() >= 1) {
@@ -81,21 +82,21 @@ KFS::tools::handleLs(const vector<string> &args)
     }
 
     if (args.size() > pathIndex)
-        dirList(args[pathIndex], longMode, humanReadable);
+        return dirList(args[pathIndex], longMode, humanReadable);
     else
-        dirList(".", longMode, humanReadable);
+        return dirList(".", longMode, humanReadable);
 }
 
-void
+int
 dirList(string kfsdirname, bool longMode, bool humanReadable)
 {
     if (longMode)
-        doDirListPlusAttr(kfsdirname, humanReadable);
+        return doDirListPlusAttr(kfsdirname, humanReadable);
     else
-        doDirList(kfsdirname);
+        return doDirList(kfsdirname);
 }
 
-void
+int
 doDirList(string kfsdirname)
 {
     string kfssubdir, subdir;
@@ -103,11 +104,16 @@ doDirList(string kfsdirname)
     vector<string> entries;
     vector<string>::size_type i;
 
-    KfsClient *kfsClient = KFS::getKfsClient();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
+    if (kfsClient->IsFile((char *) kfsdirname.c_str())) {
+        cout << kfsdirname << endl;
+        return 0;
+    }
+        
     if ((res = kfsClient->Readdir((char *) kfsdirname.c_str(), entries)) < 0) {
         cout << "Readdir failed: " << ErrorCodeToStr(res) << endl;
-        return;
+        return res;
     }
 
     // we could provide info of whether the thing is a dir...but, later
@@ -116,9 +122,10 @@ doDirList(string kfsdirname)
             continue;
         cout << entries[i] << endl;
     }
+    return 0;
 }
 
-void
+int
 doDirListPlusAttr(string kfsdirname, bool humanReadable)
 {
     string kfssubdir, subdir;
@@ -126,18 +133,18 @@ doDirListPlusAttr(string kfsdirname, bool humanReadable)
     vector<KfsFileAttr> fileInfo;
     vector<KfsFileAttr>::size_type i;
 
-    KfsClient *kfsClient = KFS::getKfsClient();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     if (kfsClient->IsFile((char *) kfsdirname.c_str())) {
         struct stat statInfo;
 
         kfsClient->Stat(kfsdirname.c_str(), statInfo);
         printFileInfo(kfsdirname, statInfo.st_mtime, statInfo.st_size, humanReadable);
-        return;
+        return 0;
     }
     if ((res = kfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
         cout << "Readdir plus failed: " << ErrorCodeToStr(res) << endl;
-        return;
+        return res;
     }
     
     for (i = 0; i < fileInfo.size(); ++i) {
@@ -155,6 +162,7 @@ doDirListPlusAttr(string kfsdirname, bool humanReadable)
                           fileInfo[i].fileSize, humanReadable);
         }
     }
+    return 0;
 }
 
 void

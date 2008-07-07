@@ -3,9 +3,10 @@
  *
  * \file kfsops.cc
  * \brief KFS file system operations.
- * \author Blake Lewis and Sriram Rao (Kosmix Corp.)
+ * \author Blake Lewis and Sriram Rao 
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -131,6 +132,12 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 {
 	if (!legalname(fname)) {
 		KFS_LOG_VA_WARN("Bad file name %s", fname.c_str());
+		return -EINVAL;
+	}
+
+	if (numReplicas <= 0) {
+		KFS_LOG_VA_DEBUG("Bad # of replicas (%d) for %s", 
+				numReplicas, fname.c_str());
 		return -EINVAL;
 	}
 
@@ -477,8 +484,10 @@ Tree::allocateChunkId(fid_t file, chunkOff_t offset, chunkId_t *chunkId,
 	if (fa == NULL)
 		return -ENOENT;
 
-	if (numReplicas != NULL)
+	if (numReplicas != NULL) {
+		assert(fa->numReplicas != 0);
 		*numReplicas = fa->numReplicas;
+	}
 
 	// Allocation information is stored for offset's in the file that
 	// correspond to chunk boundaries.  This simplifies finding

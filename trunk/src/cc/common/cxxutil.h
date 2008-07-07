@@ -4,9 +4,10 @@
 // \brief Hash declarations to get the code to compile on Mac
 //
 // Created 2007/10/01
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -29,7 +30,7 @@
 
 #if defined (__APPLE__) || defined (__i386__)
 #include <tr1/functional>
-#if ((__GNUC__ == 4) && (__GNUC_MINOR__ < 3))
+#if ((__GNUC__ == 4) && (__GNUC_MINOR__ < 2))
 namespace std
 {
 namespace tr1

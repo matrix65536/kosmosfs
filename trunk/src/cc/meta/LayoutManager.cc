@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/06
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -35,6 +36,9 @@
 using std::for_each;
 using std::find;
 using std::ptr_fun;
+using std::mem_fun;
+using std::mem_fun_ref;
+using std::bind2nd;
 using std::sort;
 using std::remove_if;
 using std::set;
@@ -46,22 +50,33 @@ using namespace KFS;
 using namespace KFS::libkfsio;
 
 LayoutManager KFS::gLayoutManager;
-/// Max # of concurrent replications we allow in the system
-const int MAX_CONCURRENT_REPLICATIONS = 10;
-/// Max # of concurrent replications per node
-const int MAX_CONCURRENT_REPLICATIONS_PER_NODE = 2;
+/// Max # of concurrent read/write replications per node
+///  -- write: is the # of chunks that the node can pull in from outside
+///  -- read: is the # of chunks that the node is allowed to send out
+///
+const int MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE = 5;
+const int MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE = 10;
+
+///
+/// When placing chunks, we see the space available on the node as well as 
+/// we take our estimate of the # of writes on 
+/// the node as a hint for choosing servers; if a server is "loaded" we should
+/// avoid sending traffic to it.  This value defines a watermark after which load
+/// begins to be an issue.
+///
+const uint32_t CONCURRENT_WRITES_PER_NODE_WATERMARK = 10;
 
 ///
 /// For disk space utilization balancing, we say that a server
-/// is "under utilized" if is below 20% full; we say that a server
-/// is "over utilized" if it is above 80% full.  For rebalancing, we
+/// is "under utilized" if is below 30% full; we say that a server
+/// is "over utilized" if it is above 70% full.  For rebalancing, we
 /// move data from servers that are over-utilized to servers that are
 /// under-utilized.  These #'s are intentionally set conservatively; we
 /// don't want the system to constantly move stuff between nodes when
 /// there isn't much to be gained by it.
 ///
-const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.2;
-const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.8;
+const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.3;
+const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.7;
 
 
 /// Helper functor that can be used to find a chunkid from a vector
@@ -77,16 +92,28 @@ public:
 };
 
 LayoutManager::LayoutManager() :
-	mLeaseId(1), mNumOngoingReplications(0),
-	mRecoveryStartTime(0)
+	mLeaseId(1), mNumOngoingReplications(0), 
+	mIsRebalancingEnabled(false), mLastChunkRebalanced(1),
+	mRecoveryStartTime(0), mMinChunkserversToExitRecovery(1)
 {
 	mOngoingReplicationStats = new Counter("Num Ongoing Replications");
 	mTotalReplicationStats = new Counter("Total Num Replications");
 	mFailedReplicationStats = new Counter("Num Failed Replications");
+	mStaleChunkCount = new Counter("Num Stale Chunks");
 	globals().counterManager.AddCounter(mOngoingReplicationStats);
 	globals().counterManager.AddCounter(mTotalReplicationStats);
 	globals().counterManager.AddCounter(mFailedReplicationStats);
+	globals().counterManager.AddCounter(mStaleChunkCount);
 }
+
+class MatchingServer {
+	ServerLocation loc;
+public:
+	MatchingServer(const ServerLocation &l) : loc(l) { }
+	bool operator() (ChunkServerPtr &s) {
+		return s->MatchingServer(loc);
+	}
+};
 
 
 /// Add the newly joined server to the list of servers we have.  Also,
@@ -97,7 +124,7 @@ LayoutManager::AddNewServer(MetaHello *r)
         ChunkServerPtr s;
         vector <chunkId_t> staleChunkIds;
         vector <ChunkInfo>::size_type i;
-	vector <ChunkServer *>::size_type j;
+	vector <ChunkServerPtr>::iterator j;
 	uint64_t allocSpace = r->chunks.size() * CHUNKSIZE;
 
 	if (r->server->IsDown())
@@ -106,21 +133,31 @@ LayoutManager::AddNewServer(MetaHello *r)
         s = r->server;
         s->SetServerLocation(r->location);
         s->SetSpace(r->totalSpace, r->usedSpace, allocSpace);
+	s->SetRack(r->rackId);
 
         // If a previously dead server reconnects, reuse the server's
         // position in the list of chunk servers.  This is because in
         // the chunk->server mapping table, we use the chunkserver's
         // position in the list of connected servers to find it.
         //
-        for (j = 0; j < mChunkServers.size(); ++j) {
-		if (mChunkServers[j]->MatchingServer(r->location)) {
-			KFS_LOG_VA_DEBUG("Duplicate server: %s, %d",
-					 r->location.hostname.c_str(), r->location.port);
-			return;
-		}
+	j = find_if(mChunkServers.begin(), mChunkServers.end(), MatchingServer(r->location));
+	if (j != mChunkServers.end()) {
+		KFS_LOG_VA_DEBUG("Duplicate server: %s, %d",
+				 r->location.hostname.c_str(), r->location.port);
+		return;
         }
 
 	mChunkServers.push_back(s);
+	vector<RackInfo>::iterator rackIter;
+	
+	rackIter = find_if(mRacks.begin(), mRacks.end(), RackMatcher(r->rackId));
+	if (rackIter != mRacks.end()) {
+		rackIter->addServer(s);
+	} else {
+		RackInfo ri(r->rackId);
+		ri.addServer(s);
+		mRacks.push_back(ri);
+	}
 
 	for (i = 0; i < r->chunks.size(); ++i) {
 		vector<MetaChunkInfo *> v;
@@ -174,6 +211,7 @@ LayoutManager::AddNewServer(MetaHello *r)
                         KFS_LOG_VA_INFO("Non-existent chunk id = %lld => stale",
                                          r->chunks[i].chunkId);
                         staleChunkIds.push_back(r->chunks[i].chunkId);
+			mStaleChunkCount->Update(1);
                 }
 	}
 
@@ -201,6 +239,29 @@ public:
 	}
 };
 
+class MapRetirer {
+	CSMap &cmap;
+	CRCandidateSet &crset;
+	ChunkServer *retiringServer;
+public:
+	MapRetirer(CSMap &m, CRCandidateSet &c, ChunkServer *t):
+		cmap(m), crset(c), retiringServer(t) { }
+	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
+		ChunkPlacementInfo c = p.second;
+        	vector <ChunkServerPtr>::iterator i;
+
+		i = find_if(c.chunkServers.begin(), c.chunkServers.end(), 
+			ChunkServerMatcher(retiringServer));
+
+		if (i == c.chunkServers.end())
+			return;
+
+		// we need to check the replication level of this chunk
+		crset.insert(p.first);
+		retiringServer->EvacuateChunk(p.first);
+	}
+};
+
 void
 LayoutManager::ServerDown(ChunkServer *server)
 {
@@ -210,6 +271,13 @@ LayoutManager::ServerDown(ChunkServer *server)
 
 	if (i == mChunkServers.end())
 		return;
+
+	vector<RackInfo>::iterator rackIter;
+	
+	rackIter = find_if(mRacks.begin(), mRacks.end(), RackMatcher(server->GetRack()));
+	if (rackIter != mRacks.end()) {
+		rackIter->removeServer(server);
+	}
 	
 	/// Fail all the ops that were sent/waiting for response from
 	/// this server.
@@ -218,6 +286,83 @@ LayoutManager::ServerDown(ChunkServer *server)
 	mChunkServers.erase(i);
 	MapPurger purge(mChunkToServerMap, mChunkReplicationCandidates, server);
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+}
+
+int
+LayoutManager::RetireServer(const ServerLocation &loc)
+{
+	ChunkServerPtr retiringServer;
+	vector <ChunkServerPtr>::iterator i;
+
+	i = find_if(mChunkServers.begin(), mChunkServers.end(), MatchingServer(loc));
+	if (i == mChunkServers.end())
+		return -1;
+	
+	retiringServer = *i;
+	retiringServer->SetRetiring();
+
+	MapRetirer retirer(mChunkToServerMap, mChunkReplicationCandidates, retiringServer.get());
+	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), retirer);
+	
+	return 0;
+}
+
+/*
+ * Chunk-placement algorithm is rack-aware. At a high-level, the algorithm tries
+ * to keep at most 1 copy of a chunk per rack:
+ *  - Sort the racks based on space
+ *  - From each rack, find one or more candidate servers
+ * This approach will work when we are placing a chunk for the first time.
+ * Whenever we need to copy/migrate a chunk, the intent is to keep the chunk
+ * migration traffic within the same rack.  Specifically:
+ * 1. Need to re-replicate a chunk because a node is dead
+ *      -- here, we exclude the 2 racks on which the chunk is already placed and
+ *      try to find a new spot.  By the time we get to finding a spot, we have
+ *      removed the info about where the chunk was.  So, put it on a unique rack
+ * 2. Need to re-replicate a chunk because a node is retiring
+ *	-- here, since we know which node is retiring and the rack it is on, we
+ *	can keep the new spot to be on the same rack
+ * 3. Need to re-replicate a chunk because we are re-balancing amongst nodes
+ *	-- we move data between nodes in the same rack
+ *	-- if we a new rack got added, we move data between racks; here we need
+ *	   to be a bit careful: in one iteration, we move data from one rack to
+ *	   a newly added rack; in the next iteration, we could move another copy
+ *	   of the chunk to the same rack...fill this in.
+ * If we can't place the 3 copies on 3 different racks, we put the moved data
+ * whereever we can find a spot.  (At a later time, we'll need the fix code: if
+ * a new rack becomes available, we move the 3rd copy to the new rack and get
+ * the copies on different racks).
+ *
+ */
+
+
+/*
+ * Return an ordered list of candidate racks
+ */
+void
+LayoutManager::FindCandidateRacks(vector<int> &result)
+{
+	set<int> dummy;
+
+	FindCandidateRacks(result, dummy);
+}
+
+void
+LayoutManager::FindCandidateRacks(vector<int> &result, const set<int> &excludes)
+{
+	set<int>::const_iterator iter;
+
+	result.clear();
+	sort(mRacks.begin(), mRacks.end());
+	for (uint32_t i = 0; i < mRacks.size(); i++) {
+		if (!excludes.empty()) {
+			iter = excludes.find(mRacks[i].id());
+			if (iter != excludes.end())
+				// rack is in the exclude list
+				continue;
+		}
+		result.push_back(mRacks[i].id());
+	}
 }
 
 struct ServerSpace {
@@ -231,9 +376,12 @@ struct ServerSpace {
 	// also, prefer servers that are lightly loaded
 
 	bool operator < (const ServerSpace &other) const {
-		if (loadEstimate != other.loadEstimate)
+		
+		if ((loadEstimate > CONCURRENT_WRITES_PER_NODE_WATERMARK) &&
+			(loadEstimate != other.loadEstimate)) {
 			// prefer server that is "lightly" loaded
 			return loadEstimate < other.loadEstimate;
+		}
 
 		if (availSpace != other.availSpace)
 			return availSpace > other.availSpace;
@@ -254,18 +402,29 @@ struct ServerSpaceUtil {
 
 void
 LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
-				const vector<ChunkServerPtr> &excludes)
+				const vector<ChunkServerPtr> &excludes,
+				int rackId)
 {
 	if (mChunkServers.size() < 1)
 		return;
+	
+	if (rackId > 0) {
+		vector<RackInfo>::iterator rackIter;
 
-	FindCandidateServers(result, mChunkServers, excludes);
+		rackIter = find_if(mRacks.begin(), mRacks.end(), RackMatcher(rackId));
+		if (rackIter != mRacks.end()) {
+			FindCandidateServers(result, rackIter->getServers(), excludes, rackId);
+			return;
+		}
+	}
+	FindCandidateServers(result, mChunkServers, excludes, rackId);
 }
 
 void
 LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 				const vector<ChunkServerPtr> &sources,
-				const vector<ChunkServerPtr> &excludes)
+				const vector<ChunkServerPtr> &excludes,
+				int rackId)
 {
 	if (sources.size() < 1)
 		return;
@@ -279,8 +438,12 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 
 	for (i = 0, j = 0; i < sources.size(); i++) {
 		c = sources[i];
-		if ((c->GetAvailSpace() < CHUNKSIZE) || 
-			(!c->IsResponsiveServer())) {
+		if ((rackId >= 0) && (c->GetRack() != rackId))
+			continue;
+		if ((c->GetAvailSpace() < CHUNKSIZE) || (!c->IsResponsiveServer()) 
+			|| (c->IsRetiring())) {
+			// one of: no space, non-responsive, retiring...we leave
+			// the server alone
 			continue;
 		}
 		iter = find(excludes.begin(), excludes.end(), c);
@@ -345,25 +508,40 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 {
 	vector<ChunkServerPtr> candidates, dummy;
 	vector<ChunkServerPtr>::size_type i;
+	vector<int> racks;
 
-	FindCandidateServers(candidates, dummy);
-
-	if (candidates.size() == 0) {
-		return -ENOSPC;
+	if (r->numReplicas == 0) {
+		// huh? allocate a chunk with 0 replicas???
+		return -EINVAL;
 	}
+
+	FindCandidateRacks(racks);
+	if (racks.size() == 0)
+		return -ENOSPC;
 
 	r->servers.reserve(r->numReplicas);
 
-        // bug fix reported by Alexey Timanovsky
-        // used to be i < mChunkServers.size(), which is incorrect
-        //  -- if # of candidates < #  of chunkservers, then we
-        //     are indexing something that is null or corrupting stuff.
-	//
-	for (i = 0; r->servers.size() < (uint32_t) r->numReplicas && 
-			i < candidates.size(); i++) {
-		r->servers.push_back(candidates[i]);
+	uint32_t numServersPerRack = r->numReplicas / racks.size();
+	if (r->numReplicas % racks.size())
+		numServersPerRack++;
+
+	for (uint32_t idx = 0; idx < racks.size(); idx++) {
+		if (r->servers.size() >= (uint32_t) r->numReplicas)
+			break;
+		FindCandidateServers(candidates, dummy, racks[idx]);
+		if (candidates.size() == 0)
+			continue;
+		// take as many as we can from this rack
+		for (uint32_t i = 0; i < candidates.size() && i < numServersPerRack; i++) {
+			if (r->servers.size() >= (uint32_t) r->numReplicas)
+				break;
+			r->servers.push_back(candidates[i]);
+		}
 	}
-        
+
+	if (r->servers.size() == 0)
+		return -ENOSPC;
+
 	LeaseInfo l(WRITE_LEASE, mLeaseId, r->servers[0]);
 	mLeaseId++;
 
@@ -381,6 +559,9 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 	v.chunkLeases.push_back(l);
 
 	mChunkToServerMap[r->chunkId] = v;
+
+	if (r->servers.size() < (uint32_t) r->numReplicas)
+		ChangeChunkReplication(r->chunkId);
 
 	return 0;
 }
@@ -739,7 +920,9 @@ LayoutManager::GetChunkToServerMapping(chunkId_t chunkId, vector<ChunkServerPtr>
 class Dispatcher {
 public:
 	Dispatcher() { }
-	void operator() (ChunkServerPtr &c) { c->Dispatch(); }
+	void operator() (ChunkServerPtr &c) { 
+		c->Dispatch(); 
+	}
 };
 
 void
@@ -843,22 +1026,93 @@ LayoutManager::LeaseCleanup(chunkId_t chunkId, ChunkPlacementInfo &v)
 	v.chunkLeases.clear();
 }
 
-void
+class RetiringServerPred {
+public:
+	RetiringServerPred() { }
+	bool operator()(const ChunkServerPtr &c) {
+		return c->IsRetiring();
+	}
+};
+
+class ReplicationDoneNotifier {
+	chunkId_t cid;
+public:
+	ReplicationDoneNotifier(chunkId_t c) : cid(c) { }
+	void operator()(ChunkServerPtr &s) {
+		s->EvacuateChunkDone(cid);
+	}
+};
+
+class RackSetter {
+	set<int> &racks;
+public:
+	RackSetter(set<int> &r) : racks(r) { }
+	void operator()(const ChunkServerPtr &s) {
+		racks.insert(s->GetRack());
+	}
+};
+
+int
 LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
-				int extraReplicas)
+				uint32_t extraReplicas)
 {
+	vector<int> racks;
+	set<int> excludeRacks;
 	// find a place
 	vector<ChunkServerPtr> candidates;
-	ChunkServerPtr c;
 
-	FindCandidateServers(candidates, clli.chunkServers);
+	// two steps here: first, exclude the racks on which chunks are already 
+	// placed; if we can't find a unique rack, then put it wherever
+
+	for_each(clli.chunkServers.begin(), clli.chunkServers.end(),
+		RackSetter(excludeRacks));
+
+	FindCandidateRacks(racks, excludeRacks);
+	if (racks.size() == 0) {
+		// no new rack is available to put the chunk
+		// take what we got
+		FindCandidateRacks(racks);
+		if (racks.size() == 0)
+			// no rack is available
+			return 0;
+	}
+
+	uint32_t numServersPerRack = extraReplicas / racks.size();
+	if (extraReplicas % racks.size())
+		numServersPerRack++;
+
+	for (uint32_t idx = 0; idx < racks.size(); idx++) {
+		if (candidates.size() >= extraReplicas)
+			break;
+		vector<ChunkServerPtr> servers;
+
+		// find candidates other than those that are already hosting the
+		// chunk
+		FindCandidateServers(servers, clli.chunkServers, racks[idx]);
+
+		// take as many as we can from this rack
+		for (uint32_t i = 0; i < servers.size() && i < numServersPerRack; i++) {
+			if (candidates.size() >= extraReplicas)
+				break;
+			candidates.push_back(servers[i]);
+		}
+	}
 
 	if (candidates.size() == 0)
-		return;
+		return 0;
 
+	return ReplicateChunk(chunkId, clli, extraReplicas, candidates);
+}
+
+int
+LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
+				uint32_t extraReplicas, const vector<ChunkServerPtr> &candidates)
+{
+	ChunkServerPtr c, dataServer;
 	vector<MetaChunkInfo *> v;
 	vector<MetaChunkInfo *>::iterator chunk;
 	fid_t fid = clli.fid;
+	int numDone = 0;
 
 	metatree.getalloc(fid, v);
 	chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(chunkId));
@@ -869,36 +1123,59 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 
 	MetaChunkInfo *mci = *chunk;
 
-	bool didReplication = false;
-	uint32_t j = 0;
+	for (uint32_t i = 0; i < candidates.size() && i < extraReplicas; i++) {
+		vector<ChunkServerPtr>::const_iterator iter;
 
-	for (uint32_t i = 0; i < candidates.size() && i < (uint32_t) extraReplicas; i++) {
 		c = candidates[i];
 		// Don't send too many replications to a server
-		if (c->GetNumChunkReplications() > MAX_CONCURRENT_REPLICATIONS_PER_NODE)
+		if (c->GetNumChunkReplications() > MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
 			continue;
-		didReplication = true;
 #ifdef DEBUG
 		// verify that we got good candidates
-		vector<ChunkServerPtr>::const_iterator iter;
 		iter = find(clli.chunkServers.begin(), clli.chunkServers.end(), c);
 		if (iter != clli.chunkServers.end()) {
 			assert(!"Not possible...");
 		}
 #endif
-		// Spread the read load as well...
-		c->ReplicateChunk(fid, chunkId, mci->chunkVersion,
-				clli.chunkServers[j]->GetServerLocation());
-		j++;
-		j %= clli.chunkServers.size();
+		// prefer a server that is being retired to the other nodes as
+		// the source of the chunk replication
+		iter = find_if(clli.chunkServers.begin(), clli.chunkServers.end(), 
+				RetiringServerPred());
+
+		if ((iter != clli.chunkServers.end()) && 
+			((*iter)->GetReplicationReadLoad() <
+			MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE))
+				dataServer = *iter;
+
+		// if we can't find a retiring server, pick a server that has read b/w available
+		for (uint32_t j = 0; (!dataServer) && 
+				(j < clli.chunkServers.size()); j++) {
+			if (clli.chunkServers[j]->GetReplicationReadLoad() >= 
+				MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE)
+				continue;
+			dataServer = clli.chunkServers[j];	
+		}
+		if (dataServer) {
+			ServerLocation srcLocation = dataServer->GetServerLocation();
+			ServerLocation dstLocation = c->GetServerLocation();
+			KFS_LOG_VA_INFO("Starting re-replication for chunk %lld (from: %s to %s)", 
+					chunkId,
+					srcLocation.ToString().c_str(),
+					dstLocation.ToString().c_str());
+			dataServer->UpdateReplicationReadLoad(1);
+			c->ReplicateChunk(fid, chunkId, mci->chunkVersion,
+				dataServer->GetServerLocation());
+			numDone++;
+		}
+		dataServer.reset();
 	}
 
-	if (didReplication) {
+	if (numDone > 0) {
 		mTotalReplicationStats->Update(1);
-		mOngoingReplicationStats->Update(1);
+		mOngoingReplicationStats->Update(numDone);
 	}
+	return numDone;
 }
-
 
 bool
 LayoutManager::CanReplicateChunkNow(chunkId_t chunkId, 
@@ -939,19 +1216,46 @@ LayoutManager::CanReplicateChunkNow(chunkId_t chunkId,
 		return true;
 	}
 
+	// if any of the chunkservers are retiring, we need to make copies
+	extraReplicas = count_if(c.chunkServers.begin(), c.chunkServers.end(), 
+				RetiringServerPred());
+	if (extraReplicas > 0) {
+		if (fa->numReplicas - c.chunkServers.size() > 0)
+			extraReplicas += (fa->numReplicas - c.chunkServers.size());
+		return true;
+	}
+
 	// May need to re-replicate this chunk: 
-	//    - extraReplicas > 0 means make extra copiles; 
+	//    - extraReplicas > 0 means make extra copies; 
 	//    - extraReplicas == 0, take out this chunkid from the candidate set
 	//    - extraReplicas < 0, means we got too many copies; delete some
 	extraReplicas = fa->numReplicas - c.chunkServers.size();
+
+	if (extraReplicas < 0) {
+		//
+		// We need to delete additional copies; however, if
+		// there is a valid (read) lease issued on the chunk,
+		// then leave the chunk alone for now; we'll look at
+		// deleting it when the lease has expired.  This is for
+		// safety: if a client was reading from the copy of the
+		// chunk that we are trying to delete, the client will
+		// see the deletion and will have to failover; avoid
+		// unnecessary failovers
+		//
+		l = find_if(c.chunkLeases.begin(), c.chunkLeases.end(),
+				ptr_fun(LeaseInfo::IsValidLease));
+
+		if (l != c.chunkLeases.end())
+			return false;
+	}
+
 	return true;
 }
 
 void
 LayoutManager::ChunkReplicationChecker()
 {
-	if ((mNumOngoingReplications > MAX_CONCURRENT_REPLICATIONS) ||
-		(InRecovery())) {
+	if (InRecovery()) {
 		return;
 	}
 
@@ -962,10 +1266,9 @@ LayoutManager::ChunkReplicationChecker()
 	CSMapIter iter;
 	chunkId_t chunkId;
 	CRCandidateSet delset;
-	int extraReplicas;
+	int extraReplicas, numOngoing;
 
 	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin(); 
-		mNumOngoingReplications <= MAX_CONCURRENT_REPLICATIONS &&
 		citer != mChunkReplicationCandidates.end(); ++citer) {
 		chunkId = *citer;
 
@@ -975,17 +1278,17 @@ LayoutManager::ChunkReplicationChecker()
 			continue;
 		}
 		if (iter->second.ongoingReplications > 0)
+			// this chunk is being re-replicated; we'll check later
 			continue;
-
-		KFS_LOG_VA_DEBUG("Checking replication level for chunk: %lld", chunkId);
 
 		if (!CanReplicateChunkNow(iter->first, iter->second, extraReplicas))
 			continue;
 
 		if (extraReplicas > 0) {
-			ReplicateChunk(iter->first, iter->second, extraReplicas);
-			iter->second.ongoingReplications += extraReplicas;
-			mNumOngoingReplications++;
+			numOngoing = ReplicateChunk(iter->first, iter->second, extraReplicas);
+			iter->second.ongoingReplications += numOngoing;
+			if (numOngoing > 0)
+				mNumOngoingReplications++;
 		} else if (extraReplicas == 0) {
 			delset.insert(chunkId);
 		} else {
@@ -997,39 +1300,101 @@ LayoutManager::ChunkReplicationChecker()
 	if (delset.size() > 0) {
 		for (CRCandidateSetIter citer = delset.begin(); 
 			citer != delset.end(); ++citer) {
+			// Notify the retiring servers of any of their chunks have
+			// been evacuated---such as, if there were too many copies of those
+			// chunks, we are done evacuating them
+			chunkId = *citer;
+        		iter = mChunkToServerMap.find(chunkId);
+			if (iter != mChunkToServerMap.end()) 
+				for_each(iter->second.chunkServers.begin(), iter->second.chunkServers.end(),
+					ReplicationDoneNotifier(chunkId));
 			mChunkReplicationCandidates.erase(*citer);
 		}
 	}
 
-	// If some servers are more loaded (space-wise) than others, move stuff around
 	RebalanceServers();
 }
 
 void
-LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
+LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 {
 	CSMapIter iter;
+	chunkId_t chunkId;
+	int extraReplicas = 0, numOngoing;
+	vector<ChunkServerPtr> c;
+
+	c.push_back(server);
+
+	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin(); 
+		citer != mChunkReplicationCandidates.end(); ++citer) {
+		chunkId = *citer;
+
+        	iter = mChunkToServerMap.find(chunkId);
+        	if (iter == mChunkToServerMap.end()) {
+			continue;
+		}
+		if (iter->second.ongoingReplications > 0)
+			continue;
+
+		// if the chunk is already hosted on this server, the chunk isn't a candidate for 
+		// work to be sent to this server.
+		if (IsChunkHostedOnServer(iter->second.chunkServers, server) ||
+			(!CanReplicateChunkNow(iter->first, iter->second, extraReplicas)))
+			continue;
+
+		if (extraReplicas > 0) {
+			if (mRacks.size() > 1) {
+				// when there is more than one rack, since we
+				// are re-replicating a chunk, we don't want to put two
+				// copies of a chunk on the same rack
+				set<int> excludeRacks;
+				for_each(iter->second.chunkServers.begin(), iter->second.chunkServers.end(), 
+					RackSetter(excludeRacks));
+				if (excludeRacks.find(server->GetRack()) != excludeRacks.end())
+					continue;
+			}
+
+			numOngoing = ReplicateChunk(iter->first, iter->second, 1, c);
+			iter->second.ongoingReplications += numOngoing;
+			if (numOngoing > 0)
+				mNumOngoingReplications++;
+		}
+
+		if (server->GetNumChunkReplications() > MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
+			break;
+	}
+}
+
+void
+LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
+{
+	CSMapIter iter;
+	vector<ChunkServerPtr>::iterator source;
 
 	mOngoingReplicationStats->Update(-1);
 
 	// Book-keeping....
 	iter = mChunkToServerMap.find(req->chunkId);
+
 	if (iter != mChunkToServerMap.end()) {
 		iter->second.ongoingReplications--;
-		if (iter->second.ongoingReplications < 0)
+		if (iter->second.ongoingReplications == 0) 
+			// if all the replications for this chunk are done,
+			// then update the global counter.
+			mNumOngoingReplications--;
+
+		if (iter->second.ongoingReplications < 0) 
 			// sanity...
 			iter->second.ongoingReplications = 0;
 	}
 
-	// if all the replications for this chunk are done,
-	// then update the global counter.
-	if (iter->second.ongoingReplications == 0)
-		mNumOngoingReplications--;
-
-	if (mNumOngoingReplications < 0)
-		mNumOngoingReplications = 0;
-
 	req->server->ReplicateChunkDone();
+
+	source = find_if(mChunkServers.begin(), mChunkServers.end(),
+			MatchingServer(req->srcLocation));
+	if (source !=  mChunkServers.end()) {
+		(*source)->UpdateReplicationReadLoad(-1);
+	}
 
 	if (req->status != 0) {
 		// Replication failed...we will try again later
@@ -1038,6 +1403,14 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	}
 
 	// replication succeeded: book-keeping
+
+	// if any of the hosting servers were being "retired", notify them that
+	// re-replication of any chunks hosted on them is finished
+	if (iter != mChunkToServerMap.end()) {
+		for_each(iter->second.chunkServers.begin(), iter->second.chunkServers.end(),
+			ReplicationDoneNotifier(req->chunkId));
+	}
+
 	// validate that the server got the latest copy of the chunk
 	vector<MetaChunkInfo *> v;
 	vector<MetaChunkInfo *>::iterator chunk;
@@ -1063,33 +1436,75 @@ LayoutManager::ChunkReplicationDone(const MetaChunkReplicate *req)
 	}
 
 	// Yaeee...all good...
+	KFS_LOG_VA_INFO("%s reports that re-replication for chunk %lld is all done", 
+			req->server->GetServerLocation().ToString().c_str(), req->chunkId);
 	UpdateChunkToServerMapping(req->chunkId, req->server.get());
 
+	// since this server is now free, send more work its way...
+	FindReplicationWorkForServer(req->server);
 }
 
 //
 // To delete additional copies of a chunk, find the servers that have the least
-// amount of space and delete the chunk from there.
+// amount of space and delete the chunk from there.  In addition, also pay
+// attention to rack-awareness: if two copies are on the same rack, then we pick
+// the server that is the most loaded and delete it there
 //
 void
 LayoutManager::DeleteAddlChunkReplicas(chunkId_t chunkId, ChunkPlacementInfo &clli,
 				uint32_t extraReplicas)
 {
-	vector<ChunkServerPtr> servers = clli.chunkServers;
+	vector<ChunkServerPtr> servers = clli.chunkServers, copiesToDiscard;
 	uint32_t numReplicas = servers.size() - extraReplicas;
+	set<int> chosenRacks;
 
 	// We get servers sorted by increasing amount of space utilization; so the candidates
 	// we want to delete are at the end
 	SortServersByUtilization(servers);
 
-	clli.chunkServers = servers;
-	clli.chunkServers.resize(numReplicas);
+	for_each(servers.begin(), servers.end(), RackSetter(chosenRacks));
+	if (chosenRacks.size() == numReplicas) {
+		// we need to keep as many copies as racks.  so, find the extra
+		// copies on a given rack and delete them
+		clli.chunkServers.clear();
+		chosenRacks.clear();
+		for (uint32_t i = 0; i < servers.size(); i++) {
+			if (chosenRacks.find(servers[i]->GetRack()) ==
+				chosenRacks.end()) {
+				chosenRacks.insert(servers[i]->GetRack());
+				clli.chunkServers.push_back(servers[i]);
+			} else {
+				// second copy on the same rack
+				copiesToDiscard.push_back(servers[i]);
+			}
+		}
+	} else {
+		clli.chunkServers = servers;
+		// Get rid of the extra stuff from the end
+		clli.chunkServers.resize(numReplicas);
+
+		// The first N are what we want to keep; the rest should go.
+		copiesToDiscard.insert(copiesToDiscard.end(), servers.begin() + numReplicas, servers.end());
+	}
 	mChunkToServerMap[chunkId] = clli;
 
-	KFS_LOG_VA_INFO("Deleting extra replicas (%d) of chunk: %lld", extraReplicas, chunkId);
+	ostringstream msg;
+	msg << "Chunk " << chunkId << " lives on: \n";
+	for (uint32_t i = 0; i < clli.chunkServers.size(); i++) {
+		msg << clli.chunkServers[i]->GetServerLocation().ToString() << ' ' 
+			<< clli.chunkServers[i]->GetRack() << "; ";
+	}
+	msg << "\n";
+	msg << "Discarding chunk on: ";
+	for (uint32_t i = 0; i < copiesToDiscard.size(); i++) {
+		msg << copiesToDiscard[i]->GetServerLocation().ToString() << ' ' 
+			<< copiesToDiscard[i]->GetRack() << " ";
+	}
+	msg << "\n";
 
-	// The first N are what we want to keep; the rest should go.
-	for_each(servers.begin() + numReplicas, servers.end(), ChunkDeletor(chunkId));
+	KFS_LOG_VA_INFO("%s", msg.str().c_str());
+
+	for_each(copiesToDiscard.begin(), copiesToDiscard.end(), ChunkDeletor(chunkId));
 }
 
 void
@@ -1110,6 +1525,91 @@ LayoutManager::IsChunkHostedOnServer(const vector<ChunkServerPtr> &hosters,
 	return iter != hosters.end();
 }
 
+class LoadedServerPred {
+public:
+	LoadedServerPred() { }
+	bool operator()(const ChunkServerPtr &s) const {
+		return s->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD;
+	}
+};
+
+
+//
+// We are trying to move a chunk between two servers on the same rack.  For a
+// given chunk, we try to find as many "migration pairs" (source/destination
+// nodes) within the respective racks.
+//
+void
+LayoutManager::FindIntraRackRebalanceCandidates(vector<ChunkServerPtr> &candidates, 
+			const vector<ChunkServerPtr> &nonloadedServers,
+			const ChunkPlacementInfo &clli)
+{
+	vector<ChunkServerPtr> servers;
+	vector<ChunkServerPtr>::const_iterator iter;
+
+	for (uint32_t i = 0; i < clli.chunkServers.size(); i++) {
+		if (clli.chunkServers[i]->GetSpaceUtilization() <
+			MAX_SERVER_SPACE_UTIL_THRESHOLD) {
+			continue;
+		}
+		//we have a loaded server; find another non-loaded
+		//server within the same rack (case 1 from above)
+		FindCandidateServers(servers, nonloadedServers, clli.chunkServers, 
+					clli.chunkServers[i]->GetRack());
+		if (servers.size() == 0) {
+			// nothing available within the rack to do the move
+			continue;
+		}
+		// make sure that we are not putting 2 copies of a chunk on the
+		// same server
+		for (uint32_t j = 0; j < servers.size(); j++) {
+			iter = find(candidates.begin(), candidates.end(), servers[j]);
+			if (iter == candidates.end()) {
+				candidates.push_back(servers[j]);
+				break;
+			}
+		}
+	}
+}
+
+
+//
+// For rebalancing, for a chunk, we could not find a candidate server on the same rack as a
+// loaded server.  Hence, we are trying to move the chunk between two servers on two 
+// different racks.  So, find a migration pair: source/destination on two different racks.
+//
+void
+LayoutManager::FindInterRackRebalanceCandidate(ChunkServerPtr &candidate, 
+			const vector<ChunkServerPtr> &nonloadedServers,
+			const ChunkPlacementInfo &clli)
+{
+	vector<ChunkServerPtr> servers;
+
+	FindCandidateServers(servers, nonloadedServers, clli.chunkServers);
+	if (servers.size() == 0) {
+		return;
+	}
+	// if we had only one rack then the intra-rack move should have found a
+	// candidate.
+	assert(mRacks.size() > 1);
+	if (mRacks.size() <= 1)
+		return;
+
+	// For the candidate we pick, we want to enforce the property that all
+	// the copies of the chunks are on different racks.
+	set<int> excludeRacks;
+        for_each(clli.chunkServers.begin(), clli.chunkServers.end(),
+	                RackSetter(excludeRacks));
+
+	for (uint32_t i = 0; i < servers.size(); i++) {
+		set<int>::iterator iter = excludeRacks.find(servers[i]->GetRack());
+		if (iter == excludeRacks.end()) {
+			candidate = servers[i];
+			return;
+		}
+	}
+}
+
 //
 // Periodically, if we find that some chunkservers have LOT (> 80% free) of space
 // and if others are loaded (i.e., < 30% free space), move chunks around.  This
@@ -1118,25 +1618,18 @@ LayoutManager::IsChunkHostedOnServer(const vector<ChunkServerPtr> &hosters,
 void
 LayoutManager::RebalanceServers()
 {
-	if ((mNumOngoingReplications > MAX_CONCURRENT_REPLICATIONS) ||
-		(InRecovery()) || (mChunkServers.size() == 0)) {
+	if ((InRecovery()) || (mChunkServers.size() == 0)) {
 		return;
 	}
+
+	for_each(mRacks.begin(), mRacks.end(), mem_fun_ref(&RackInfo::computeSpace));
+
+	if (!mIsRebalancingEnabled)
+		return;
 
 	vector<ChunkServerPtr> servers = mChunkServers;
 	vector<ChunkServerPtr> loadedServers, nonloadedServers;
 	int extraReplicas;
-
-	// We get servers sorted by increasing amount of space utilization
-	SortServersByUtilization(servers);
-	assert(servers.size() > 0);
-	if (servers.size() == 0)
-		return;
-
-	// If things are somewhat utilized, don't mess...
-	if ((servers.back()->GetSpaceUtilization() < MAX_SERVER_SPACE_UTIL_THRESHOLD) ||
-		(servers.front()->GetSpaceUtilization() > MIN_SERVER_SPACE_UTIL_THRESHOLD))
-		return;
 
 	for (uint32_t i = 0; i < servers.size(); i++) {
 		if (servers[i]->GetSpaceUtilization() < MIN_SERVER_SPACE_UTIL_THRESHOLD)
@@ -1145,13 +1638,37 @@ LayoutManager::RebalanceServers()
 			loadedServers.push_back(servers[i]);
 	}
 
-	for (CSMapIter iter = mChunkToServerMap.begin();
-		iter != mChunkToServerMap.end(); iter++) {
+	if ((nonloadedServers.size() == 0) || (loadedServers.size() == 0))
+		return;
+
+	bool allbusy = false;
+	// try to start where we left off last time; if that chunk has
+	// disappeared, find something "closeby"
+	CSMapIter iter = mChunkToServerMap.find(mLastChunkRebalanced);
+	if (iter == mChunkToServerMap.end())
+		iter = mChunkToServerMap.upper_bound(mLastChunkRebalanced);
+		
+	for (; iter != mChunkToServerMap.end(); iter++) {
+
+		allbusy = true;
+		for (uint32_t i = 0; i < nonloadedServers.size(); i++) {
+			if (nonloadedServers[i]->GetNumChunkReplications() <=
+				MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE) {
+				allbusy = false;
+				break;
+			}
+		}
+
+		if (allbusy)
+			break;
+
 		chunkId_t chunkId = iter->first;
 		ChunkPlacementInfo &clli = iter->second;
+		vector<ChunkServerPtr> candidates;
 
-		if (mNumOngoingReplications > MAX_CONCURRENT_REPLICATIONS)
-			break;
+		// we have seen this chunkId; next time, we'll start time from
+		// around here
+		mLastChunkRebalanced = chunkId;
 
 		// If this chunk is already being replicated or it is busy, skip
 		if ((clli.ongoingReplications > 0) ||
@@ -1163,21 +1680,29 @@ LayoutManager::RebalanceServers()
 			continue;
 
 		// chunk could be moved around if it is hosted on a loaded server
-		bool canMoveChunk = false;
-		for (uint32_t i = 0; i < loadedServers.size(); i++) {
-			if (IsChunkHostedOnServer(clli.chunkServers, loadedServers[i])) {
-				canMoveChunk = true;
-				break;
-			}
-		}
-
-		if (!canMoveChunk)
+		vector<ChunkServerPtr>::const_iterator csp;
+		csp = find_if(clli.chunkServers.begin(), clli.chunkServers.end(),
+				LoadedServerPred());
+		if (csp == clli.chunkServers.end())
 			continue;
 
-		// find candidates
-		FindCandidateServers(servers, nonloadedServers, clli.chunkServers);
+		// there are two ways nodes can be added:
+		//  1. new nodes to an existing rack: in this case, we want to
+		//  migrate chunk within a rack
+		//  2. new rack of nodes gets added: in this case, we want to
+		//  migrate chunks to the new rack as long as we don't get more
+		//  than one copy onto the same rack
 
-		if (servers.size() == 0)
+		FindIntraRackRebalanceCandidates(candidates, nonloadedServers, clli);
+		if (candidates.size() == 0) {
+			ChunkServerPtr cand;
+
+			FindInterRackRebalanceCandidate(cand, nonloadedServers, clli);
+			if (cand)
+				candidates.push_back(cand);
+		}
+
+		if (candidates.size() == 0)
 			// no candidates :-(
 			continue;
 		// get the chunk version
@@ -1188,33 +1713,59 @@ LayoutManager::RebalanceServers()
 		chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(chunkId));
 		if (chunk == v.end())
 			continue;
-		MetaChunkInfo *mci = *chunk;
 
-		clli.ongoingReplications++;
-		mNumOngoingReplications++;
+		uint32_t numCopies = min(candidates.size(), clli.chunkServers.size());
+		uint32_t numOngoing = 0;
 
-		// add this chunk to the target set of chunkIds that we are tracking
-		// for replication status change
-		ChangeChunkReplication(chunkId);
-		uint32_t numCopies = min(servers.size(), clli.chunkServers.size());
+		for (uint32_t i = 0; i < candidates.size(); i++) {
+			assert(!IsChunkHostedOnServer(clli.chunkServers, candidates[i]));
+		}
 
-		for (uint32_t i = 0; i < numCopies; i++) {
-			assert(!IsChunkHostedOnServer(clli.chunkServers, servers[i]));
-			if (IsChunkHostedOnServer(clli.chunkServers, servers[i])) {
-				string s = servers[i]->GetServerLocation().ToString();
-				KFS_LOG_VA_DEBUG("ERROR Chunk (%lld) can't be moved as it is already hosted on %s",
-						chunkId, s.c_str());
-				continue;
-			}
+		numOngoing = ReplicateChunk(chunkId, clli, numCopies, candidates);
+		if (numOngoing > 0) {
+			// add this chunk to the target set of chunkIds that we are tracking
+			// for replication status change
+			ChangeChunkReplication(chunkId);
 
-			string s = clli.chunkServers[i]->GetServerLocation().ToString();
-			string d = servers[i]->GetServerLocation().ToString();
-
-			KFS_LOG_VA_INFO("Trying to move chunk(%lld): from %s to %s", chunkId,
-				s.c_str(), d.c_str());
-
-			servers[i]->ReplicateChunk(clli.fid, chunkId, mci->chunkVersion,
-					clli.chunkServers[i]->GetServerLocation());
+			clli.ongoingReplications += numOngoing;
+			mNumOngoingReplications++;
 		}
 	}
+	if (!allbusy)
+		// reset
+		mLastChunkRebalanced = 1;
+}
+
+class OpenFileChecker {
+	set<fid_t> &readFd, &writeFd;
+public:
+	OpenFileChecker(set<fid_t> &r, set<fid_t> &w) :
+		readFd(r), writeFd(w) { }
+	void operator() (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
+		ChunkPlacementInfo c = p.second;
+		vector<LeaseInfo>::iterator l;
+
+		l = find_if(c.chunkLeases.begin(), c.chunkLeases.end(),
+				ptr_fun(LeaseInfo::IsValidWriteLease));
+		if (l != c.chunkLeases.end()) {
+			writeFd.insert(c.fid);
+			return;
+		}
+		l = find_if(c.chunkLeases.begin(), c.chunkLeases.end(),
+				ptr_fun(LeaseInfo::IsValidLease));
+		if (l != c.chunkLeases.end()) {
+			readFd.insert(c.fid);
+			return;
+		}
+	}
+};
+
+void
+LayoutManager::GetOpenFiles(string &openForRead, string &openForWrite)
+{
+	set<fid_t> readFd, writeFd;
+	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
+		OpenFileChecker(readFd, writeFd));
+		// XXX: fill me in..map from fd->path name
+
 }

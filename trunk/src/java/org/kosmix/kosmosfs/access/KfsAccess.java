@@ -2,9 +2,10 @@
  * $Id$ 
  *
  * Created 2007/08/24
- * @author: Sriram Rao (Kosmix Corp.)
+ * @author: Sriram Rao
  *
- * Copyright 2007 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2007-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -30,59 +31,63 @@ import java.nio.ByteBuffer;
 
 public class KfsAccess
 {
-    private final static native
-    int initF(String configFn);
+
+    // the pointer in C++
+    private long cPtr;
 
     private final static native
-    int initS(String metaServerHost, int metaServerPort);
+    long initF(String configFn);
 
     private final static native
-    int cd(String  path);
+    long initS(String metaServerHost, int metaServerPort);
 
     private final static native
-    int mkdirs(String  path);
+    int cd(long ptr, String  path);
 
     private final static native
-    int rmdir(String  path);
+    int mkdirs(long ptr, String  path);
 
     private final static native
-    String[] readdir(String path);
+    int rmdir(long ptr, String  path);
 
     private final static native
-    String[][] getDataLocation(String path, long start, long len);
+    String[] readdir(long ptr, String path);
 
     private final static native
-    short getReplication(String path);
+    String[][] getDataLocation(long ptr, String path, long start, long len);
 
     private final static native
-    short setReplication(String path, int numReplicas);
+    short getReplication(long ptr, String path);
 
     private final static native
-    long getModificationTime(String path);
+    short setReplication(long ptr, String path, int numReplicas);
 
     private final static native
-    int create(String path, int numReplicas, boolean exclusive);
+    long getModificationTime(long ptr, String path);
 
     private final static native
-    int remove(String path);
+    int create(long ptr, String path, int numReplicas, boolean exclusive);
 
     private final static native
-    int rename(String oldpath, String newpath, boolean overwrite);
+    int remove(long ptr, String path);
 
     private final static native
-    int open(String path, String mode, int numReplicas);
+    int rename(long ptr, String oldpath, String newpath, boolean overwrite);
 
     private final static native
-    int exists(String path);
+    int open(long ptr, String path, String mode, int numReplicas);
 
     private final static native
-    int isFile(String path);
+    int exists(long ptr, String path);
 
     private final static native
-    int isDirectory(String path);
+    int isFile(long ptr, String path);
 
     private final static native
-    long filesize(String path);
+    int isDirectory(long ptr, String path);
+
+    private final static native
+    long filesize(long ptr, String path);
 
     static {
         try {
@@ -96,16 +101,16 @@ public class KfsAccess
 
     public KfsAccess(String configFn) throws IOException
     {
-        int res = initF(configFn);
-        if (res != 0) {
+        cPtr = initF(configFn);
+        if (cPtr == 0) {
             throw new IOException("Unable to initialize KFS Client");
         }
     }
 
     public KfsAccess(String metaServerHost, int metaServerPort) throws IOException
     {
-        int res = initS(metaServerHost, metaServerPort);
-        if (res != 0) {
+        cPtr = initS(metaServerHost, metaServerPort);
+        if (cPtr == 0) {
             throw new IOException("Unable to initialize KFS Client");
         }
     }
@@ -115,33 +120,33 @@ public class KfsAccess
     //
     public int kfs_cd(String path)
     {
-        return cd(path);
+        return cd(cPtr, path);
     }
 
     // make the directory hierarchy for path
     public int kfs_mkdirs(String path)
     {
-        return mkdirs(path);
+        return mkdirs(cPtr, path);
     }
 
     // remove the directory specified by path; remove will succeed only if path is empty.
     public int kfs_rmdir(String path)
     {
-        return rmdir(path);
+        return rmdir(cPtr, path);
     }
 
     public String[] kfs_readdir(String path)
     {
-        return readdir(path);
+        return readdir(cPtr, path);
     }
 
     public KfsOutputChannel kfs_append(String path)
     {
         // when you open a previously existing file, the # of replicas is ignored
-        int fd = open(path, "a", 1);
+        int fd = open(cPtr, path, "a", 1);
         if (fd < 0)
             return null;
-        return new KfsOutputChannel(fd);
+        return new KfsOutputChannel(cPtr, fd);
     }
 
     public KfsOutputChannel kfs_create(String path)
@@ -158,80 +163,80 @@ public class KfsAccess
     // doesn't already exist
     public KfsOutputChannel kfs_create(String path, int numReplicas, boolean exclusive)
     {
-        int fd = create(path, numReplicas, exclusive);
+        int fd = create(cPtr, path, numReplicas, exclusive);
         if (fd < 0)
             return null;
-        return new KfsOutputChannel(fd);
+        return new KfsOutputChannel(cPtr, fd);
     }
 
     public KfsInputChannel kfs_open(String path)
     {
-        int fd = open(path, "r", 1);
+        int fd = open(cPtr, path, "r", 1);
         if (fd < 0)
             return null;
-        return new KfsInputChannel(fd);
+        return new KfsInputChannel(cPtr, fd);
     }
 
     public int kfs_remove(String path)
     {
-        return remove(path);
+        return remove(cPtr, path);
     }
 
     public int kfs_rename(String oldpath, String newpath)
     {
-        return rename(oldpath, newpath, true);
+        return rename(cPtr, oldpath, newpath, true);
     }
 
     // if overwrite is turned off, rename will succeed only if newpath
     // doesn't already exist
     public int kfs_rename(String oldpath, String newpath, boolean overwrite)
     {
-        return rename(oldpath, newpath, overwrite);
+        return rename(cPtr, oldpath, newpath, overwrite);
     }
 
     public boolean kfs_exists(String path)
     {
-        return exists(path) == 1;
+        return exists(cPtr, path) == 1;
     }
 
     public boolean kfs_isFile(String path)
     {
-        return isFile(path) == 1;
+        return isFile(cPtr, path) == 1;
     }
 
     public boolean kfs_isDirectory(String path)
     {
-        return isDirectory(path) == 1;
+        return isDirectory(cPtr, path) == 1;
     }
     
     public long kfs_filesize(String path)
     {
-        return filesize(path);
+        return filesize(cPtr, path);
     }
 
     // Given a starting byte offset and a length, return the location(s)
     // of all the chunks that cover the region.
     public String[][] kfs_getDataLocation(String path, long start, long len)
     {
-        return getDataLocation(path, start, len);
+        return getDataLocation(cPtr, path, start, len);
     }
 
     // Return the degree of replication for this file
     public short kfs_getReplication(String path)
     {
-        return getReplication(path);
+        return getReplication(cPtr, path);
     }
 
     // Request a change in the degree of replication for this file
     // Returns the value that was set by the server for this file
     public short kfs_setReplication(String path, int numReplicas)
     {
-        return setReplication(path, numReplicas);
+        return setReplication(cPtr, path, numReplicas);
     }
 
     public long kfs_getModificationTime(String path)
     {
-        return getModificationTime(path);
+        return getModificationTime(cPtr, path);
     }
 
     protected void finalize() throws Throwable
@@ -242,6 +247,9 @@ public class KfsAccess
 
     public void release()
     {
+        if (cPtr != 0) {
+            
+        }
 
     }
 

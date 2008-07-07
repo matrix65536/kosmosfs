@@ -3,7 +3,8 @@
 //
 // Created 2007/10/17
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -26,6 +27,7 @@
 #ifndef COMMON_LOG_H
 #define COMMON_LOG_H
 
+#define LOG4CPP_FIX_ERROR_COLLISION 1
 #include <log4cpp/Category.hh>
 #include <log4cpp/Priority.hh>
 

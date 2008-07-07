@@ -3,9 +3,10 @@
 //
 // Created 2007/09/26
 //
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -45,23 +46,22 @@ namespace KFS
     namespace tools
     {
 
-        typedef void (*cmdHandler)(const std::vector<std::string> &args);
-
+        typedef int (*cmdHandler)(const std::vector<std::string> &args);
         // cmd handlers
-        void handleCd(const std::vector<std::string> &args);
-        void handleChangeReplication(const std::vector<std::string> &args);
-        void handleCopy(const std::vector<std::string> &args);
-        void handleLs(const std::vector<std::string> &args);
-        void handleMkdirs(const std::vector<std::string> &args);
-        void handleMv(const std::vector<std::string> &args);
-        void handleRmdir(const std::vector<std::string> &args);
-        void handlePing(const std::vector<std::string> &args);
-        void handleRm(const std::vector<std::string> &args);    
-        void handlePwd(const std::vector<std::string> &args);
+        int handleCd(const std::vector<std::string> &args);
+        int handleChangeReplication(const std::vector<std::string> &args);
+        int handleCopy(const std::vector<std::string> &args);
+        int handleLs(const std::vector<std::string> &args);
+        int handleMkdirs(const std::vector<std::string> &args);
+        int handleMv(const std::vector<std::string> &args);
+        int handleRmdir(const std::vector<std::string> &args);
+        int handlePing(const std::vector<std::string> &args);
+        int handleRm(const std::vector<std::string> &args);    
+        int handlePwd(const std::vector<std::string> &args);
 
         // utility functions
-        bool doMkdirs(const char *path);
-        bool doRmdir(const char *dirname);
+        int doMkdirs(const char *path);
+        int doRmdir(const char *dirname);
         void GetPathComponents(const std::string &path, 
                                std::string &parent, std::string &name);
 

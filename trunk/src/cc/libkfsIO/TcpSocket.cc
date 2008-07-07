@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/10
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -109,9 +110,9 @@ TcpSocket* TcpSocket::Accept()
     return accSock;
 }
 
-int TcpSocket::Connect(const struct sockaddr_in *remoteAddr)
+int TcpSocket::Connect(const struct sockaddr_in *remoteAddr, bool nonblockingConnect)
 {
-    int res;
+    int res = 0;
 
     Close();
 
@@ -120,36 +121,39 @@ int TcpSocket::Connect(const struct sockaddr_in *remoteAddr)
         return -1;
     }
 
+    if (nonblockingConnect) {
+        // when we do a non-blocking connect, we mark the socket
+        // non-blocking; then call connect and it wil return
+        // EINPROGRESS; the fd is added to the select loop to check
+        // for completion
+        fcntl(mSockFd, F_SETFL, O_NONBLOCK);
+    }
+
     res = connect(mSockFd, (struct sockaddr *) remoteAddr, sizeof(struct sockaddr_in));
-    if (res < 0) {
+    if ((res < 0) && (errno != EINPROGRESS)) {
         perror("Connect: ");
         close(mSockFd);
         mSockFd = -1;
         return -1;
     }
 
+    if (nonblockingConnect)
+        res = -errno;
+
     SetupSocket();
 
     globals().ctrOpenNetFds.Update(1);
 
-    return 0;
+    return res;
 }
 
-int TcpSocket::Connect(const ServerLocation &location)
+int TcpSocket::Connect(const ServerLocation &location, bool nonblockingConnect)
 {
     struct hostent *hostInfo;
     struct sockaddr_in remoteAddr;
-    int res;
 
     hostInfo = gethostbyname(location.hostname.c_str());
     if (hostInfo == NULL) {
-        return -1;
-    }
-
-    Close();
-
-    mSockFd = socket(PF_INET, SOCK_STREAM, 0);
-    if (mSockFd == -1) {
         return -1;
     }
 
@@ -157,25 +161,17 @@ int TcpSocket::Connect(const ServerLocation &location)
     remoteAddr.sin_port = htons(location.port);
     remoteAddr.sin_family = AF_INET;
 
-    res = connect(mSockFd, (struct sockaddr *) &remoteAddr, sizeof(struct sockaddr_in));
-
-    if (res < 0) {
-        perror("Connect: ");
-        close(mSockFd);
-        mSockFd = -1;
-        return -1;
-    }
-
-    SetupSocket();
-
-    globals().ctrOpenNetFds.Update(1);
-
-    return 0;
+    return Connect(&remoteAddr, nonblockingConnect);
 }
 
 void TcpSocket::SetupSocket()
 {
+#if defined(__sun__)
+    int bufSize = 512 * 1024;
+#else
     int bufSize = 65536;
+#endif
+    int flag = 1;
 
     // get big send/recv buffers and setup the socket for non-blocking I/O
     if (setsockopt(mSockFd, SOL_SOCKET, SO_SNDBUF, (char *) &bufSize, sizeof(bufSize)) < 0) {
@@ -184,7 +180,16 @@ void TcpSocket::SetupSocket()
     if (setsockopt(mSockFd, SOL_SOCKET, SO_RCVBUF, (char *) &bufSize, sizeof(bufSize)) < 0) {
         perror("Setsockopt: ");
     }
+    // enable keep alive so we can socket errors due to detect network partitions
+    if (setsockopt(mSockFd, SOL_SOCKET, SO_KEEPALIVE, (char *) &flag, sizeof(flag)) < 0) {
+        perror("Disabling NAGLE: ");
+    }
+
     fcntl(mSockFd, F_SETFL, O_NONBLOCK);
+    // turn off NAGLE
+    if (setsockopt(mSockFd, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(flag)) < 0) {
+        perror("Disabling NAGLE: ");
+    }
 
 }
 
@@ -233,6 +238,7 @@ bool TcpSocket::IsGood()
     if (mSockFd < 0)
         return false;
 
+#if 0
     char c;
     
     // the socket could've been closed by the system because the peer
@@ -242,7 +248,7 @@ bool TcpSocket::IsGood()
     
     if (Peek(&c, 1) == 0)
         return false;
-
+#endif
     return true;
 }
 
@@ -260,13 +266,28 @@ void TcpSocket::Close()
 int TcpSocket::DoSynchSend(const char *buf, int bufLen)
 {
     int numSent = 0;
-    int res;
+    int res = 0, nfds;
+    fd_set fds;
+    struct timeval timeout;
 
     while (numSent < bufLen) {
+        if (mSockFd < 0)
+            break;
+        if (res < 0) {
+            FD_ZERO(&fds);
+            FD_SET(mSockFd, &fds);
+            timeout.tv_sec = 1;
+            timeout.tv_usec = 0;
+            nfds = select(mSockFd + 1, NULL, &fds, &fds, &timeout);
+            if (nfds == 0)
+                continue;
+        }
+
         res = Send(buf + numSent, bufLen - numSent);
         if (res == 0)
             return 0;
-        if ((res < 0) && (errno == EAGAIN))
+        if ((res < 0) && 
+            ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR)))
             continue;
         if (res < 0)
             break;
@@ -284,23 +305,29 @@ int TcpSocket::DoSynchSend(const char *buf, int bufLen)
 int TcpSocket::DoSynchRecv(char *buf, int bufLen, struct timeval &timeout)
 {
     int numRecd = 0;
-    int res, nfds;
+    int res = 0, nfds;
     fd_set fds;
 
     while (numRecd < bufLen) {
-        FD_ZERO(&fds);
-        FD_SET(mSockFd, &fds);
-        nfds = select(mSockFd + 1, &fds, NULL, NULL, &timeout);
-        if ((nfds == 0) && 
-            ((timeout.tv_sec == 0) && (timeout.tv_usec == 0))) {
-            KFS_LOG_DEBUG("Timeout in synch recv");
-            return numRecd > 0 ? numRecd : -ETIMEDOUT;
+        if (mSockFd < 0)
+            break;
+
+        if (res < 0) {
+            FD_ZERO(&fds);
+            FD_SET(mSockFd, &fds);
+            nfds = select(mSockFd + 1, &fds, NULL, &fds, &timeout);
+            if ((nfds == 0) && 
+                ((timeout.tv_sec == 0) && (timeout.tv_usec == 0))) {
+                KFS_LOG_DEBUG("Timeout in synch recv");
+                return numRecd > 0 ? numRecd : -ETIMEDOUT;
+            }
         }
 
         res = Recv(buf + numRecd, bufLen - numRecd);
         if (res == 0)
             return 0;
-        if ((res < 0) && (errno == EAGAIN))
+        if ((res < 0) && 
+            ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR)))
             continue;
         if (res < 0)
             break;
@@ -350,6 +377,7 @@ int TcpSocket::DoSynchPeek(char *buf, int bufLen, struct timeval &timeout)
         FD_ZERO(&fds);
         FD_SET(mSockFd, &fds);
         nfds = select(mSockFd + 1, &fds, NULL, NULL, &timeout);
+
         if ((nfds == 0) && 
             ((timeout.tv_sec == 0) && (timeout.tv_usec == 0))) {
             return -ETIMEDOUT;
@@ -367,61 +395,4 @@ int TcpSocket::DoSynchPeek(char *buf, int bufLen, struct timeval &timeout)
             break;
     }
     return numRecd;
-}
-
-
-int KFS::Simulcast(const char *buf, int bufLen, vector<TcpSocket *> &targets)
-{
-    int res, nfds, fd, lastfd;
-    fd_set writeSet;
-    struct timeval timeout;
-    vector<int> nsent;
-    uint32_t i, ndone = 0;
-
-    nsent.resize(targets.size());
-    for (i = 0; i < nsent.size(); i++)
-        nsent[i] = 0;
-
-    while (1) {
-        ndone = 0;
-        for (i = 0; i < targets.size(); i++) {
-            if (nsent[i] < bufLen)
-                break;
-            ndone++;
-        }
-        if (ndone == targets.size())
-            break;
-
-        // run in loops of 100 micro-seconds
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 100;
-        FD_ZERO(&writeSet);
-        lastfd = 0;
-        for (i = 0; i < targets.size(); i++) {
-            if (nsent[i] >= bufLen)
-                continue;
-
-            if (!targets[i]->IsGood())
-                return -1;
-            fd = targets[i]->GetFd();
-            lastfd = max(fd, lastfd);
-            FD_SET(fd, &writeSet);
-        }
-
-        nfds = select(lastfd + 1, NULL, &writeSet, NULL, &timeout);
-        if (nfds < 0) {
-            perror("Select(): " );
-            return -1;
-        }
-        for (i = 0; i < targets.size(); i++) {
-            fd = targets[i]->GetFd();
-            // push some data on the socket if any
-            if ((FD_ISSET(fd, &writeSet)) && (nsent[i] < bufLen)) {
-                res = targets[i]->Send(buf + nsent[i], bufLen - nsent[i]);
-                if (res > 0)
-                    nsent[i] += res;
-            }
-        }
-    }
-    return 0;
 }

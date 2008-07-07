@@ -1,7 +1,8 @@
 /*!
  * $Id$ 
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -105,11 +106,20 @@ public:
 		int UNUSED_ATTR status = pthread_cancel(thread);
 		assert(status == 0);
 	}
+	void exit(int status)
+	{
+		pthread_exit((void *) &status);
+	}
 	void join()
 	{
 		int UNUSED_ATTR status = pthread_join(thread, NULL);
 		assert(status == 0);
 	}
+	bool isEqual(pthread_t other)
+	{
+		return pthread_equal(thread, other);
+	}
+
 };
 
 }

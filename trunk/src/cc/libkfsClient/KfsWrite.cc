@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/02
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -51,6 +52,7 @@ NeedToRetryWrite(int status)
 {
     return ((status == -EHOSTUNREACH) ||
 	    (status == -ETIMEDOUT) ||
+            (status == -KFS::EBADCKSUM) ||
 	    (status == -KFS::ESERVERBUSY));
 }
 
@@ -60,6 +62,7 @@ NeedToRetryAllocation(int status)
     return ((status == -EHOSTUNREACH) ||
 	    (status == -ETIMEDOUT) ||
 	    (status == -EBUSY) ||
+            (status == -KFS::EBADVERS) ||
 	    (status == -KFS::EALLOCFAILED));
 }
 
@@ -87,7 +90,9 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 
 	size_t nleft = numBytes - nwrote;
 
-	LocateChunk(fd, pos->chunkNum);
+        // Don't need this: if we don't have the lease, don't
+	// know where the chunk is, allocation will get that info.
+	// LocateChunk(fd, pos->chunkNum);
 
 	// need to retry here...
 	if ((res = DoAllocation(fd)) < 0) {
@@ -155,6 +160,8 @@ KfsClientImpl::WriteToBuffer(int fd, const char *buf, size_t numBytes)
 	if (status < 0)
 	    return status;
     }
+
+    cb->allocate();
 
     off_t start = pos->chunkOffset - cb->start;
     size_t previous = cb->length;
@@ -231,11 +238,24 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
 	// Same as read: align writes to checksum block boundaries
 	if (offset + numAvail <= OffsetToChecksumBlockEnd(offset))
 	    res = DoSmallWriteToServer(fd, offset, buf, numBytes);
-	else
+	else {
+            struct timeval startTime, endTime;
+            double timeTaken;
+            
+            gettimeofday(&startTime, NULL);
+            
 	    res = DoLargeWriteToServer(fd, offset, buf, numBytes);
 
-	if (res >= 0)
-	    break;
+            gettimeofday(&endTime, NULL);
+            
+            timeTaken = (endTime.tv_sec - startTime.tv_sec) +
+                (endTime.tv_usec - startTime.tv_usec) * 1e-6;
+            
+            KFS_LOG_VA_DEBUG("Total Time to write data to server(s): %.4f secs", timeTaken);
+        }
+
+        if (res >= 0)
+            break;
 
 	if ((res == -EHOSTUNREACH) ||
 	    (res == -KFS::EBADVERS)) {
@@ -319,6 +339,7 @@ KfsClientImpl::DoAllocation(int fd, bool force)
 
 }
 
+#if 0
 ssize_t
 KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 {
@@ -357,7 +378,15 @@ KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_
 	    w[i].serverLoc = l;
 
 	    if (op.status == 0) {
-		w[i].writeId = op.writeId;
+                istringstream ist(op.writeIdStr);
+                ServerLocation loc;
+                int64_t id;
+                
+                ist >> loc.hostname;
+                ist >> loc.port;
+                ist >> id;
+
+		w[i].writeId = id;
 		continue;
 	    }
 
@@ -405,6 +434,13 @@ KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_
     }
     return numIO;
 }
+#endif
+
+ssize_t
+KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
+{
+    return DoLargeWriteToServer(fd, offset, buf, numBytes);
+}
 
 ssize_t
 KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
@@ -413,7 +449,10 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
     ssize_t numIO;
     FilePosition *pos = FdPos(fd);
     ChunkAttr *chunk = GetCurrChunk(fd);
+    ServerLocation loc = chunk->chunkServerLoc[0];
+    TcpSocket *masterSock = FdPos(fd)->GetChunkServerSocket(loc);
     vector<WritePrepareOp *> ops;
+    vector<WriteInfo> writeId;
 
     assert(KFS::CHUNKSIZE - offset >= 0);
 
@@ -421,15 +460,17 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 
     // cout << "Pushing to server: " << offset << ' ' << numBytes << endl;
 
+    // get the write id
+    numIO = AllocateWriteId(fd, offset, numBytes, writeId, masterSock);
+    if (numIO < 0)
+        return numIO;
+
     // Split the write into a bunch of smaller ops
     while (numWrote < numAvail) {
 	WritePrepareOp *op = new WritePrepareOp(nextSeq(), chunk->chunkId,
-	                                        chunk->chunkVersion);
+	                                        chunk->chunkVersion, writeId);
 
-	// Try to push out 1MB at a time: is too slow
-	// op->numBytes = min(MAX_BYTES_PER_WRITE, numAvail - numWrote);
-
-	op->numBytes = min(KFS::CHUNKSIZE, numAvail - numWrote);
+	op->numBytes = min(MAX_BYTES_PER_IO, numAvail - numWrote);
 
 	if ((op->numBytes % CHECKSUM_BLOCKSIZE) != 0) {
 	    // if the write isn't aligned to end on a checksum block
@@ -458,16 +499,17 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 
 	op->AttachContentBuf(buf + numWrote, op->numBytes);
 	op->contentLength = op->numBytes;
+        op->checksum = ComputeBlockChecksum(op->contentBuf, op->contentLength);
+        // op->checksum = 0;
 
 	numWrote += op->numBytes;
 	ops.push_back(op);
     }
 
-    // basics here:
-    // 1. fill the pipe:  push an op to multiple servers, in sequence
-    // 2. issue commits for all ops in the pipe;
-    // 3. whenever we hear an op is commited, push the next op and commit; loop
-    // 4. wait for all ops to commit
+    // For pipelined data push to work, we break the write into a
+    // sequence of smaller ops and push them to the master; the master
+    // then forwards each op to one replica, who then forwards to
+    // next.
 
     for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
 	if (retryCount != 0) {
@@ -477,14 +519,22 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 
 	    KFS_LOG_DEBUG("Starting retry sequence...");
 
+            // get the write id
+            numIO = AllocateWriteId(fd, offset, numBytes, writeId, masterSock);
+            if (numIO < 0) {
+                KFS_LOG_DEBUG("Allocate write id failed...retrying");
+                continue;
+            }
+
 	    // for each op bump the sequence #
 	    for (vector<WritePrepareOp *>::size_type i = 0; i < ops.size(); i++) {
 		ops[i]->seq = nextSeq();
 		ops[i]->status = 0;
+                ops[i]->writeInfo = writeId;
 		assert(ops[i]->contentLength == ops[i]->numBytes);
 	    }
 	}
-	numIO = DoPipelinedWrite(fd, ops);
+	numIO = DoPipelinedWrite(fd, ops, masterSock);
 
 	assert(numIO != -KFS::EBADVERS);
 
@@ -493,17 +543,23 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	    // redo the allocation and such
 	    break;
 	}
-	if ((numIO == -EHOSTUNREACH) || (numIO == -ETIMEDOUT)) {
-	    // retry
+	if (NeedToRetryWrite(numIO) || (numIO == -EINVAL)) {
+	    // retry; we can get an EINVAL if the server died in the
+	    // midst of a push: after we got write-id and sent it
+	    // data, it died and restarted; so, when we send commit,
+	    // it doesn't know the write-id and returns an EINVAL
+            string errstr = ErrorCodeToStr(numIO);
+            KFS_LOG_VA_INFO("Retrying write because of error: %s", errstr.c_str());
 	    continue;
 	}
 	if (numIO < 0) {
 	    KFS_LOG_VA_DEBUG("Write failed...chunk = %ld, version = %ld, offset = %ld, bytes = %ld",
 	                     ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
 	                     ops[0]->numBytes);
-	    assert(numIO != -EBADF);
+            assert(numIO != -EBADF);
 	    break;
 	}
+        KFS_LOG_VA_DEBUG("Pipelined write did: %d", numIO);
     }
 
     // figure out how much was committed
@@ -543,187 +599,96 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 }
 
 int
-KfsClientImpl::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops)
+KfsClientImpl::AllocateWriteId(int fd, off_t offset, size_t numBytes,
+                               vector<WriteInfo> &writeId, TcpSocket *masterSock)
 {
-    vector<WriteSyncOp *> syncOps;
-    vector<WritePrepareOp *>::size_type first = 0, next = 0;
-    WritePrepareOp *op;
-    int res;
     ChunkAttr *chunk = GetCurrChunk(fd);
-    // get the socket for the master
-    ServerLocation loc = chunk->chunkServerLoc[0];
-    TcpSocket *masterSock = FdPos(fd)->GetChunkServerSocket(loc);
-    WriteSyncOp *sop = NULL;
+    WriteIdAllocOp op(nextSeq(), chunk->chunkId, chunk->chunkVersion, offset, numBytes);
+    int res;
 
-    // plumb the pipe...
-    op = ops[next];
-    res = PushDataForWrite(fd, op);
-    if ((res < 0) || (op->status < 0)) {
-	res = op->status;
-	goto out;
-    }
-
-    ++next;
-    op = ops[first];
-    // send out a commit
-    res = IssueWriteCommit(fd, op, &sop, masterSock);
+    op.chunkServerLoc = chunk->chunkServerLoc;
+    res = DoOpSend(&op, masterSock);
     if (res < 0)
-	goto out;
+        return res;
+    if (op.status < 0)
+        return op.status;
+    res = DoOpResponse(&op, masterSock);
+    if (res < 0)
+        return res;
+    if (op.status < 0)
+        return op.status;
+    
+    writeId.reserve(op.chunkServerLoc.size());
+    istringstream ist(op.writeIdStr);
+    for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++) {
+        ServerLocation loc;
+        int64_t id;
 
-    // we could have a single "large" write.
-    if (next < ops.size()) {
-	// while commit is on, push out more data
-	op = ops[next];
-	res = PushDataForWrite(fd, op);
-	if ((res < 0) || (op->status < 0)) {
-	    res = op->status;
-	    goto out;
-	}
+        ist >> loc.hostname;
+        ist >> loc.port;
+        ist >> id;
+	writeId.push_back(WriteInfo(loc, id));
+    }
+    return 0;
+}
 
-	++next;
+int
+KfsClientImpl::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops, TcpSocket *masterSock)
+{
+    int res;
+
+    if (ops.size() == 0)
+        return 0;
+
+    // push the data to the server
+    for (uint32_t i = 0; i < ops.size(); i++) {
+        res = DoOpSend(ops[i], masterSock);
+        if (res < 0)
+            break;
+    }
+    if (res == 0) {
+        // do a commit
+        res = IssueCommit(fd, ops[0]->writeInfo, masterSock);
+        if (res >= 0)
+            res = 0;
     }
 
-    // run the pipe: whenever one op finishes, queue another
-    while (next < ops.size()) {
-	// what we have so far: 2 data pushes and 1 commit.  so, when
-	// the commit finishes, issue another commit and do the next
-	// push, and thereby keep 2 data push and 1 commit outstanding.
-
-	// get the commit response
-	res = DoOpResponse(sop, masterSock);
-	if (res < 0) {
-	    goto out;
-	}
-	op = ops[first];
-	op->status = sop->status;
-	if (op->status < 0) {
-	    res = op->status;
-	    goto out;
-	}
-
-	++first;
-	delete sop;
-	sop = NULL;
-
-	op = ops[first];
-	// send out a commit
-	res = IssueWriteCommit(fd, op, &sop, masterSock);
-	if (res < 0)
-	    goto out;
-
-	op = ops[next];
-	res = PushDataForWrite(fd, op);
-	if ((res < 0) || (op->status < 0)) {
-	    res = op->status;
-	    goto out;
-	}
-	++next;
+    if (res < 0) {
+        // res will be -1; we need to pick out the error from the op that failed
+        for (uint32_t i = 0; i < ops.size(); i++) {
+            if (ops[i]->status < 0) {
+                res = ops[i]->status;
+                break;
+            }
+        }
     }
 
-    // get the response for the remaining ones
-    while (first < ops.size()) {
-	res = DoOpResponse(sop, masterSock);
-	if (res < 0)
-	    goto out;
-
-	op = ops[first];
-	op->status = sop->status;
-	if (op->status < 0) {
-	    res = op->status;
-	    goto out;
-	}
-
-	delete sop;
-	sop = NULL;
-	++first;
-
-	if (first >= ops.size()) {
-	    res = 0;
-	    break;
-	}
-
-	op = ops[first];
-	// send out a commit
-	res = IssueWriteCommit(fd, op, &sop, masterSock);
-	if (res < 0)
-	    goto out;
-
+    // set the status for each op: either all were successful or none was.
+    for (uint32_t i = 0; i < ops.size(); i++) {
+        if (res < 0) 
+            ops[i]->status = res;
+        else
+            ops[i]->status = ops[i]->numBytes;
     }
-
-  out:
-    delete sop;
-
     return res;
 }
 
 int
-KfsClientImpl::PushDataForWrite(int fd, WritePrepareOp *op)
+KfsClientImpl::IssueCommit(int fd, vector<WriteInfo> &writeId, TcpSocket *masterSock)
 {
-    int res;
     ChunkAttr *chunk = GetCurrChunk(fd);
-    ServerLocation loc;
-    TcpSocket *sock;
-    vector<ServerLocation>::size_type i;
-    vector<TcpSocket *> targets;
+    WriteSyncOp sop(nextSeq(), chunk->chunkId, chunk->chunkVersion, writeId);
+    int res;
 
-    // push the write out to all the servers
-    for (i = 0; i < chunk->chunkServerLoc.size(); i++) {
-	loc = chunk->chunkServerLoc[i];
-	sock = FdPos(fd)->GetChunkServerSocket(loc);
-	if (sock == NULL) {
-	    op->status = -EHOSTUNREACH;
-	    return op->status;
-	}
-        targets.push_back(sock);
-    }
-    assert(op->contentLength == op->numBytes);
-
-    // KFS_LOG_VA_DEBUG("%s", op->Show().c_str());
-
-    res = DoOpSend(op, targets);
+    res = DoOpSend(&sop, masterSock);
     if (res < 0)
-        return res;
+        return sop.status;
 
-    return 0;
+    res = DoOpResponse(&sop, masterSock);
+    if (res < 0)
+        return sop.status;
+    return sop.status;
 }
 
-int
-KfsClientImpl::IssueWriteCommit(int fd, WritePrepareOp *op, WriteSyncOp **sop,
-	                    TcpSocket *masterSock)
-{
-    vector<ServerLocation>::size_type i;
-    int res;
-    ChunkAttr *chunk = GetCurrChunk(fd);
-    ServerLocation loc;
-    TcpSocket *sock;
-    vector<WriteInfo> w;
-
-    w.reserve(chunk->chunkServerLoc.size());
-
-    *sop = NULL;
-    for (i = 0; i < chunk->chunkServerLoc.size(); i++) {
-	loc = chunk->chunkServerLoc[i];
-	sock = FdPos(fd)->GetChunkServerSocket(loc);
-	if (sock == NULL) {
-	    return -EHOSTUNREACH;
-	}
-
-	res = DoOpResponse(op, sock);
-	if ((res < 0) || (op->status < 0))
-	    return op->status;
-	w.push_back(WriteInfo(loc, op->writeId));
-    }
-
-    *sop = new WriteSyncOp(nextSeq(), chunk->chunkId, chunk->chunkVersion, w);
-    // KFS_LOG_VA_DEBUG("%s", (*sop)->Show().c_str());
-
-    res = DoOpSend(*sop, masterSock);
-    if (res < 0) {
-	delete *sop;
-	*sop = NULL;
-	return res;
-    }
-    return 0;
-}
 
 

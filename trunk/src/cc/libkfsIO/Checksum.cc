@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/09/12
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -24,11 +25,12 @@
 //
 //----------------------------------------------------------------------------
 
-#include "libkfsIO/Chunk.h"
 #include "Checksum.h"
 
 #include <algorithm>
 #include <vector>
+#include <zlib.h>
+
 using std::min;
 using std::vector;
 using std::list;
@@ -55,58 +57,34 @@ KFS::OffsetToChecksumBlockEnd(off_t offset)
         CHECKSUM_BLOCKSIZE;
 }
 
-///
-/// The checksum computation code is adapted from Wikipedia.  
-/// See: http://en.wikipedia.org/wiki/Adler-32
-/// Given a block of data, compute its checksum.
-///
+uint32_t
+KFS::ComputeBlockChecksum(const char *buf, size_t len)
+{
+    uint32_t res = adler32(0L, Z_NULL, 0);
+    
+    res = adler32(res, (const Bytef *) buf, len);
+    return res;
+}
+
 uint32_t
 KFS::ComputeBlockChecksum(IOBuffer *data, size_t len)
 {
-    uint32_t a = 1, b = 0;
-    int count = 0;
+    uint32_t res = adler32(0L, Z_NULL, 0);
 
     for (list<IOBufferDataPtr>::iterator iter = data->mBuf.begin();
          len > 0 && (iter != data->mBuf.end()); ++iter) {
         IOBufferDataPtr blk = *iter;
-        char *buf = blk->Consumer();
-        unsigned tlen = min((size_t) blk->BytesConsumable(), len);
+        size_t tlen = min((size_t) blk->BytesConsumable(), len);
 
         if (tlen == 0)
             continue;
 
+        res = adler32(res, (const Bytef *) blk->Consumer(), tlen);
         len -= tlen;
-
-        do {
-            a += *buf++;
-            b += a;
-            ++count;
-            // to avoid overflows, compute a/b values over a 4k range
-            if ((count % 4096) == 0) {
-                a = (a & 0xffff) + (a >> 16) * (65536-MOD_ADLER);
-                b = (b & 0xffff) + (b >> 16) * (65536-MOD_ADLER);
-                count = 0;
-            }
-        } while (--tlen);
     }
-    if (count != 0) {
-        // spill...
-        a = (a & 0xffff) + (a >> 16) * (65536-MOD_ADLER);
-        b = (b & 0xffff) + (b >> 16) * (65536-MOD_ADLER);
-    }
-
-    if (a >= MOD_ADLER)
-        a -= MOD_ADLER;
-    b = (b & 0xffff) + (b >> 16) * (65536-MOD_ADLER);
-    if (b >= MOD_ADLER)
-        b -= MOD_ADLER;
-    return (b << 16) | a;
+    return res;
 }
 
-///
-/// Given a sequence of CHECKSUM_BLOCKSIZE blocks, compute checksum on
-/// individual CHECKSUM_BLOCKSIZE's and return them.
-///
 vector<uint32_t>
 KFS::ComputeChecksums(IOBuffer *data, size_t len)
 {
@@ -123,9 +101,8 @@ KFS::ComputeChecksums(IOBuffer *data, size_t len)
 
     /// Compute checksum block by block
     while ((len > 0) && (iter != data->mBuf.end())) {
-        uint32_t a = 1, b = 0;
-        int count = 0;
         size_t currLen = 0;
+        uint32_t res = adler32(0L, Z_NULL, 0);
 
         while (currLen < CHECKSUM_BLOCKSIZE) {
             unsigned navail = min((size_t) (blk->Producer() - buf), len);
@@ -143,31 +120,10 @@ KFS::ComputeChecksums(IOBuffer *data, size_t len)
 
             currLen += navail;
             len -= navail;
-
-            do {
-                a += *buf++;
-                b += a;
-                ++count;
-                // to avoid overflows, compute a/b values over a 4k range
-                if ((count % 4096) == 0) {
-                    a = (a & 0xffff) + (a >> 16) * (65536-MOD_ADLER);
-                    b = (b & 0xffff) + (b >> 16) * (65536-MOD_ADLER);
-                    count = 0;
-                }
-            } while (--navail);
+            res = adler32(res, (const Bytef *) buf, navail);
+            buf += navail;
         }
-        if (count != 0) {
-            // spill...
-            a = (a & 0xffff) + (a >> 16) * (65536-MOD_ADLER);
-            b = (b & 0xffff) + (b >> 16) * (65536-MOD_ADLER);
-        }
-
-        if (a >= MOD_ADLER)
-            a -= MOD_ADLER;
-        b = (b & 0xffff) + (b >> 16) * (65536-MOD_ADLER);
-        if (b >= MOD_ADLER)
-            b -= MOD_ADLER;
-        cksums.push_back((b << 16) | a);
+        cksums.push_back(res);
     }
     return cksums;
 }

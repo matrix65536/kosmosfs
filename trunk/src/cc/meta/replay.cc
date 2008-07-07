@@ -5,7 +5,8 @@
  * \brief log replay
  * \author Blake Lewis (Kosmix Corp.)
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -45,6 +46,9 @@ Replay KFS::replayer;
 void
 Replay::openlog(const string &p)
 {
+	if (file.is_open())
+		file.close();
+
 	if (!file_exists(p)) {
 		std::cerr << "log file " << p << " not found!\n";
 		number = 0;
@@ -359,6 +363,7 @@ Replay::playlog()
 	init_map(entrymap);
 
 	bool is_ok = true;
+	seq_t opcount = oplog.checkpointed();
 	while (is_ok && !file.eof()) {
 		++lineno;
 		file.getline(line, MAXLINE);
@@ -367,7 +372,38 @@ Replay::playlog()
 			std::cerr << "Error at line " << lineno << ": "
 					<< line << '\n';
 	}
+	opcount += lineno;
+	oplog.set_seqno(opcount);
 
 	file.close();
 	return is_ok ? 0 : -EIO;
+}
+
+/*!
+ * \brief replay contents of all log files since CP
+ * \return	zero if replay successful, negative otherwise
+ */
+int
+Replay::playAllLogs()
+{
+	int status = 0;
+
+	if (logno() < 0) {
+		//!< no log...so, reset the # to 0.
+		number = 0;
+		return 0;
+	}
+
+	for (int i = logno(); ; i++) {
+		string logfn = oplog.logfile(i);
+
+		if (!file_exists(logfn))
+			break;
+		openlog(logfn);
+		status = playlog();
+		if (status < 0)
+			break;
+	}
+	return status;
+
 }

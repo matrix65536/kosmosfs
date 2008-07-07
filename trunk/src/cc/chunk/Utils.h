@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/09/27
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -28,6 +29,7 @@
 
 #include "libkfsIO/IOBuffer.h"
 #include <string>
+#include <vector>
 
 namespace KFS
 {
@@ -48,6 +50,19 @@ extern bool IsMsgAvail(IOBuffer *iobuf, int *msgLen);
 ///
 extern void die(const std::string &msg);
 
+///
+/// Split a path into components as defined by a separator.  For instance,
+/// "a.b.c" when split on "." will result into a vector of the form ["a", "b", "c"]
+///
+extern void split(std::vector<std::string> &component, const std::string &path, char separator);
+
+///
+/// \brief compute the time difference in seconds between start and
+/// end times
+/// \param[in] startTime, endTime  require: endTime >= startTime
+/// \retval  The time difference in seconds.
+///
+extern float ComputeTimeDiff(const struct timeval &startTime, const struct timeval &endTime);
 }
 
 #endif // CHUNKSERVER_UTILS_H

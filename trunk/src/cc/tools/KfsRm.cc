@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/09/21
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -50,68 +51,68 @@ using std::string;
 using namespace KFS;
 using namespace KFS::tools;
 
-void doRecrRemove(const char *dirname);
-bool doRecrRmdir(const char *dirname);
-bool doRemoveFile(const char *pathname);
+int doRecrRemove(const char *dirname);
+int doRecrRmdir(const char *dirname);
+int doRemoveFile(const char *pathname);
 
-void
+int
 KFS::tools::handleRm(const vector<string> &args)
 {
     if ((args.size() < 1) || (args[0] == "--help") || (args[0] == "")) {
         cout << "Usage: rm <path> " << endl;
-        return;
+        return 0;
     }
 
-    doRecrRemove(args[0].c_str());
+    return doRecrRemove(args[0].c_str());
 }
 
-void
+int
 doRecrRemove(const char *pathname)
 {
     int res;
     struct stat statInfo;
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     res = kfsClient->Stat(pathname, statInfo);
     if (res < 0) {
         cout << "Unable to remove: " <<  pathname << " : " 
              << ErrorCodeToStr(res) << endl;
-        return;
+        return res;
     }
     if (S_ISDIR(statInfo.st_mode)) {
-        doRecrRmdir(pathname);
+        return doRecrRmdir(pathname);
     } else {
-        doRemoveFile(pathname);
+        return doRemoveFile(pathname);
     }
 }
 
-bool
+int
 doRemoveFile(const char *pathname)
 {
     int res;
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     res = kfsClient->Remove(pathname);
     if (res < 0) {
         cout << "unable to remove: " << pathname <<  ' ' << "error = " << res << endl;
     }
 
-    return res == 0;
+    return res;
 }
 
 // do the equivalent of rm -rf
-bool
+int
 doRecrRmdir(const char *dirname)
 {
     int res;
     vector<string> dirEntries;
     vector<string>::size_type i;
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     res = kfsClient->Readdir(dirname, dirEntries);
     if (res < 0) {
         cout << "Readdir failed on: " << dirname << ' ' << "error: " << res << endl;
-        return false;
+        return res;
     }
 
     for (i = 0; i < dirEntries.size(); ++i) {
@@ -131,8 +132,7 @@ doRecrRmdir(const char *dirname)
             doRemoveFile(path.c_str());
         }
     }
-    doRmdir(dirname);
-    return true;
+    return doRmdir(dirname);
 }
 
 

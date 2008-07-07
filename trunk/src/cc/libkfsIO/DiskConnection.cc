@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/23
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -45,7 +46,7 @@ DiskEvent_t::ToString()
     return gDiskEventStr[op];
 }
 
-DiskConnection::DiskConnection(ChunkHandlePtr &handle,
+DiskConnection::DiskConnection(FileHandlePtr &handle,
                                KfsCallbackObj *callbackObj) 
 {
     // KFS_LOG_VA_DEBUG("Allocating connection 0x%p", this);
@@ -75,7 +76,7 @@ void DiskConnection::Close()
         for (eventIter = r.diskEvents.begin(); eventIter != r.diskEvents.end();
              ++eventIter) {
             event = *eventIter;
-            event->Cancel(mHandle->mFileId);
+            event->Cancel(mHandle->mFd);
         }
     }
 }
@@ -90,8 +91,9 @@ DiskConnection::Read(off_t offset, size_t numBytes)
 {
     IOBufferDataPtr data;
     DiskEventPtr event;
-    int bytesPerRead = 65536, res;
-    size_t nRead;
+    const size_t defPerRead = 65536 * 8;
+    int res;
+    size_t bytesPerRead, nRead;
     DiskIORequest r(OP_READ, offset, numBytes);
 
     assert(mCallbackObj != NULL);
@@ -100,16 +102,14 @@ DiskConnection::Read(off_t offset, size_t numBytes)
         return 0;
 
     for (nRead = 0; nRead < numBytes; nRead += bytesPerRead) {
-        // XXX
-        // data.reset(new IOBufferData(65536));
-        data.reset(new IOBufferData());
-
-        bytesPerRead = min(data->SpaceAvailable(), numBytes - nRead);
+        bytesPerRead = min(defPerRead, numBytes - nRead);
 
         if (bytesPerRead <= 0)
             break;
 
-        res = globals().diskManager.Read(this, mHandle->mFileId, data, 
+        data.reset(new IOBufferData(bytesPerRead));
+
+        res = globals().diskManager.Read(this, mHandle->mFd, data, 
                                        offset, bytesPerRead, event);
         if (res < 0) {
             return nRead > 0 ? nRead : (ssize_t) -1;
@@ -167,7 +167,8 @@ int DiskConnection::ReadDone(DiskEventPtr &doneEvent, int res)
             break;
     }
 
-    assert(found);
+    if (!found)
+        return 0;
 
     // If the READ on the head of the queue is done, notify the
     // associated KfsCallbackObj.
@@ -201,11 +202,11 @@ int DiskConnection::ReadDone(DiskEventPtr &doneEvent, int res)
         for (eventIter = r.diskEvents.begin(); eventIter != r.diskEvents.end();
              ++eventIter) {
             event = *eventIter;
-            if (event->retVal >= 0) {
-                retval = event->retVal;
+            if (event->retval >= 0) {
+                retval = event->retval;
                 ioBuf->Append(event->data);
             } else {
-                retval = event->retVal;
+                retval = event->retval;
                 break;
             }
         }
@@ -243,7 +244,7 @@ DiskConnection::Write(off_t offset, size_t numBytes, IOBuffer *buf)
     if (numBytes == 0)
         return 0;
 
-    // break the write down to a bunch of 4KB writes
+    // schedule each blob as a separate write
     for (iter = buf->mBuf.begin(); iter != buf->mBuf.end(); iter++) {
         data = *iter;
         numIO = data->BytesConsumable();
@@ -253,7 +254,7 @@ DiskConnection::Write(off_t offset, size_t numBytes, IOBuffer *buf)
         if (numIO + nWrote > numBytes)
             numIO = numBytes - nWrote;
 
-        res = globals().diskManager.Write(this, mHandle->mFileId, data, 
+        res = globals().diskManager.Write(this, mHandle->mFd, data, 
                                         offset, numIO, event);
         if (res < 0) {
             return nWrote > 0 ? nWrote : (ssize_t) -1;
@@ -289,7 +290,7 @@ int DiskConnection::WriteDone(DiskEventPtr &doneEvent, int res)
     DiskIORequest r;
     DiskEventPtr event;
     bool found = true, success = true;
-    int retVal = 0;
+    int retval = 0;
 
     if (res != 0) {
         KFS_LOG_VA_DEBUG("Write failure: errno = %d", res);
@@ -311,7 +312,9 @@ int DiskConnection::WriteDone(DiskEventPtr &doneEvent, int res)
             break;
     }
 
-    assert(found);
+    // assert(found);
+    if (!found)
+        return 0;
 
     // If the WRITE on the head of the queue is done, notify the
     // associated KfsCallbackObj.
@@ -346,20 +349,20 @@ int DiskConnection::WriteDone(DiskEventPtr &doneEvent, int res)
         // write operation.
         //
         success = true;
-        retVal = 0;
+        retval = 0;
         for (eventIter = r.diskEvents.begin(); eventIter != r.diskEvents.end();
              ++eventIter) {
             event = *eventIter;
-            if (event->retVal < 0) {
+            if (event->retval < 0) {
                 success = false;
                 break;
             }
-            retVal += event->retVal;
+            retval += event->retval;
         }
 
         if (success) {
-            globals().ctrDiskBytesWritten.Update(retVal);
-            mCallbackObj->HandleEvent(EVENT_DISK_WROTE, &retVal);
+            globals().ctrDiskBytesWritten.Update(retval);
+            mCallbackObj->HandleEvent(EVENT_DISK_WROTE, &retval);
         }
         else {
             globals().ctrDiskIOErrors.Update(1);
@@ -375,17 +378,18 @@ int DiskConnection::WriteDone(DiskEventPtr &doneEvent, int res)
 /// Schedule an asynchronous sync on the underlying fd by sending a
 /// request to the DiskManager.
 ///
-int DiskConnection::Sync()
+int DiskConnection::Sync(bool notifyDone)
 {
     int res;
     DiskEventPtr event;
     DiskIORequest r(OP_SYNC, 0, 0);
 
-    res = globals().diskManager.Sync(this, mHandle->mFileId, event);
+    res = globals().diskManager.Sync(this, mHandle->mFd, event);
     if (res < 0) {
         // XXX: we have a problem...
         return res;
     }
+    event->notifyDone = notifyDone;
     r.diskEvents.push_back(event);
     mDiskIO.push_back(r);
 
@@ -413,6 +417,7 @@ int DiskConnection::SyncDone(DiskEventPtr &doneEvent, int res)
     assert(doneEvent == event);
     mDiskIO.pop_front();
 
-    mCallbackObj->HandleEvent(EVENT_SYNC_DONE, NULL);
+    if (event->notifyDone)
+        mCallbackObj->HandleEvent(EVENT_SYNC_DONE, NULL);
     return 0;
 }

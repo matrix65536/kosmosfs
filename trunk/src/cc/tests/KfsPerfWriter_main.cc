@@ -3,7 +3,8 @@
 //
 // Created 2006/06/23
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -38,8 +39,8 @@ using std::string;
 using namespace KFS;
 
 int numReplicas = 3;
-KfsClient *gKfsClient;
-static bool doMkdir(const char *dirname);
+KfsClientPtr gKfsClient;
+static bool doMkdirs(const char *dirname);
 static off_t doWrite(const string &kfspathname, int numMBytes, size_t writeSizeBytes);
 
 int
@@ -85,11 +86,10 @@ main(int argc, char **argv)
     cout << "Doing writes to: " << kfspathname << " # MB = " << numMBytes;
     cout << " # of bytes per write: " << writeSizeBytes << endl;
 
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(kfsPropsFile);
-    if (!gKfsClient->IsInitialized()) {
+    gKfsClient = getKfsClientFactory()->GetClient(kfsPropsFile);
+    if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
+        exit(-1);
     }
 
     string kfsdirname, kfsfilename;
@@ -97,12 +97,12 @@ main(int argc, char **argv)
     
     if (slash == string::npos) {
         cout << "Bad kfs path: " << kfsdirname << endl;
-        exit(0);
+        exit(-1);
     }
 
     kfsdirname.assign(kfspathname, 0, slash);
     kfsfilename.assign(kfspathname, slash + 1, kfspathname.size());
-    doMkdir(kfsdirname.c_str());
+    doMkdirs(kfsdirname.c_str());
 
     struct timeval startTime, endTime;
     double timeTaken;
@@ -119,17 +119,17 @@ main(int argc, char **argv)
 
     cout << "Write rate: " << (((double) bytesWritten * 8.0) / timeTaken) / (1024.0 * 1024.0) << " (Mbps)" << endl;
     cout << "Write rate: " << ((double) bytesWritten / timeTaken) / (1024.0 * 1024.0) << " (MBps)" << endl;
-    
+    return 0;
 }
 
 bool
-doMkdir(const char *dirname)
+doMkdirs(const char *dirname)
 {
     int fd;
 
     cout << "Making dir: " << dirname << endl;
 
-    fd = gKfsClient->Mkdir(dirname);
+    fd = gKfsClient->Mkdirs(dirname);
     if (fd < 0) {
         cout << "Mkdir failed: " << fd << endl;
         return false;
@@ -160,7 +160,7 @@ doWrite(const string &filename, int numMBytes, size_t writeSizeBytes)
     fd = gKfsClient->Create(filename.c_str(), numReplicas);
     if (fd < 0) {
         cout << "Create failed: " << endl;
-        exit(0);
+        exit(-1);
     }
 
     for (nMBytes = 0; nMBytes < numMBytes; nMBytes++) {

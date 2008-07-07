@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/05
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -37,6 +38,7 @@
 
 #include <string>
 #include <sstream>
+#include <set>
 using std::string;
 using std::ostringstream;
 
@@ -88,6 +90,10 @@ namespace KFS
                 /// it sees some data is available on the socket.
                 int HandleRequest(int code, void *data);
 
+		/// Enqueue a request to be dispatched to this server
+		/// @param[in] r  the request to be enqueued.
+		void Enqueue(MetaRequest *r);
+
                 /// Send an RPC to allocate a chunk on this server.
                 /// An RPC request is enqueued and the call returns.
                 /// When the server replies to the RPC, the request
@@ -126,16 +132,32 @@ namespace KFS
 
 		/// Replication of a chunk finished.  Update statistics
 		void ReplicateChunkDone() {
-			mNumChunkReplications--;
-			assert(mNumChunkReplications >= 0);
-			if (mNumChunkReplications < 0)
-				mNumChunkReplications = 0;
+			mNumChunkWriteReplications--;
+			assert(mNumChunkWriteReplications >= 0);
+			if (mNumChunkWriteReplications < 0)
+				mNumChunkWriteReplications = 0;
 		}
+
 
 		/// Accessor method to get # of replications that are being
 		/// handled by this server.
 		int GetNumChunkReplications() const {
-			return mNumChunkReplications;
+			return mNumChunkWriteReplications;
+		}
+
+		/// During re-replication, we want to track how much b/w is
+		/// being spent read requests for replication by the server.  This
+		/// is to prevent a server being overloaded and becoming
+		/// unresponsive as we try to increase the # of replicas.
+		int GetReplicationReadLoad() const {
+			return mNumChunkReadReplications;
+		}
+
+		void UpdateReplicationReadLoad(int count) {
+			mNumChunkReadReplications += count;
+			assert(mNumChunkReadReplications >= 0);
+			if (mNumChunkReadReplications < 0)
+				mNumChunkReadReplications = 0;
 		}
 
                 /// Periodically, send a heartbeat message to the
@@ -147,9 +169,34 @@ namespace KFS
 		/// If a chunkserver isn't responding, don't send any
 		/// write load towards it.  We detect loaded servers to be
 		/// those that don't respond to heartbeat messages.
-		bool IsResponsiveServer() {
+		bool IsResponsiveServer() const {
 			return !mHeartbeatSkipped;
 		}
+
+		/// To support scheduled down-time and allow maintenance to be
+		/// done on the server node, we could "retire" a server; when the
+		/// server is being retired, we evacuate the blocks on that server
+		/// and re-replicate them elsewhere (on non-retiring nodes).
+		/// During the stage where the server is being retired, we don't
+		/// want to send any new write traffic to the server. 
+		///
+		void SetRetiring() {
+			mIsRetiring = true;
+		}
+
+		bool IsRetiring() const {
+			return mIsRetiring;
+		}
+
+		/// Notify the server object that the chunk needs evacuation.
+		void EvacuateChunk(chunkId_t chunkId) {
+			mEvacuatingChunks.insert(chunkId);
+		}
+
+		/// Evacuation of a chunk that maybe hosted on this server is
+		/// done; if this server is retiring and all chunks on this are
+		/// evacuated, we can tell the server to retire.
+		void EvacuateChunkDone(chunkId_t chunkId);
 
                 /// Whenever the layout manager determines that this
                 /// server has stale chunks, it queues an RPC to
@@ -216,6 +263,15 @@ namespace KFS
                         return mLocation.hostname.c_str();
                 }
 
+		void SetRack(int rackId) {
+			mRackId = rackId;
+		}
+		/// Return the unique identifier for the rack on which the
+		/// server is located.
+		int GetRack() const {
+			return mRackId;
+		}
+
 		/// Available space is defined as the difference
 		/// between the total storage space available
 		/// on the server and the amount of space that
@@ -226,7 +282,7 @@ namespace KFS
 		/// to used space.
                 uint64_t GetAvailSpace() {
  			mAllocSpace = mUsedSpace + 
-				(mNumChunkReplications + mNumChunkWrites) * 
+				(mNumChunkWriteReplications + mNumChunkWrites) * 
 					CHUNKSIZE;
 			if (mAllocSpace >= mTotalSpace)
 				return 0;
@@ -249,6 +305,10 @@ namespace KFS
 			return mNumChunkWrites;
 
 		}
+
+                uint64_t GetTotalSpace() const {
+                        return mTotalSpace;
+                }
 
                 uint64_t GetUsedSpace() {
                         return mUsedSpace;
@@ -304,9 +364,22 @@ namespace KFS
 		/// did we skip the sending of a heartbeat message?
                 bool mHeartbeatSkipped;
 
+		/// is the server being retired
+                bool mIsRetiring;
+
+		/// Set of chunks on this server that need to be evacuated
+		/// whenever this node is to be retired; when evacuation set is
+		/// empty, the server can be retired.
+		std::set<chunkId_t> mEvacuatingChunks;
+
                 /// Location of the server at which clients can
                 /// connect to
 		ServerLocation mLocation;
+
+		/// A unique id to denote the rack on which the server is located.
+		/// -1 signifies that we don't what rack the server is on and by
+		/// implication, all servers are on same rack
+		int mRackId;
 
                 /// total space available on this server
                 uint64_t mTotalSpace;
@@ -320,6 +393,10 @@ namespace KFS
                 /// chunks, there is space is allocated for a chunk
                 /// but that space hasn't been fully used up.
                 uint64_t mAllocSpace;
+
+		/// # of chunks hosted on this server; useful for
+		/// reporting purposes
+		long mNumChunks;
 
 		/// An estimate of the # of writes that are being handled
 		/// by this server.  We use this value to update mAllocSpace
@@ -335,8 +412,9 @@ namespace KFS
 		int mNumChunkWrites;
 
 
-		/// Track the # of chunk replications that are going on this server
-		int mNumChunkReplications;
+		/// Track the # of chunk replications (write/read) that are going on this server
+		int mNumChunkWriteReplications;
+		int mNumChunkReadReplications;
 
                 /// list of RPCs that need to be sent to this chunk
                 /// server.  This list is shared between the main

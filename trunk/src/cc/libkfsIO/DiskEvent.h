@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/28
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -30,7 +31,10 @@
 #include <boost/shared_ptr.hpp>
 #include <string.h>
 
-#include "Chunk.h"
+#if defined (__sun__)
+#include <port.h>
+#endif
+
 #include "Event.h"
 #include "IOBuffer.h"
 
@@ -73,15 +77,19 @@ struct DiskEvent_t {
         op = o;
         conn = c;
         memset(&aio_cb, 0, sizeof(struct aiocb));
+        aioStatus = 0;
         status = EVENT_STATUS_NONE;
+        notifyDone = true;
     }
     DiskEvent_t(DiskConnectionPtr c, IOBufferDataPtr &d,
                 DiskEventOp_t o) {
         op = o;
         conn = c;
         data = d;
+        aioStatus = 0;
         memset(&aio_cb, 0, sizeof(struct aiocb));
         status = EVENT_STATUS_NONE;
+        notifyDone = true;
     }
     ~DiskEvent_t() {
         assert ((status == EVENT_CANCELLED) || 
@@ -113,11 +121,18 @@ struct DiskEvent_t {
     IOBufferDataPtr	data;
     /// The aio related information about the event
     struct aiocb	aio_cb;
+#if defined (__sun__)
+    port_notify_t	port_notify;
+#endif
     /// Status of this event
     EventStatus_t	status;
+    int			aioStatus; // status by calling aio_error()
     /// Status of executing the event: That is, return value from
     /// read/write
-    ssize_t		retVal;
+    ssize_t		retval;
+    /// Set if th eupstream owner of this event needs notification when the event
+    /// has finished execution
+    bool 		notifyDone;
 };
 
 ///

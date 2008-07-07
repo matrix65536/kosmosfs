@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/16
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -30,7 +31,7 @@
 
 #include "DiskConnection.h"
 #include "NetManager.h"
-#include "ITimeout.h"
+#include "meta/queue.h"
 
 namespace KFS
 {
@@ -58,6 +59,7 @@ public:
     /// Register a timeout handler with the NetManager.  The
     /// NetManager will call the handler whenever a timeout occurs.
     void 	Init();
+    void 	InitForAIO();
 
     /// Schedule a read on fd at the specified offset for specified #
     /// of bytes.
@@ -98,34 +100,34 @@ public:
                      int fd, DiskEventPtr &resultEvent);
 
 
-    /// Whenever a timeout occurs, walk the list of scheduled events
-    /// to determine if any have finished; for completed ones, signal
-    /// the associated event.
-    void 	Timeout();
+    /// We reap the completed IOs from the completed queue.  for
+    /// completed ones, signal the associated event.
+    void 	ReapCompletedIOs();
+
+    void	SetMaxOutstandingIOs(int v) {
+        mMaxOutstandingIOs = v;
+    }
+    int NumDiskIOOutstanding() {
+        return mDiskEvents.size();
+    }
+    void IOCompleted(DiskEvent_t *event) {
+        mCompleted.enqueue(event);
+    }
+
 private:
-    DiskManagerTimeoutImpl	*mDiskManagerTimeoutImpl;
     /// list of read/write/sync events that have been scheduled
     std::list<DiskEventPtr>		mDiskEvents;
+    /// queue of disk I/Os that have finished and need to be reaped
+    MetaQueue<DiskEvent_t>		mCompleted;
+    /// if there are too many IOs outstanding, throttle
+    bool			mOverloaded;
+    /// the limit before we begin throttling
+    uint32_t			mMaxOutstandingIOs;
 
-};
-
-///
-/// \class DiskManagerTimeoutImpl
-/// \brief Implements the ITimeout interface (@see ITimeout).
-///
-class DiskManagerTimeoutImpl : public ITimeout {
-public:
-    /// The owning object of a DiskManagerTimeoutImpl is the DiskManager.
-    DiskManagerTimeoutImpl(DiskManager *mgr) {
-        mDiskManager = mgr;
-    };
-    /// Callback the owning object whenever a timeout occurs.
-    virtual void Timeout() {
-        mDiskManager->Timeout();
-    };
-private:
-    /// Owning object.
-    DiskManager		*mDiskManager;
+    /// IO has been initiated; update load stats
+    void			IOInitiated();
+    /// IO has been completed; update load stats
+    void			IOCompleted();
 
 };
 

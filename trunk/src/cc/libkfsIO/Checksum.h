@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/09/12
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -45,6 +46,7 @@ extern uint32_t OffsetToChecksumBlockEnd(off_t offset);
 
 /// Call this function if you want checksum computed over CHECKSUM_BLOCKSIZE bytes
 extern uint32_t ComputeBlockChecksum(IOBuffer *data, size_t len);
+extern uint32_t ComputeBlockChecksum(const char *data, size_t len);
 
 /// Call this function if you want a checksums for a sequence of CHECKSUM_BLOCKSIZE bytes
 extern std::vector<uint32_t> ComputeChecksums(IOBuffer *data, size_t len);

@@ -2,9 +2,10 @@
 // $Id$
 //
 // Created 2007/09/26
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -50,14 +51,16 @@ typedef map <string, cmdHandler>::iterator CmdHandlersIter;
 CmdHandlers handlers;
 
 static void setupHandlers();
-static void processCmds(bool quietMode);
+
+/// @retval: status code from executing the last command
+static int processCmds(bool quietMode, int nargs, const char **cmdLine);
 
 int
 main(int argc, char **argv)
 {
     string kfsdirname = "";
     string serverHost = "";
-    int port = -1;
+    int port = -1, retval;
     bool help = false;
     bool quietMode = false;
     char optchar;
@@ -88,18 +91,21 @@ main(int argc, char **argv)
         exit(0);
     }
 
-    KfsClient *kfsClient = KfsClient::Instance();
-    kfsClient->Init(serverHost, port);
-    if (!kfsClient->IsInitialized()) {
+    KfsClientFactory *factory = getKfsClientFactory();
+
+    KfsClientPtr kfsClient = factory->GetClient(serverHost, port);
+    if (!kfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
+        exit(-1);
     }
     
+    factory->SetDefaultClient(kfsClient);
+
     setupHandlers();
 
-    processCmds(quietMode);
+    retval = processCmds(quietMode, argc - optind, (const char **) &argv[optind]);
 
-    return 0;
+    return retval;
 }
 
 void printCmds()
@@ -115,9 +121,10 @@ void printCmds()
     cout << "pwd" << endl;
 }
 
-void handleHelp(const vector<string> &args)
+int handleHelp(const vector<string> &args)
 {
     printCmds();
+    return 0;
 }
 
 void setupHandlers()
@@ -135,23 +142,33 @@ void setupHandlers()
     handlers["help"] = handleHelp;
 }
 
-void processCmds(bool quietMode)
+int processCmds(bool quietMode, int nargs, const char **cmdLine)
 {
-    char buf[256];
-    string cmd;
+    char buf[4096];
+    string s, cmd;
+    int retval = 0;
 
     while (1) {
-        if (!quietMode) {
+        if (quietMode) {
+            if (nargs == 0)
+                break;
+            s = "";
+            for (int i = 0; i < nargs; i++) {
+                s = s + cmdLine[i];
+                s = s + " ";
+            }
+            nargs = 0;
+        } else {
             // Turn off prompt printing when quiet mode is enabled;
             // this allows scripting with KfsShell
             cout << "KfsShell> ";
+            cin.getline(buf, 4096);
+            
+            if (cin.eof())
+                break;
+            s = buf;
         }
-        cin.getline(buf, 256);
 
-        if (cin.eof())
-            break;
-
-        string s = buf, cmd;
         // buf contains info of the form: <cmd>{<args>}
         // where, <cmd> is one of kfs cmds
         string::size_type curr, next;
@@ -193,8 +210,8 @@ void processCmds(bool quietMode)
             continue;
         }
         
-        ((*h).second)(args);
-        
+        retval = ((*h).second)(args);
     }
+    return retval;
 }
 

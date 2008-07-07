@@ -29,11 +29,21 @@
 #
 
 import os,os.path,sys,getopt
+import threading
 from ConfigParser import ConfigParser
 
 def usage():
     print "%s [-f, --file <machines.cfg>] [ [-s, --start] | [-S, --stop] ]\n" % sys.argv[0]
-    
+
+class Worker(threading.Thread):
+    """Worker thread that runs a command on remote node"""
+    def __init__(self, c):
+        threading.Thread.__init__(self)
+        self.cmd = c
+    def run(self):
+        print "Running cmd %s" % (self.cmd)
+        os.system(self.cmd)
+
 # Specify whether we want to start/stop services
 if __name__ == '__main__':
     (opts, args) = getopt.getopt(sys.argv[1:], "f:sSh",
@@ -63,20 +73,33 @@ if __name__ == '__main__':
         raise config.NoSectionError, "No metaserver section"
     
     sections = config.sections()
-
+    workers = []
     for s in sections:
         node = config.get(s, 'node')
         rundir = config.get(s, 'rundir')
         if (s == 'metaserver'):
             runargs = "-m -f bin/MetaServer.prp"
-            if config.has_option(s, 'backup_path'):
-                bkup_path = config.get(s, 'backup_path')
-                runargs = runargs + " -b %s" % (bkup_path)
+            if config.has_option(s, 'backup_node'):
+                bkup_node = config.get(s, 'backup_node')
+                runargs = runargs + " -b %s" % (bkup_node)
+                if config.has_option(s, 'backup_path'):
+                    bkup_path = config.get(s, 'backup_path')
+                else:
+                    bkup_path = "."
+                runargs = runargs + " -p %s" % (bkup_path)
         else:
             runargs = "-c -f bin/ChunkServer.prp"
             
         cmd = "ssh %s 'cd %s; scripts/kfsrun.sh %s %s ' " % \
               (node, rundir, op, runargs)
-        print cmd
-        os.system(cmd)
+        w = Worker(cmd)
+        workers.append(w)
+        w.start()
+        # os.system(cmd)
+
+    print "Started all the workers..waiting for them to finish"        
+    for i in xrange(len(workers)):
+        workers[i].join(120.0)
+    sys.exit(0)
+
     

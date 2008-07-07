@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/01
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -70,7 +71,7 @@ namespace KFS
         NetDispatchTimeoutImpl(NetDispatch *dis) {
             mNetDispatch = dis;
             // poll the logger/layout-mgr for RPCs every 100ms
-            SetTimeoutInterval(100);
+            // SetTimeoutInterval(100);
         };
         ~NetDispatchTimeoutImpl() {
             mNetDispatch = NULL;

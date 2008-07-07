@@ -24,6 +24,8 @@
 
 project (KFS)
 
+cmake_minimum_required(VERSION 2.4.6)
+
 # Locate Boost
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 find_package(Boost REQUIRED)
@@ -32,7 +34,9 @@ find_package(Log4cpp REQUIRED)
 find_package(JNI)
 
 # Change this to where the install directory is located
-set (CMAKE_INSTALL_PREFIX .)
+if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+  set(CMAKE_INSTALL_PREFIX "." CACHE PATH "installation directory prefix" FORCE)
+endif (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 
 # Build with statically linked libraries; the value for this variable has to be defined here
 # overwriting whatever is in the cache.
@@ -58,6 +62,14 @@ IF (CMAKE_SYSTEM_PROCESSOR MATCHES "i[1-9]86")
    add_definitions (-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_LARGE_FILES)
 ENDIF (CMAKE_SYSTEM_PROCESSOR MATCHES "i[1-9]86")
 
+IF (ENABLE_PROFILING)
+   message (STATUS "Enabling profiling with gprof")
+   set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -pg")
+   set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -pg")
+   set(CMAKE_SHARED_LINKER_FLAGS  "${CMAKE_SHARED_LINKER_FLAGS} -pg")
+   set(CMAKE_EXE_FLAGS  "${CMAKE_EXE_FLAGS} -pg")
+ENDIF (ENABLE_PROFILING)
+
 # Change the line to Release to build release binaries
 # For servers, build with debugging info; for tools, build Release
 #
@@ -66,8 +78,6 @@ IF (NOT CMAKE_BUILD_TYPE)
    message (STATUS "Setting build type to Debug")
    set (CMAKE_BUILD_TYPE "Debug")
 ENDIF (NOT CMAKE_BUILD_TYPE)
-
-# set (CMAKE_BUILD_TYPE Release)
 
 IF (CMAKE_BUILD_TYPE STREQUAL "Release")
    message(STATUS "Enabling -D NDEBUG flag")

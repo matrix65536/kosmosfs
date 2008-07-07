@@ -5,7 +5,8 @@
  * \brief metadata logger
  * \author Blake Lewis (Kosmix Corp.)
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -41,6 +42,14 @@ namespace KFS {
 
 /*!
  * \brief Class for logging metadata updates
+ *
+ * This class consists of two threads: 
+ *  - one thread that writes the updates to the logs and then dispatches the
+ *  logged results to the network thread
+ *  - another thread that runs a timer to cause periodic log rollover.  Whenever
+ *  the log rollover occurs, after we close the log file, we create a link from
+ *  "LAST" to the recently closed log file.  This is used by the log compactor
+ *  to determine the set of files that can be compacted.
  */
 class Logger {
 	string logdir;		//!< directory where logs are kept
@@ -52,8 +61,9 @@ class Logger {
 	seq_t incp;		//!< highest request in a checkpoint
 	MetaQueue <MetaRequest> pending; //!< list of still-unlogged results
 	MetaQueue <MetaRequest> logged;	//!< list of logged results
-	MetaQueue <MetaRequest> cpdone; //!< completed CP
+	MetaQueue <MetaRequest> cpdone; //!< completed CP (aka log rollover)
 	MetaThread thread;	//!< thread synchronization
+	MetaThread timer;	//!< timer to rollover log files
 	string genfile(int n)	//!< generate a log file name
 	{
 		std::ostringstream f(std::ostringstream::out);
@@ -84,7 +94,8 @@ public:
 	{
 		return r->seqno != 0 && r->seqno <= committed;
 	}
-	int log(MetaRequest *r) { return r->log(file); } //!< log a request
+	//!< log a request
+	int log(MetaRequest *r);
 	void add_pending(MetaRequest *r) { pending.enqueue(r); }
 	/*!
 	 * \brief get a pending request and assign it a sequence number
@@ -96,6 +107,10 @@ public:
 		r->seqno = ++nextseq;
 		return r;
 	}
+	bool isPendingEmpty()
+	{
+		return pending.empty();
+	}
 	MetaRequest *next_result();
 	MetaRequest *next_result_nowait();
 	seq_t checkpointed() { return incp; }	//!< highest seqno in CP
@@ -106,6 +121,7 @@ public:
 	{
 		thread.start(func, NULL);
 	}
+	void setLog(int seqno);		//!< set the log filename based on seqno
 	int startLog(int seqno);	//!< start a new log file
 	int finishLog();		//!< tie off log file before CP
 	const string name() const { return logname; }	//!< name of log file
@@ -117,8 +133,18 @@ public:
 	{
 		incp = committed = nextseq = last;
 	}
+	/*!
+	 * Use a timer to rollover the log files every N minutes
+	 */
+	void start_timer(MetaThread::thread_start_t func)
+	{
+		timer.start(func, NULL);
+	}
 };
 
+extern string LOGDIR;
+extern string LASTLOG;
+const unsigned int LOG_ROLLOVER_MAXSEC = 600;	//!< max. seconds between CP's/log rollover
 extern Logger oplog;
 extern void logger_setup_paths(const string &logdir);
 extern void logger_init();

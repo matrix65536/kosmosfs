@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/10
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -83,10 +84,13 @@ public:
     ///
     TcpSocket* Accept();
 
-    /// Connect to the remote address.
-    /// @retval 0 on success; -1 on failure.
-    int Connect(const struct sockaddr_in *remoteAddr); 
-    int Connect(const ServerLocation &location);
+    /// Connect to the remote address.  If non-blocking connect is
+    /// set, the socket is first marked non-blocking and then we do
+    /// the connect call.  Then, you use select() to check for connect() completion
+    /// @retval 0 on success; -1 on failure; -EINPROGRESS if we do a
+    /// nonblockingConnect and connect returned that error code
+    int Connect(const struct sockaddr_in *remoteAddr, bool nonblockingConnect = false); 
+    int Connect(const ServerLocation &location, bool nonblockingConnect = false);
 
     /// Do block-IO's, where # of bytes to be send/recd is the length
     /// of the buffer.
@@ -132,12 +136,6 @@ private:
 
 typedef boost::shared_ptr<TcpSocket> TcpSocketPtr;
 
-///
-/// Send the data to the specified set of targets concurrently.
-/// @retval Returns 0 on success; -1 on failure.
-///   Here, success means we sent the data to ALL the targets; -1 if
-/// there was a connection break.
-int Simulcast(const char *buf, int bufLen, std::vector<TcpSocket *> &targets);
 }
 
 #endif // _LIBIO_TCP_SOCKET_H

@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/16
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -25,18 +26,25 @@
 
 
 #include "LeaseCleaner.h"
-using namespace KFS;
-
 #include "libkfsIO/Globals.h"
 #include <cassert>
+
+using namespace KFS;
+using namespace libkfsio;
 
 LeaseCleaner::LeaseCleaner() :
 	mInProgress(false), mOp(1, this) 
 { 
 	SET_HANDLER(this, &LeaseCleaner::HandleEvent);
 	/// setup a periodic event to do the cleanup
-	mEvent.reset(new Event(this, NULL, CLEANUP_INTERVAL_MSECS, true));
-	libkfsio::globals().eventManager.Schedule(mEvent, CLEANUP_INTERVAL_MSECS);
+	mTimer = new LeaseCleanerTimeoutImpl(this);
+	globals().netManager.RegisterTimeoutHandler(mTimer);
+}
+
+LeaseCleaner::~LeaseCleaner()
+{
+	globals().netManager.UnRegisterTimeoutHandler(mTimer);
+	delete mTimer;
 }
 
 /// Use the main looop to submit the cleanup request.

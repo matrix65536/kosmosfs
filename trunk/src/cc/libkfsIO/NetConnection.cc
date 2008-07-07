@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/14
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -30,7 +31,7 @@
 using namespace KFS;
 using namespace KFS::libkfsio;
 
-void NetConnection::HandleReadEvent()
+void NetConnection::HandleReadEvent(bool isSystemOverloaded)
 {
     NetConnectionPtr conn;
     TcpSocket *sock;
@@ -45,16 +46,19 @@ void NetConnection::HandleReadEvent()
                              globals().ctrOpenNetFds.GetValue());
         }
 #endif
-	assert(sock != NULL);
         if (sock == NULL) 
             return;
         conn.reset(new NetConnection(sock, NULL));
         mCallbackObj->HandleEvent(EVENT_NEW_CONNECTION, (void *) &conn);
     }
     else {
+        if (isSystemOverloaded && (!mEnableReadIfOverloaded))
+            return;
+
         if (mInBuffer == NULL) {
             mInBuffer = new IOBuffer();
         }
+        // XXX: Need to control how much we read...
         nread = mInBuffer->Read(mSock->GetFd());
         if (nread == 0) {
             KFS_LOG_DEBUG("Read 0 bytes...connection dropped");
@@ -68,6 +72,9 @@ void NetConnection::HandleReadEvent()
 void NetConnection::HandleWriteEvent()
 {
     int nwrote;
+
+    // clear the value so we can let flushes thru when possible
+    mLastFlushResult = 0;
 
     if (!IsWriteReady())
     	return;
@@ -90,9 +97,12 @@ void NetConnection::HandleErrorEvent()
     mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
 }
 
-bool NetConnection::IsReadReady()
+bool NetConnection::IsReadReady(bool isSystemOverloaded)
 {
-    return true;
+    if (!isSystemOverloaded)
+        return true;
+    // under load, this instance variable controls poll state
+    return mEnableReadIfOverloaded;
 }
 
 bool NetConnection::IsWriteReady()

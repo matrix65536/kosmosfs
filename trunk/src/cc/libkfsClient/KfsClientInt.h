@@ -2,9 +2,10 @@
 // $Id$
 //
 // Created 2006/04/18
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -28,9 +29,11 @@
 
 #include <string>
 #include <vector>
+#include <sys/select.h>
 #include "common/log.h"
 #include "common/kfstypes.h"
 #include "libkfsIO/TcpSocket.h"
+#include "libkfsIO/Checksum.h"
 
 #include "KfsAttr.h"
 
@@ -41,10 +44,13 @@
 
 namespace KFS {
 
-const size_t MIN_BYTES_PIPELINE_IO = 65536;
+/// Set this to 8MB
+const size_t MIN_BYTES_PIPELINE_IO = CHECKSUM_BLOCKSIZE * 128;
 
-/// Push as much as we can per write...
-const size_t MAX_BYTES_PER_WRITE = 1 << 20;
+/// Per write, push out at most one checksum block size worth of data
+const size_t MAX_BYTES_PER_IO = CHECKSUM_BLOCKSIZE;
+/// on zfs, blocks are 128KB on disk; so, align reads appropriately
+const size_t MAX_BYTES_PER_READ_IO = CHECKSUM_BLOCKSIZE * 2;
 
 /// If an op fails because the server crashed, retry the op.  This
 /// constant defines the # of retries before declaring failure.
@@ -78,17 +84,26 @@ struct ChunkBuffer {
     // a ton and thereby get decent performance; having a big buffer
     // obviates the need to do read-ahead :-)
     static const size_t ONE_MB = 1 << 20;
-    // static const size_t BUF_SIZE =
-    // KFS::CHUNKSIZE < 16 * ONE_MB ? KFS::CHUNKSIZE : 16 * ONE_MB;
     static const size_t BUF_SIZE = KFS::CHUNKSIZE;
+    // to reduce memory footprint, keep a decent size buffer
+    // static const size_t BUF_SIZE = KFS::CHUNKSIZE < 16 * ONE_MB ? KFS::CHUNKSIZE : 16 * ONE_MB;
 
-    ChunkBuffer():chunkno(-1), start(0), length(0), dirty(false) { }
-    void invalidate() { chunkno = -1; start = 0; length = 0; dirty = false; }
+    ChunkBuffer():chunkno(-1), start(0), length(0), dirty(false), buf(NULL) { }
+    ~ChunkBuffer() { delete [] buf; }
+    void invalidate() { 
+        chunkno = -1; start = 0; length = 0; dirty = false; 
+        delete [] buf;
+    }
+    void allocate() {
+        if (buf) 
+            return;
+        buf = new char[BUF_SIZE];
+    }
     int chunkno;		// which chunk
     off_t start;		// offset with chunk
     size_t length;	// length of valid data
     bool dirty;		// must flush to server if true
-    char buf[BUF_SIZE];	// the data
+    char *buf;	// the data
 };
 
 struct ChunkServerConn {
@@ -105,9 +120,35 @@ struct ChunkServerConn {
         sock.reset(new TcpSocket());
     }
     
-    void Connect() {
-        if (!sock->IsGood())
-            sock->Connect(location);
+    void Connect(bool nonblockingConnect = false) {
+        if (sock->IsGood())
+            return;
+        int res;
+
+        res = sock->Connect(location, nonblockingConnect);
+        if (res == -EINPROGRESS) {
+            struct timeval selectTimeout;
+            fd_set writeSet;
+            int sfd = sock->GetFd();
+
+            FD_ZERO(&writeSet);
+            FD_SET(sfd, &writeSet);
+
+            selectTimeout.tv_sec = 30;
+            selectTimeout.tv_usec = 0;
+
+            res = select(sfd + 1, NULL, &writeSet, NULL, &selectTimeout);
+            if ((res > 0) &&  (FD_ISSET(sfd, &writeSet))) {
+                    // connection completed
+                    return;
+            }
+            KFS_LOG_VA_INFO("Non-blocking connect to location %s failed", location.ToString().c_str());
+            res = -EHOSTUNREACH;
+        }
+        if (res < 0) {
+            sock.reset(new TcpSocket());
+        }
+            
     }
     bool operator == (const ServerLocation &other) const {
         return other == location;
@@ -131,9 +172,6 @@ struct FilePosition {
 
     }
     void Reset() {
-
-        KFS_LOG_DEBUG("Calling reset servers");
-
 	fileOffset = chunkOffset = 0;
 	chunkNum = 0;
         chunkServers.clear();
@@ -156,18 +194,16 @@ struct FilePosition {
     TcpSocket *preferredServer;
 
     void ResetServers() {
-        KFS_LOG_DEBUG("Calling reset servers");
-
         chunkServers.clear();
         preferredServer = NULL;
     }
 
-    TcpSocket *GetChunkServerSocket(const ServerLocation &loc) {
+    TcpSocket *GetChunkServerSocket(const ServerLocation &loc, bool nonblockingConnect = false) {
         std::vector<ChunkServerConn>::iterator iter;
 
         iter = std::find(chunkServers.begin(), chunkServers.end(), loc);
         if (iter != chunkServers.end()) {
-            iter->Connect();
+            iter->Connect(nonblockingConnect);
             TcpSocket *s = iter->sock.get();
 
             if (s->IsGood())
@@ -180,7 +216,7 @@ struct FilePosition {
         // socket it has will go.  To avoid that, we need the socket
         // to be a smart pointer.
         chunkServers.push_back(ChunkServerConn(loc));
-        chunkServers[chunkServers.size()-1].Connect();
+        chunkServers[chunkServers.size()-1].Connect(nonblockingConnect);
 
         TcpSocket *s = chunkServers[chunkServers.size()-1].sock.get();
         if (s->IsGood())
@@ -188,8 +224,8 @@ struct FilePosition {
         return NULL;
     }
 
-    void SetPreferredServer(const ServerLocation &loc) {
-        preferredServer = GetChunkServerSocket(loc);
+    void SetPreferredServer(const ServerLocation &loc, bool nonblockingConnect = false) {
+        preferredServer = GetChunkServerSocket(loc, nonblockingConnect);
     }
 
     TcpSocket *GetPreferredServer() {
@@ -205,7 +241,8 @@ struct FileTableEntry {
     kfsFileId_t parentFid;
     // stores the name of the file/directory.
     std::string	name;
-    // one of O_RDONLY, O_WRONLY, O_RDWR
+    // one of O_RDONLY, O_WRONLY, O_RDWR; when it is 0 for a file,
+    // this entry is used for attribute caching
     int		openMode;
     FileAttr	fattr;
     std::map <int, ChunkAttr> cattr;
@@ -233,12 +270,6 @@ class KfsClientImpl {
 
 public:
     KfsClientImpl();
-    ///
-    /// @param[in] propFile that describes where the server is and
-    /// other client configuration info.
-    /// @retval 0 on success; -1 on failure
-    ///
-    int Init(const char *propFile);
 
     ///
     /// @param[in] metaServerHost  Machine on meta is running
@@ -246,6 +277,10 @@ public:
     /// @retval 0 on success; -1 on failure
     ///
     int Init(const std::string metaServerHost, int metaServerPort);
+
+    ServerLocation GetMetaserverLocation() const {
+        return mMetaServerLoc;
+    }
 
     bool IsInitialized() { return mIsInitialized; };
 
@@ -323,6 +358,14 @@ public:
     bool IsFile(const char *pathname);
     bool IsDirectory(const char *pathname);
 
+    /// Debug API to print out the size/location of each block of a file.
+    int EnumerateBlocks(const char *pathname);
+
+    /// API to verify that checksums computed on source data matches
+    /// what was pushed into KFS.  This verification is done by
+    /// pulling KFS checksums from all the replicas for each chunk.
+    /// @retval status code
+    bool VerifyDataChecksums(const char *pathname, const std::vector<uint32_t> &checksums);
     ///
     /// Create a file which is specified by a complete path.
     /// @param[in] pathname that has to be created
@@ -466,6 +509,8 @@ private:
     /// meta/chunk servers are serialized.
     pthread_mutex_t mMutex;
 
+    /// Seed to the random number generator
+    unsigned    mRandSeed;
     bool	mIsInitialized;
     /// where is the meta server located
     ServerLocation mMetaServerLoc;
@@ -513,9 +558,13 @@ private:
 
     /// Open the "current" chunk of fd.  This involves setting up the
     /// socket to the chunkserver and determining the size of the chunk.
+    /// For reads, since there are 3 copies of a chunk, we use the
+    /// nonblocking connect; this allows us to switch servers one of
+    /// the replicas is non-reachable
+    ///
     /// @param[in] fd  The index from mFileTable[] that corresponds to
     /// the file being accessed
-    int OpenChunk(int fd);
+    int OpenChunk(int fd, bool nonblockingConnect = false);
 
     bool IsChunkReadable(int fd);
 
@@ -660,12 +709,13 @@ private:
     /// requests to plumb the pipe and then whenever an op finishes,
     /// submit a new one.
     int DoPipelinedRead(std::vector<ReadOp *> &ops, TcpSocket *sock);
-    int DoPipelinedWrite(int fd, std::vector<WritePrepareOp *> &ops);
+
+    int DoPipelinedWrite(int fd, std::vector<WritePrepareOp *> &ops, TcpSocket *masterSock);
 
     /// Helpers for pipelined write
-    int PushDataForWrite(int fd, WritePrepareOp *op);
-    int IssueWriteCommit(int fd, WritePrepareOp *op, WriteSyncOp **sop,
-			 TcpSocket *masterSock);
+    int AllocateWriteId(int fd, off_t offset, size_t numBytes, std::vector<WriteInfo> &writeId, 
+                        TcpSocket *masterSock);
+    int IssueCommit(int fd, std::vector<WriteInfo> &writeId, TcpSocket *masterSock);
 
     /// Get a response from the server, where, the response is
     /// terminated by "\r\n\r\n".
@@ -704,12 +754,16 @@ private:
     int GetLease(kfsChunkId_t chunkId);
     void RenewLease(kfsChunkId_t chunkId);
 
+    bool GetDataChecksums(const ServerLocation &loc, 
+                          kfsChunkId_t chunkId, 
+                          uint32_t *checksums);
+    
+
 };
 
 
 // Helper functions
 extern int DoOpSend(KfsOp *op, TcpSocket *sock);
-extern int DoOpSend(KfsOp *op, std::vector<TcpSocket *> &targets);
 extern int DoOpResponse(KfsOp *op, TcpSocket *sock);
 extern int DoOpCommon(KfsOp *op, TcpSocket *sock);
 

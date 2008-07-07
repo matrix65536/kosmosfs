@@ -3,7 +3,8 @@
  *
  * Created 2007/08/25
  *
- * Copyright 2007 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2007-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -28,6 +29,7 @@ package org.kosmix.kosmosfs.access;
 import java.io.*;
 import java.net.*;
 import java.util.Random;
+import java.util.Date;
 import java.nio.ByteBuffer;
 
 public class KfsTest
@@ -63,7 +65,8 @@ public class KfsTest
             }
 
             long mTime = kfsAccess.kfs_getModificationTime(path);
-            System.out.println("Modification time for: " + path + " is: " + mTime);
+            Date d = new Date(mTime);
+            System.out.println("Modification time for: " + path + " is: " + d.toString());
             
             String [] entries;
             if ((entries = kfsAccess.kfs_readdir(basedir)) == null) {

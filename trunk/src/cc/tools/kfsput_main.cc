@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/28
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -39,7 +40,7 @@ using std::string;
 
 using namespace KFS;
 
-KfsClient *gKfsClient;
+KfsClientPtr gKfsClient;
 
 static ssize_t doPut(const string &kfspathname);
 
@@ -80,9 +81,8 @@ main(int argc, char **argv)
         exit(0);
     }
 
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(serverHost, port);
-    if (!gKfsClient->IsInitialized()) {
+    gKfsClient = getKfsClientFactory()->GetClient(serverHost, port);
+    if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(0);
     }

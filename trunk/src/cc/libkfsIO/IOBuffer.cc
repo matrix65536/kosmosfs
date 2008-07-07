@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/15
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -61,20 +62,26 @@ IOBufferData::IOBufferData()
     Init(IOBUFSIZE);
 }
 
+// setup a new IOBufferData for read access by block sharing.  
+IOBufferData::IOBufferData(IOBufferDataPtr &other, char *s, char *e) :
+    mData(other->mData), mStart(s), mEnd(e), mProducer(e), mConsumer(s) {
+
+}
+
 void
 IOBufferData::Init(uint32_t bufsz)
 {
-    mData = new char [bufsz];
-    mStart = mData;
+    mData.reset(new char [bufsz]);
+    mStart = mData.get();
     mEnd = mStart + bufsz;
-    mProducer = mConsumer = mData;
+    mProducer = mConsumer = mStart;
 }
 
 IOBufferData::~IOBufferData()
 {
     // cout << "Deleting: " << this << endl;
 
-    delete [] mData;
+    mData.reset();
     mProducer = mConsumer = NULL;
 }
 
@@ -135,14 +142,15 @@ int IOBufferData::Read(int fd)
     assert(numBytes > 0);
 
     if (numBytes <= 0)
-        return 0;
+        return -1;
 
     nread = read(fd, mProducer, numBytes);
-    
+
     if (nread > 0) {
         mProducer += nread;
         globals().ctrNetBytesRead.Update(nread);
     }
+    
     return nread;
 }
 
@@ -153,8 +161,9 @@ int IOBufferData::Write(int fd)
 
     assert(numBytes > 0);
 
-    if (numBytes <= 0)
-        return 0;
+    if (numBytes <= 0) {
+        return -1;
+    }
 
     nwrote = write(fd, mConsumer, numBytes);
 
@@ -258,13 +267,14 @@ void IOBuffer::Move(IOBuffer *other, int numBytes)
             mBuf.push_back(data);
         } else {
             // this is the last buffer being moved; only partial data
-            // from the buffer needs to be moved and so copy it over.
-            int bytesToCopy = numBytes - bytesMoved;
-            dataCopy.reset(new IOBufferData());
-            dataCopy->CopyIn(data.get(), bytesToCopy);
+            // from the buffer needs to be moved.  do the move by
+            // sharing the block (and therby avoid data copy)
+            int bytesToMove = numBytes - bytesMoved;
+            dataCopy.reset(new IOBufferData(data, data->Consumer(), 
+                                            data->Consumer() + bytesToMove));
             mBuf.push_back(dataCopy);
-            other->Consume(bytesToCopy);
-            bytesMoved += bytesToCopy;
+            other->Consume(bytesToMove);
+            bytesMoved += bytesToMove;
             assert(bytesMoved >= numBytes);
         }
         iter = other->mBuf.begin();
@@ -354,7 +364,7 @@ void IOBuffer::ZeroFill(int numBytes)
 int IOBuffer::Read(int fd)
 {
     IOBufferDataPtr data;
-    int numRead = 0, res;
+    int numRead = 0, res = -EAGAIN;
 
     if (mBuf.empty()) {
         data.reset(new IOBufferData());
@@ -367,20 +377,27 @@ int IOBuffer::Read(int fd)
         if (data->IsFull()) {
             data.reset(new IOBufferData());
             mBuf.push_back(data);
+            continue;
         }
         res = data->Read(fd);
         if (res <= 0)
             break;
         numRead += res;
     }
+
+    if ((numRead == 0) && (res < 0))
+        // even when res = -1, we get an errno of 0
+        return errno == 0 ? -EAGAIN : errno;
+
     return numRead;
 }
 
 
 int IOBuffer::Write(int fd)
 {
-    int res, numWrote = 0;
+    int res = -EAGAIN, numWrote = 0;
     IOBufferDataPtr data;
+    bool didSend = false;
 
     while (!mBuf.empty()) {
         data = mBuf.front();
@@ -389,13 +406,21 @@ int IOBuffer::Write(int fd)
 	    continue;
         }
         assert(data->BytesConsumable() > 0);
-
+        didSend = true;
         res = data->Write(fd);
         if (res <= 0)
             break;
 
         numWrote += res;
     }
+    if (!didSend)
+        return -EAGAIN;
+
+    if ((numWrote == 0) && (res < 0)) {
+        // even when res = -1, we get an errno of 0
+        return errno == 0 ? -EAGAIN : errno;
+    }
+
     return numWrote;
 }
 
@@ -481,6 +506,7 @@ int IOBuffer::CopyIn(const char *buf, int numBytes)
     }
 
     while (numCopied < numBytes) {
+        assert(data.get() != NULL);
         bytesCopied = data->CopyIn(buf + numCopied, 
                                    numBytes - numCopied);
         numCopied += bytesCopied;
@@ -514,4 +540,26 @@ int IOBuffer::CopyOut(char *buf, int numBytes)
     }
 
     return nread;
+}
+
+//
+// Clone the contents of an IOBuffer by block sharing
+//
+IOBuffer *IOBuffer::Clone()
+{
+    IOBuffer *clone = new IOBuffer();
+
+    list<IOBufferDataPtr>::iterator iter;
+    IOBufferDataPtr data1, data2;
+    int numBytes;
+
+    for (iter = mBuf.begin(); iter != mBuf.end(); iter++) {
+        data1 = *iter;
+        numBytes = data1->BytesConsumable();
+        data2.reset(new IOBufferData(data1, data1->Consumer(), 
+                                     data1->Consumer() + numBytes));
+        clone->mBuf.push_back(data2);
+    }
+
+    return clone;
 }

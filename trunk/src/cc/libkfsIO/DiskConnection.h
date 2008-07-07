@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/23
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -47,7 +48,7 @@ class DiskConnection;
 typedef boost::shared_ptr<DiskConnection> DiskConnectionPtr;
 }
 
-#include "Chunk.h"
+#include "FileHandle.h"
 #include "KfsCallbackObj.h"
 #include "IOBuffer.h"
 #include "DiskEvent.h"
@@ -101,10 +102,7 @@ struct DiskIORequest {
 class DiskConnection : 
     public boost::enable_shared_from_this<DiskConnection> {
 public:
-    // XXX: ChunkHandlePtr is for now.  Once we have a table of chunk
-    // handles implemented in the chunk manager, this class will only
-    // operate on an fd.
-    DiskConnection(ChunkHandlePtr &handle, KfsCallbackObj *callbackObj);
+    DiskConnection(FileHandlePtr &handle, KfsCallbackObj *callbackObj);
 
     ~DiskConnection();
 
@@ -112,7 +110,7 @@ public:
     /// this connection to be cancelled.
     void Close();
 
-    ChunkHandlePtr &GetChunkHandle() { return mHandle; }
+    FileHandlePtr &GetFileHandle() { return mHandle; }
 
     /// Schedule a read on this connection at the specified offset for numBytes.
     /// @param[in] numBytes # of bytes that need to be read.
@@ -137,7 +135,9 @@ public:
     int WriteDone(DiskEventPtr &doneEvent, int res);
 
     /// Sync the previously written data to disk.
-    int Sync();
+    /// @param[in] notifyDone if set, notify upstream objects that the
+    /// sync operation has finished.
+    int Sync(bool notifyDone);
 
     /// Completion handler for a sync.
     int SyncDone(DiskEventPtr &doneEvent, int res);
@@ -161,14 +161,13 @@ public:
 private:
     /// Owning KfsCallbackObj.
     KfsCallbackObj	*mCallbackObj;
-    /// XXX: This should become a file id eventually.
-    ChunkHandlePtr	mHandle;
+
+    FileHandlePtr	mHandle;
 
     /// Queue of disk IO requests that have been scheduled on this
     /// connection.  Whenever the I/O on the head of the queue is complete, the
     /// associated KfsCallbackObj is notified.
     std::deque<DiskIORequest>	mDiskIO;
-
 };
 
 }
