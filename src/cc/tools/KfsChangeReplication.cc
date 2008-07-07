@@ -2,9 +2,10 @@
 // $Id$
 //
 // Created 2007/09/20
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -52,15 +53,16 @@ using std::string;
 
 using namespace KFS;
 
-void 
+int
 KFS::tools::handleChangeReplication(const vector<string> &args)
 {
     if ((args.size() < 2) || (args[0] == "--help")) {
         cout << "Usage: changeReplication <filename> <replication factor> " << endl;
-        return;
+        return 0;
     }
 
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
+
     int16_t numReplicas = 1;
     int res;
 
@@ -68,14 +70,13 @@ KFS::tools::handleChangeReplication(const vector<string> &args)
         numReplicas = (int16_t) boost::lexical_cast<int> (args[1]);
     } catch (...) {
         cout << "Print : " << args[1] << " is not a valid replication factor" << endl;
-        return;
+        return -EINVAL;
     }
 
     if ((res = kfsClient->SetReplicationFactor(args[0].c_str(), numReplicas)) < 0) {
 	cout << "Set replication failed: " << ErrorCodeToStr(res) << endl;
-    } else {
-	cout << "Setting replication factor to: " << res << endl;
-    }
-        
+        return res;
+    } 
+    return 0;
 }
 

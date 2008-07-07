@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/09
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -34,10 +35,10 @@
 
 #include <tr1/unordered_map>
 
-#include "libkfsIO/Chunk.h"
 #include "libkfsIO/Event.h"
 #include "common/kfstypes.h"
 #include "common/cxxutil.h"
+#include "Chunk.h"
 
 namespace KFS
 {
@@ -46,7 +47,8 @@ struct LeaseInfo_t {
     int64_t leaseId;
     time_t expires;
     time_t lastWriteTime;
-    EventPtr timer;
+    // EventPtr timer;
+    bool leaseRenewSent;
 };
 
 // mapping from a chunk id to its lease
@@ -60,6 +62,9 @@ public:
     /// secs before the leases and submit the renew
     static const int LEASE_RENEW_INTERVAL_SECS = KFS::LEASE_INTERVAL_SECS - 10;
     static const int LEASE_RENEW_INTERVAL_MSECS = LEASE_RENEW_INTERVAL_SECS * 1000;
+
+    static const int LEASE_EXPIRE_WINDOW_SECS = 10;
+    static const int LEASE_EXPIRE_WINDOW_MSECS = LEASE_EXPIRE_WINDOW_SECS * 1000;
 
     LeaseClerk();
     ~LeaseClerk(){ };
@@ -85,9 +90,12 @@ public:
     /// renewal may be needed.
     int HandleEvent(int code, void *data);
 
+    void Timeout();
+
 private:
     /// All the leases registered with the clerk
     LeaseMap mLeases;
+    time_t mLastLeaseCheckTime;
 
     void LeaseRenewed(kfsChunkId_t chunkId);
     void LeaseExpired(kfsChunkId_t chunkId);

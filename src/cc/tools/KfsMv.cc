@@ -2,9 +2,10 @@
 // $Id$
 //
 // Created 2007/09/24
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -49,21 +50,21 @@ using namespace KFS;
 using namespace KFS::tools;
 
 
-void
+int
 KFS::tools::handleMv(const vector<string> &args)
 {
     int res;
 
     if ((args.size() < 2) || (args[0] == "--help") || (args[0] == "") || (args[1] == "")) {
         cout << "Usage: mv <source path> <dst path>" << endl;
-        return;
+        return 0;
     }
 
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     if (!kfsClient->Exists(args[0].c_str())) {
 	cout << "Source path: " << args[0] << " is non-existent!" << endl;
-        return;
+        return -ENOENT;
     }
 
     string target = args[1].c_str();
@@ -79,6 +80,7 @@ KFS::tools::handleMv(const vector<string> &args)
     
     if ((res = kfsClient->Rename(args[0].c_str(), target.c_str())) < 0) {
         cout << "Rename failed: " << ErrorCodeToStr(res) << endl;
-        return;
+        return res;
     }
+    return 0;
 }

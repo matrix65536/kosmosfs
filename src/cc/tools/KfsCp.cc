@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/23
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -56,32 +57,31 @@ int CopyFile(const string &srcPath, const string &dstPath);
 
 // Given a srcDirname, copy it to dirname.  Dirname will be created
 // if it doesn't exist.  
-void CopyDir(const string &srcDirname, string dstDirname);
+int CopyDir(const string &srcDirname, string dstDirname);
 
 // Guts of the work
 int CopyFile2(string srcfilename, string dstfilename);
 
-void
+int
 KFS::tools::handleCopy(const vector<string> &args)
 {
     if ((args.size() < 2) || (args[0] == "--help") || (args[0] == "") || (args[1] == "")) {
         cout << "Usage: cp <source path> <dst path>" << endl;
-        return;
+        return 0;
     }
 
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     if (!kfsClient->Exists(args[0].c_str())) {
 	cout << "Source path: " << args[0] << " is non-existent!" << endl;
-        return;
+        return -ENOENT;
     }
 
     if (kfsClient->IsFile(args[0].c_str())) {
-	CopyFile(args[0], args[1]);
-        return;
+	return CopyFile(args[0], args[1]);
     }
 
-    CopyDir(args[0], args[1]);
+    return CopyDir(args[0], args[1]);
 }
 
 int
@@ -89,7 +89,7 @@ CopyFile(const string &srcPath, const string &dstPath)
 {
     string filename;
     string::size_type slash = srcPath.rfind('/');
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     // get everything after the last slash
     if (slash != string::npos) {
@@ -115,22 +115,22 @@ CopyFile(const string &srcPath, const string &dstPath)
     return CopyFile2(srcPath, dstPath);
 }
 
-void
+int
 CopyDir(const string &srcDirname, string dstDirname)
 {
     vector<string> dirEntries;
     vector<string>::size_type i;
     int res;
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     if ((res = kfsClient->Readdir((char *) srcDirname.c_str(), dirEntries)) < 0) {
         cout << "Readdir plus failed: " << res << endl;
-        return;
+        return res;
     }
 
     if (!doMkdirs(dstDirname.c_str())) {
 	cout << "Unable to make kfs dir: " << dstDirname << endl;
-	return;
+	return res;
     }
     
     for (i = 0; i < dirEntries.size(); ++i) {
@@ -138,13 +138,14 @@ CopyDir(const string &srcDirname, string dstDirname)
             continue;
 
         if (kfsClient->IsDirectory(dirEntries[i].c_str())) {
-	    CopyDir(srcDirname + "/" + dirEntries[i],
-                    dstDirname + "/" + dirEntries[i]);
+	    res = CopyDir(srcDirname + "/" + dirEntries[i],
+                          dstDirname + "/" + dirEntries[i]);
         } else {
-            CopyFile2(srcDirname + "/" + dirEntries[i],
-		      dstDirname + "/" + dirEntries[i]);
+            res = CopyFile2(srcDirname + "/" + dirEntries[i],
+                            dstDirname + "/" + dirEntries[i]);
         }
     }
+    return res;
 }
 
 //
@@ -158,7 +159,7 @@ CopyFile2(string srcfilename, string dstfilename)
     int srcfd, dstfd, nRead, toRead;
     long long n = 0;
     int res;
-    KfsClient *kfsClient = KfsClient::Instance();
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     srcfd = kfsClient->Open(srcfilename.c_str(), O_RDONLY);
     if (srcfd < 0) {

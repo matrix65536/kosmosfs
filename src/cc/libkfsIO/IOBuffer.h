@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/14
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -31,6 +32,7 @@
 #include <exception>
 
 #include <boost/shared_ptr.hpp>
+#include <boost/shared_array.hpp>
 
 namespace KFS
 {
@@ -45,8 +47,19 @@ namespace KFS
 /// consumers.
 ///
 /// In the current implementation, IOBufferData objects are single
-/// producer, single consumer.
+/// producer, multiple consumers.
 ///
+
+class IOBufferData;
+
+typedef boost::shared_array<char> IOBufferBlockPtr;
+///
+/// \typedef IOBufferDataPtr
+/// Since an IOBufferData can be shared, encapsulate it in a smart
+/// pointer so that the cleanup occurs when all references are
+/// released.
+///
+typedef boost::shared_ptr<IOBufferData> IOBufferDataPtr;
 
 ///
 /// \class IOBufferData
@@ -59,7 +72,11 @@ public:
 
     /// Create an IOBufferData blob with a backing buffer of the specified size.
     IOBufferData(uint32_t bufsz);
-    
+
+    /// Create an IOBufferData blob by sharing data block from other;
+    /// set the producer/consumer based on the start/end positions
+    /// that are passed in
+    IOBufferData(IOBufferDataPtr &other, char *s, char *e);
     ~IOBufferData();
 
     ///
@@ -144,8 +161,8 @@ public:
     int IsEmpty() { return mProducer == mConsumer; }
 
 private:
-    /// Data buffer
-    char		*mData;
+    /// Data buffer that is ref-counted for sharing.
+    IOBufferBlockPtr	mData;
     /// Pointers that correspond to the start/end of the buffer
     char		*mStart, *mEnd;
     /// Pointers into mData that correspond to producer/consumer
@@ -156,13 +173,6 @@ private:
     
 };
 
-///
-/// \typedef IOBufferDataPtr
-/// Since an IOBufferData can be shared, encapsulate it in a smart
-/// pointer so that the cleanup occurs when all references are
-/// released.
-///
-typedef boost::shared_ptr<IOBufferData> IOBufferDataPtr;
 
 ///
 /// \struct IOBuffer
@@ -173,6 +183,8 @@ typedef boost::shared_ptr<IOBufferData> IOBufferDataPtr;
 struct IOBuffer {
     IOBuffer();
     ~IOBuffer();
+
+    IOBuffer *Clone();
 
     /// Append the IOBufferData block to the list stored in this buffer.
     void Append(IOBufferDataPtr &buf);

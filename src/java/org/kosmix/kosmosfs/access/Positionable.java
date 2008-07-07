@@ -3,9 +3,10 @@
  *
  * Created 2007/09/13
  *
- * @author: Sriram Rao (Kosmix Corp.)
+ * @author: Sriram Rao 
  *
- * Copyright 2007 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2007-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *

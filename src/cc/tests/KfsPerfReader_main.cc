@@ -3,7 +3,8 @@
 //
 // Created 2006/06/23
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -38,7 +39,7 @@ using std::ifstream;
 using std::string;
 
 using namespace KFS;
-KfsClient *gKfsClient;
+KfsClientPtr gKfsClient;
 
 static off_t doRead(const string &kfspathname, int numMBytes, int readSizeBytes);
 
@@ -81,11 +82,10 @@ main(int argc, char **argv)
     cout << "Doing reads to: " << kfspathname << " # MB = " << numMBytes;
     cout << " # of bytes per read: " << readSizeBytes << endl;
 
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(kfsPropsFile);
-    if (!gKfsClient->IsInitialized()) {
+    gKfsClient = getKfsClientFactory()->GetClient(kfsPropsFile);
+    if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
+        exit(-1);
     }
 
     string kfsdirname, kfsfilename;
@@ -93,7 +93,7 @@ main(int argc, char **argv)
     
     if (slash == string::npos) {
         cout << "Bad kfs path: " << kfsdirname << endl;
-        exit(0);
+        exit(-1);
     }
 
     kfsdirname.assign(kfspathname, 0, slash);
@@ -114,7 +114,8 @@ main(int argc, char **argv)
 
     cout << "Read rate: " << (((double) bytesRead * 8.0) / timeTaken) / (1024.0 * 1024.0) << " (Mbps)" << endl;
     cout << "Read rate: " << ((double) (bytesRead) / timeTaken) / (1024.0 * 1024.0) << " (MBps)" << endl;
-    
+
+    return 0;
 }
 
 off_t
@@ -135,7 +136,7 @@ doRead(const string &filename, int numMBytes, int readSizeBytes)
     fd = gKfsClient->Open(filename.c_str(), O_RDONLY);
     if (fd < 0) {
         cout << "Open failed: " << endl;
-        exit(0);
+        exit(-1);
     }
 
     for (nMBytes = 0; nMBytes < numMBytes; nMBytes++) {

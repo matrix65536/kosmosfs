@@ -4,9 +4,10 @@
 // \brief Common declarations of KFS structures
 //
 // Created 2006/10/20
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -31,6 +32,7 @@
 #include <cerrno>
 #include <string>
 #include <sstream>
+#include <stdlib.h>
 
 namespace KFS {
 ///
@@ -61,6 +63,24 @@ struct ServerLocation {
 	// Hostname better be non-null and port better
 	// be a positive number
 	return hostname.compare("") != 0 && port > 0;
+    }
+
+    // a proxy for distance between two hosts: take the difference
+    // between their hostnames.  this will mostly work as long as all
+    // machines in the cluster are named as nodeXXX, where XXX is a number
+    int Distance(const std::string &otherhost) {
+        int len = (int) std::min(hostname.size(), otherhost.size());
+        int hosta = 0, hostb = 0;
+        int scalefactor = 1;
+
+        for (int i = len - 1; i >= 0; --i) {
+            if (isdigit(hostname[i]))
+                hosta += (hostname[i] - '0') * scalefactor;
+            if (isdigit(otherhost[i]))
+                hostb += (otherhost[i] - '0') * scalefactor;
+            scalefactor *= 10;
+        }
+        return abs(hosta - hostb);
     }
     std::string ToString() const {
 	std::ostringstream os;

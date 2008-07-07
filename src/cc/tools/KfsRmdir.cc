@@ -2,9 +2,10 @@
 // $Id$
 //
 // Created 2006/09/21
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -47,13 +48,13 @@ using std::string;
 using namespace KFS;
 using namespace KFS::tools;
 
-void
+int
 KFS::tools::handleRmdir(const vector<string> &args)
 {
     if ((args.size() < 1) || (args[0] == "--help") || (args[0] == "")) {
         cout << "Usage: rmdir <dir> " << endl;
-        return;
+        return 0;
     }
 
-     doRmdir(args[0].c_str());
+    return doRmdir(args[0].c_str());
 }

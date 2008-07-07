@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/23
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -28,11 +29,30 @@
 #include "libkfsIO/Globals.h"
 
 #include "ChunkServer.h"
+#include "Utils.h"
 
 using std::list;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
+
+// single network thread that manages connections and net I/O
+static MetaThread netProcessor;
+
+ChunkServer KFS::gChunkServer;
+
+static void *
+netWorker(void *dummy)
+{
+    globals().netManager.MainLoop();
+    return NULL;
+}
+
+static void
+StartNetProcessor()
+{
+    netProcessor.start(netWorker, NULL);
+}
 
 void
 ChunkServer::Init()
@@ -61,8 +81,13 @@ ChunkServer::MainLoop(int clientAcceptPort)
     gClientManager.StartAcceptor(clientAcceptPort);
     gLogger.Start();
     gChunkManager.Start();
-    gMetaServerSM.SendHello(clientAcceptPort);
-    globals().netManager.MainLoop();
+    // gMetaServerSM.SendHello(clientAcceptPort);
+    gMetaServerSM.Init(clientAcceptPort);
+
+    StartNetProcessor();
+    
+    netProcessor.join();
+
 }
 
 class RemoteSyncSMMatcher {
@@ -93,6 +118,9 @@ ChunkServer::FindServer(const ServerLocation &location, bool connect)
     peer.reset(new RemoteSyncSM(location));
     if (peer->Connect()) {
         mRemoteSyncers.push_back(peer);
+    } else {
+        // we couldn't connect...so, force destruction
+        peer.reset();
     }
     return peer;
 }
@@ -108,4 +136,20 @@ ChunkServer::RemoveServer(RemoteSyncSM *target)
         return;
     }
     mRemoteSyncers.erase(i);
+}
+
+
+void
+KFS::verifyExecutingOnNetProcessor()
+{
+    assert(netProcessor.isEqual(pthread_self()));
+    if (!netProcessor.isEqual(pthread_self())) {
+        die("FATAL: Not executing on net processor");
+    }
+}
+
+void
+KFS::StopNetProcessor(int status)
+{
+    netProcessor.exit(status);
 }

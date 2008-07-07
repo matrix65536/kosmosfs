@@ -3,7 +3,8 @@
 //
 // Created 2005/03/01
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -25,7 +26,7 @@
 #include <stdlib.h>
 #include <log4cpp/RollingFileAppender.hh>
 #include <log4cpp/OstreamAppender.hh>
-#include <log4cpp/SimpleLayout.hh>
+#include <log4cpp/PatternLayout.hh>
 
 using namespace KFS;
 
@@ -35,10 +36,15 @@ void
 MsgLogger::Init(const char *filename, log4cpp::Priority::Value priority)
 {
     log4cpp::Appender* appender;
-    log4cpp::Layout* layout = new log4cpp::SimpleLayout();
+    log4cpp::PatternLayout* layout = new log4cpp::PatternLayout();
+    layout->setConversionPattern("%d{%m-%d-%Y %H:%M:%S.%l} %p - %m %n");
 
-    if (filename != NULL)
-        appender = new log4cpp::RollingFileAppender("default", std::string(filename));
+    if (filename != NULL) {
+        // set the max. log file size to be 10M before it rolls over
+        // to the next; save the last 10 log files. 
+        appender = new log4cpp::RollingFileAppender("default", std::string(filename),
+                                                    10 * 1024 * 1024, 10);
+    }
     else
         appender = new log4cpp::OstreamAppender("default", &std::cout);
 

@@ -29,26 +29,36 @@ set_target_properties (kfsMeta-shared PROPERTIES OUTPUT_NAME "kfsMeta")
 set_target_properties (kfsMeta PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties (kfsMeta-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-add_executable (metaserver metaserver_main.cc)
+set (exe_files metaserver logcompactor)
+foreach (exe_file ${exe_files})
+        add_executable (${exe_file} ${exe_file}_main.cc)
+        if (USE_STATIC_LIB_LINKAGE)
+           target_link_libraries (${exe_file} kfsMeta kfsIO kfsCommon pthread $(Tcmalloc_LIBRARIES))
+           add_dependencies (${exe_file} kfsCommon kfsIO kfsMeta)
+        else (USE_STATIC_LIB_LINKAGE)
+           target_link_libraries (${exe_file} kfsMeta-shared kfsIO-shared kfsCommon-shared pthread $(Tcmalloc_LIBRARIES))
+           add_dependencies (${exe_file} kfsCommon-shared kfsIO-shared kfsMeta-shared)
+        endif (USE_STATIC_LIB_LINKAGE)
+endforeach (exe_file)
 
-if (USE_STATIC_LIB_LINKAGE)
-   message (STATUS "Linking with static libs")
-   add_dependencies (metaserver kfsCommon kfsIO kfsMeta)
-   target_link_libraries (metaserver kfsMeta kfsIO kfsCommon pthread)
-else (USE_STATIC_LIB_LINKAGE)
-   message (STATUS "Linking with dynamic libs")
-   add_dependencies (metaserver kfsCommon-shared kfsIO-shared kfsMeta-shared)
-   target_link_libraries (metaserver kfsMeta-shared kfsIO-shared kfsCommon-shared pthread)
-endif (USE_STATIC_LIB_LINKAGE)
+if (APPLE)
+  target_link_libraries(kfsMeta-shared kfsCommon-shared kfsIO-shared)
+endif (APPLE)
 
 if (NOT APPLE)
   target_link_libraries(kfsMeta rt)
   target_link_libraries(metaserver rt)
 endif (NOT APPLE)
+
+if (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+   target_link_libraries(kfsMeta umem)
+   target_link_libraries(metaserver umem)
+endif (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+
 #
 # Install them
 #
-install (TARGETS metaserver kfsMeta kfsMeta-shared
+install (TARGETS ${exe_files} kfsMeta kfsMeta-shared
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib/static)

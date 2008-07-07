@@ -1,7 +1,8 @@
 /*!
  * $Id$ 
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -29,7 +30,7 @@
 
 namespace KFS {
 
-extern void kfs_startup(const std::string &logdir, const std::string &cpdir);
+extern void kfs_startup(const std::string &logdir, const std::string &cpdir, uint32_t minChunkservers);
 
 }
 #endif // !defined(KFS_STARTUP_H)

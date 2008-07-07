@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/14
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -24,6 +25,7 @@
 //----------------------------------------------------------------------------
 
 #include <sys/select.h>
+#include <cerrno>
 
 #include "NetManager.h"
 #include "TcpSocket.h"
@@ -39,8 +41,16 @@ using namespace KFS::libkfsio;
 
 NetManager::NetManager()
 {
-    mSelectTimeout.tv_sec = 0;
-    mSelectTimeout.tv_usec = 100;
+    pthread_mutexattr_t mutexAttr;
+    int rval;
+
+    rval = pthread_mutexattr_init(&mutexAttr);
+    assert(rval == 0);
+    rval = pthread_mutexattr_settype(&mutexAttr, PTHREAD_MUTEX_RECURSIVE);
+    assert(rval == 0);
+
+    mSelectTimeout.tv_sec = 10;
+    mSelectTimeout.tv_usec = 0;
 }
 
 NetManager::NetManager(const struct timeval &selectTimeout)
@@ -103,6 +113,11 @@ NetManager::MainLoop()
         FD_ZERO(&errSet);
         // build poll vector: 
 
+        // make sure we are listening to the net kicker
+        fd = globals().netKicker.GetFd();
+        FD_SET(fd, &readSet);
+        maxFd = fd;
+
         for (iter = mConnections.begin(); iter != mConnections.end(); ++iter) {
             conn = *iter;
             fd = conn->GetFd();
@@ -114,11 +129,12 @@ NetManager::MainLoop()
             if (fd > maxFd)
                 maxFd = fd;
 
-            if (conn->IsReadReady()) {
+            if (conn->IsReadReady(mOverloaded)) {
                 // By default, each connection is read ready.  We
                 // expect there to be 2-way data transmission, and so
-                // we are read ready.  If we do any throttling, then
-                // read ready will fail.
+                // we are read ready.  In overloaded state, we only
+                // add the fd to the poll vector if the fd is given a
+                // special pass
                 FD_SET(fd, &readSet);
             }
 
@@ -132,16 +148,37 @@ NetManager::MainLoop()
             FD_SET(fd, &errSet);
         }
 
+        struct timeval startTime, endTime;
+
+        gettimeofday(&startTime, NULL);
+
         selectTimeout = mSelectTimeout;
         res = select(maxFd + 1, &readSet, &writeSet, &errSet, 
                      &selectTimeout);
 
-        if (res < 0) {
+        if ((res < 0) && (errno != EINTR)) {
             perror("select(): ");
             continue;
         }
-        
+
+        gettimeofday(&endTime, NULL);
+
+        /*
+        if (res == 0) {
+            float timeTaken = (endTime.tv_sec - startTime.tv_sec) +
+                (endTime.tv_usec - startTime.tv_usec) * 1e-6;
+    
+            KFS_LOG_VA_DEBUG("Select returned 0 and time blocked: %f", timeTaken);
+        }
+        */
         // list of timeout handlers...call them back
+
+        fd = globals().netKicker.GetFd();
+        if (FD_ISSET(fd, &readSet)) {
+            FD_CLR(fd, &readSet);
+            globals().netKicker.Drain();
+            globals().diskManager.ReapCompletedIOs();
+        }
         for_each (mTimeoutHandlers.begin(), mTimeoutHandlers.end(), 
                   mem_fun(&ITimeout::TimerExpired));
 
@@ -150,7 +187,7 @@ NetManager::MainLoop()
             conn = *iter;
             fd = conn->GetFd();
             if ((fd > 0) && (FD_ISSET(fd, &readSet))) {
-                conn->HandleReadEvent();
+                conn->HandleReadEvent(mOverloaded);
                 FD_CLR(fd, &readSet);
             }
             // conn could have closed due to errors during read.  so,
@@ -177,6 +214,19 @@ NetManager::MainLoop()
             }
         }
 
+    }
+}
 
+void
+NetManager::ChangeOverloadState(bool v)
+{
+    if (mOverloaded == v)
+        return;
+    mOverloaded = v;
+    
+    if (mOverloaded) {
+        KFS_LOG_INFO("System is overloaded...");
+    } else {
+        KFS_LOG_INFO("Overload state is cleared...");
     }
 }

@@ -6,7 +6,7 @@
 // Created 2007/08/21
 // Author: Wang Lam (Kosmix Corp.) 
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2007 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //

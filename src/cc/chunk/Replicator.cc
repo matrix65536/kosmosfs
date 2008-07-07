@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2007/01/17
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -25,6 +26,7 @@
 //chunkserver; in response, the destination chunkserver pulls the data
 //down and writes it out to disk.  At the end replication, the
 //destination chunkserver notifies the metaserver.
+//
 //----------------------------------------------------------------------------
 
 #include "Replicator.h"
@@ -50,135 +52,75 @@ using namespace KFS::libkfsio;
 Replicator::Replicator(ReplicateChunkOp *op) :
     mFileId(op->fid), mChunkId(op->chunkId), 
     mChunkVersion(op->chunkVersion), 
-    mOwner(op), mWriteOp(op->chunkId, op->chunkVersion),
-    mReadOp(0), mDone(false), mSeq(1),  mOffset(0)
+    mOwner(op), mDone(false),  mOffset(0), mSizeOp(0), 
+    mReadOp(0), mWriteOp(op->chunkId, op->chunkVersion)
 {
     mReadOp.chunkId = op->chunkId;
     mReadOp.chunkVersion = op->chunkVersion;
     mReadOp.clnt = this;
     mWriteOp.clnt = this;
+    mSizeOp.clnt = this;
+    mWriteOp.Reset();
+    mWriteOp.isFromReReplication = true;
+    SET_HANDLER(&mReadOp, &ReadOp::HandleReplicatorDone);
 }
 
 Replicator::~Replicator()
 {
-    if (mNetConnection)
-        mNetConnection->Close();
+
 }
 
-bool
-Replicator::Connect()
-{
-    TcpSocket *sock;
-
-    KFS_LOG_VA_DEBUG("Trying to connect to: %s", mOwner->location.ToString().c_str());
-
-    sock = new TcpSocket();
-    if (sock->Connect(mOwner->location)) {
-        // KFS_LOG_DEBUG("connect failed...");
-        delete sock;
-        return false;
-    }
-    KFS_LOG_VA_INFO("Connect to remote server (%s) succeeded...",
-                    mOwner->location.ToString().c_str());
-
-    mNetConnection.reset(new NetConnection(sock, this));
-    // Add this to the poll vector
-    globals().netManager.AddConnection(mNetConnection);
-
-    return true;
-}
 
 void
-Replicator::Start()
+Replicator::Start(RemoteSyncSMPtr &peer)
 {
-    ostringstream os;
-    ReplicatorPtr self = shared_from_this();
-    SizeOp op(NextSeq(), mChunkId, mChunkVersion);
+#ifdef DEBUG
+    verifyExecutingOnEventProcessor();
+#endif
 
-    op.Request(os);
-    mNetConnection->Write(os.str().c_str(), os.str().length());
-    
-    SET_HANDLER(this, &Replicator::HandleStart);
-    return;
+    mPeer = peer;
+    mSizeOp.seq = mPeer->NextSeqnum();
+    mSizeOp.chunkId = mChunkId;
+    mSizeOp.chunkVersion = mChunkVersion;
 
+    SET_HANDLER(this, &Replicator::HandleStartDone);
+
+    mPeer->Enqueue(&mSizeOp);
 }
 
 int
-Replicator::HandleStart(int code, void *data)
+Replicator::HandleStartDone(int code, void *data)
 {
-    IOBuffer *iobuf;
-    int msgLen, res;
-    ReplicatorPtr self = shared_from_this();
+#ifdef DEBUG
+    verifyExecutingOnEventProcessor();
+#endif
 
-    switch (code) {
-    case EVENT_NET_READ:
-	// We read something from the network.  Run the RPC that
-	// came in.
-	iobuf = (IOBuffer *) data;
-	if (IsMsgAvail(iobuf, &msgLen)) {
-            res = ReadSetup(iobuf, msgLen);
-            if (res < 0)
-                break;
-            // get rid of the header
-            iobuf->Consume(msgLen);
-            Read();
-	}
-	break;
-
-    case EVENT_NET_WROTE:
-	break;
-
-    case EVENT_NET_ERROR:
-	// KFS_LOG_VA_DEBUG("Closing connection");
-
-	if (mNetConnection)
-	    mNetConnection->Close();
-
+    if (mSizeOp.status < 0) {
         Terminate();
-	break;
-
-    default:
-	assert(!"Unknown event");
-	break;
+        return 0;
     }
-    return 0;
-}
 
-int
-Replicator::ReadSetup(IOBuffer *iobuf, int msgLen)
-{
-    const char separator = ':';
-    scoped_array<char> buf(new char[msgLen + 1]);
-    Properties prop;
-    int status;
- 
-    iobuf->CopyOut(buf.get(), msgLen);
-    buf[msgLen] = '\0';
+    mChunkSize = mSizeOp.size;
 
-    istringstream ist(buf.get());
-
-    prop.loadProperties(ist, separator, false);
-    status = prop.getValue("Status", -1);
-    if (status < 0) {
+    // set the version to a value that will never be used; if
+    // replication is successful, we then bump up the counter.
+    if (gChunkManager.AllocChunk(mFileId, mChunkId, 0, true) < 0) {
         Terminate();
         return -1;
     }
 
-    mChunkSize = prop.getValue("Size", (long long) 0);
-
-    // allocate a file to hold the chunk
-    if (gChunkManager.AllocChunk(mFileId, mChunkId, mChunkVersion, true) < 0) {
-        Terminate();
-        return -1;
-    }
+    Read();
     return 0;
 }
 
 void
 Replicator::Read()
 {
-    ostringstream os;
     ReplicatorPtr self = shared_from_this();
+
+#ifdef DEBUG
+    verifyExecutingOnEventProcessor();
+#endif
 
     if (mOffset >= (off_t) mChunkSize) {
         mDone = true;
@@ -186,111 +128,38 @@ Replicator::Read()
         return;
     }
 
-    mReadOp.seq = NextSeq();
+    mReadOp.seq = mPeer->NextSeqnum();
     mReadOp.status = 0;
     mReadOp.offset = mOffset;
     // read an MB 
     mReadOp.numBytes = 1 << 20;
-    mReadOp.Request(os);
-    mNetConnection->Write(os.str().c_str(), os.str().length());
+    mPeer->Enqueue(&mReadOp);
     
-    SET_HANDLER(this, &Replicator::HandleRead);
-    return;
+    SET_HANDLER(this, &Replicator::HandleReadDone);
 }
 
 int
-Replicator::HandleRead(int code, void *data)
+Replicator::HandleReadDone(int code, void *data)
 {
-    IOBuffer *iobuf;
-    int msgLen;
-    size_t numBytes;
-    ReplicatorPtr self = shared_from_this();
 
-    switch (code) {
-    case EVENT_NET_READ:
-	// We read something from the network.  Run the RPC that
-	// came in.
-	iobuf = (IOBuffer *) data;
-	if (IsMsgAvail(iobuf, &msgLen)) {
-	    if (IsValidReadResponse(iobuf, msgLen, numBytes)) {
-                // get rid of the header
-                iobuf->Consume(msgLen);
-                Write(iobuf, numBytes);
-            }
-	}
-	break;
+#ifdef DEBUG
+    verifyExecutingOnEventProcessor();
+#endif
 
-    case EVENT_NET_WROTE:
-	break;
-
-    case EVENT_NET_ERROR:
-	// KFS_LOG_VA_DEBUG("Closing connection");
-
-	if (mNetConnection)
-	    mNetConnection->Close();
-
+    if (mReadOp.status < 0) {
         Terminate();
-	break;
-
-    default:
-	assert(!"Unknown event");
-	break;
-    }
-    return 0;
-}
-
-bool
-Replicator::IsValidReadResponse(IOBuffer *iobuf, int msgLen, size_t &numBytes)
-{
-    const char separator = ':';
-    scoped_array<char> buf(new char[msgLen + 1]);
-    Properties prop;
-    kfsSeq_t seqNum;
-    int status;
-    int64_t nAvail;
-
-    iobuf->CopyOut(buf.get(), msgLen);
-    buf[msgLen] = '\0';
-
-    istringstream ist(buf.get());
-
-    prop.loadProperties(ist, separator, false);
-    seqNum = prop.getValue("Cseq", (kfsSeq_t) -1);
-    status = prop.getValue("Status", -1);
-    numBytes = prop.getValue("Content-length", (long long) 0);
-
-    if (status < 0) {
-        Terminate();
-        return false;
+        return 0;
     }
 
-    // if we don't have all the data for the write, hold on...
-    nAvail = iobuf->BytesConsumable() - msgLen;        
-    if (nAvail < (int64_t) numBytes) {
-        // we couldn't process the command...so, wait
-        return false;
-    }
-
-    return true;
-}
-
-void
-Replicator::Write(IOBuffer *iobuf, int numBytes)
-{
-    if (numBytes == 0) {
-        mDone = true;
-        Terminate();
-        return;
-    }
-        
     delete mWriteOp.dataBuf;
     
     mWriteOp.Reset();
 
     mWriteOp.dataBuf = new IOBuffer();
-    mWriteOp.dataBuf->Move(iobuf, numBytes);
+    mWriteOp.numBytes = mReadOp.dataBuf->BytesConsumable();
+    mWriteOp.dataBuf->Move(mReadOp.dataBuf, mWriteOp.numBytes);
     mWriteOp.offset = mOffset;
-    mWriteOp.numBytes = numBytes;
+    mWriteOp.isFromReReplication = true;
 
     // align the writes to checksum boundaries
     if ((mWriteOp.numBytes >= CHECKSUM_BLOCKSIZE) &&
@@ -298,21 +167,26 @@ Replicator::Write(IOBuffer *iobuf, int numBytes)
         // round-down so to speak; whatever is left will be picked up by the next read
         mWriteOp.numBytes = (mWriteOp.numBytes / CHECKSUM_BLOCKSIZE) * CHECKSUM_BLOCKSIZE;
 
-    SET_HANDLER(this, &Replicator::HandleWrite);
+    SET_HANDLER(this, &Replicator::HandleWriteDone);
 
     if (gChunkManager.WriteChunk(&mWriteOp) < 0) {
         // abort everything
         Terminate();
+        return -1;
     }
-    
+    return 0;
 }
 
 int
-Replicator::HandleWrite(int code, void *data)
+Replicator::HandleWriteDone(int code, void *data)
 {
     ReplicatorPtr self = shared_from_this();
 
-    assert(code == EVENT_CMD_DONE);
+#ifdef DEBUG
+    verifyExecutingOnEventProcessor();
+#endif
+
+    assert((code == EVENT_CMD_DONE) || (code == EVENT_DISK_WROTE));
 
     if (mWriteOp.status < 0) {
         Terminate();
@@ -321,10 +195,6 @@ Replicator::HandleWrite(int code, void *data)
 
     mOffset += mWriteOp.numBytesIO;
 
-    if (!mNetConnection->IsGood()) {
-        Terminate();
-        return 0;
-    }
     Read();
     return 0;
 }
@@ -332,15 +202,40 @@ Replicator::HandleWrite(int code, void *data)
 void
 Replicator::Terminate()
 {
+#ifdef DEBUG
+    verifyExecutingOnEventProcessor();
+#endif
+
     if (mDone) {
         KFS_LOG_VA_INFO("Replication for %ld finished", mChunkId);
+
+        // now that replication is all done, set the version appropriately
+        gChunkManager.ChangeChunkVers(mFileId, mChunkId, mChunkVersion);
+
+        SET_HANDLER(this, &Replicator::HandleReplicationDone);        
         gChunkManager.ReplicationDone(mChunkId);
-        mOwner->status = 0;
-    } else {
-        KFS_LOG_VA_INFO("Replication for %ld failed...cleaning up", mChunkId);
-        gChunkManager.DeleteChunk(mChunkId);
-        mOwner->status = -1;
-    }
+
+        int res = gChunkManager.WriteChunkMetadata(mChunkId, &mWriteOp);
+        if (res == 0)
+            return;
+    } 
+      
+    KFS_LOG_VA_INFO("Replication for %ld failed...cleaning up", mChunkId);
+    gChunkManager.DeleteChunk(mChunkId);
+    mOwner->status = -1;
     // Notify the owner of completion
     mOwner->HandleEvent(EVENT_CMD_DONE, NULL);
 }
+
+// logging of the chunk meta data finished; we are all done
+int
+Replicator::HandleReplicationDone(int code, void *data)
+{
+    mOwner->status = 0;    
+    // Notify the owner of completion
+    mOwner->HandleEvent(EVENT_CMD_DONE, NULL);
+    return 0;
+}
+
+
+

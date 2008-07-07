@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/06
-// Author: Sriram Rao (Kosmix Corp.)
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -98,6 +99,87 @@ namespace KFS
 		std::vector<LeaseInfo> chunkLeases;
 	};
 
+	// To support rack-aware placement, we need an estimate of how much
+	// space is available on each given rack.  Once the set of candidate
+	// racks are ordered, we walk down the sorted list to pick the
+	// desired # of servers.  For ordering purposes, we track how much space
+	// each machine on the rack exports and how much space we have parceled
+	// out; this gives us an estimate of availble space (we are
+	// over-counting because the space we parcel out may not be fully used).
+	class RackInfo {
+		uint32_t mRackId;
+		uint64_t mTotalSpace;
+		uint64_t mAllocSpace;
+		// set of servers on this rack
+		std::vector<ChunkServerPtr> mServers;
+	public:
+		RackInfo(int id) : mRackId(id), mTotalSpace(0), mAllocSpace(0) { }
+
+		inline uint32_t id() const {
+			return mRackId;
+		}
+		void clear() {
+			mTotalSpace = mAllocSpace = 0;
+		}
+		void addServer(ChunkServerPtr &s) {
+			mTotalSpace += s->GetTotalSpace();
+			mAllocSpace += s->GetUsedSpace();
+			mServers.push_back(s);
+		}
+		void removeServer(ChunkServer *server) {
+			std::vector <ChunkServerPtr>::iterator iter;
+			
+			iter = find_if(mServers.begin(), mServers.end(),
+					ChunkServerMatcher(server));
+			if (iter == mServers.end())
+				return;
+
+			mTotalSpace -= server->GetTotalSpace();
+			mAllocSpace -= server->GetUsedSpace();
+			mServers.erase(iter);
+		}
+		void computeSpace() {
+			clear();
+			for(std::vector<ChunkServerPtr>::iterator iter = mServers.begin();
+				iter != mServers.end(); iter++) {
+				ChunkServerPtr s = *iter;
+				mTotalSpace += s->GetTotalSpace();
+				mAllocSpace += s->GetUsedSpace();
+			}
+		}
+		const std::vector<ChunkServerPtr> &getServers() {
+			return mServers;
+		}
+
+		uint64_t availableSpace() const {
+			if (mTotalSpace < mAllocSpace)
+				// paranoia...
+				return 0;
+			return mTotalSpace - mAllocSpace;
+		}
+		// want to sort in decreasing order so that racks with more
+		// space are at the head of list (and so, a node from them will
+		// get chosen).
+		bool operator < (const RackInfo &other) const {
+			uint64_t mine;
+
+			mine = availableSpace();
+			if (mine == 0)
+				return false;
+			return mine < other.availableSpace();
+		}
+	};
+
+	// Functor to enable matching of a rack-id with a RackInfo
+	class RackMatcher {
+		uint32_t id;
+	public:
+		RackMatcher(uint32_t rackId) : id(rackId) { }
+		bool operator()(const RackInfo &rack) const {
+			return rack.id() == id;
+		}
+	};
+
 	// chunkid to server(s) map
 	typedef std::map <chunkId_t, ChunkPlacementInfo > CSMap;
 	typedef std::map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
@@ -146,6 +228,8 @@ namespace KFS
                 /// get to the data.
                 /// @param[in] server  The server that is down
 		void ServerDown(ChunkServer *server);
+
+		int RetireServer(const ServerLocation &loc);
 
                 /// Allocate space to hold a chunk on some
                 /// chunkserver.
@@ -254,7 +338,7 @@ namespace KFS
 		/// of a new replica.
 		/// @param[in] req  The op that we sent to a chunk server asking
 		/// it to do the replication.
-		void ChunkReplicationDone(const MetaChunkReplicate *req);
+		void ChunkReplicationDone(MetaChunkReplicate *req);
 
 		/// Degree of replication for chunk has changed.  When the replication
 		/// checker runs, have it check the status for this chunk.
@@ -262,10 +346,23 @@ namespace KFS
 		///
 		void ChangeChunkReplication(chunkId_t chunkId);
 
+		/// Get all the fid's for which there is an open lease (read/write).
+		/// This is useful for reporting purposes.
+		/// @param[out] openForRead, openForWrite: the pathnames of files
+		/// that are open for reading/writing respectively
+		void GetOpenFiles(std::string &openForRead, std::string &openForWrite);
 
 		void InitRecoveryStartTime()
 		{
 			mRecoveryStartTime = time(0);
+		}
+
+		void SetMinChunkserversToExitRecovery(uint32_t n) {
+			mMinChunkserversToExitRecovery = n;
+		}
+
+		void ToggleRebalancing(bool v) {
+			mIsRebalancingEnabled = v;
 		}
 
         private:
@@ -275,6 +372,16 @@ namespace KFS
 
 		/// A counter to track the # of ongoing chunk replications
 		int mNumOngoingReplications;
+
+
+		/// A switch to toggle rebalancing: if the system is under load,
+		/// we'd like to turn off rebalancing.  We can enable it a
+		/// suitable time.
+		bool mIsRebalancingEnabled;
+
+		/// On each iteration, we try to rebalance some # of blocks;
+		/// this counter tracks the last chunk we checked
+		kfsChunkId_t mLastChunkRebalanced;
 
 		/// After a crash, track the recovery start time.  For a timer
 		/// period that equals the length of lease interval, we only grant
@@ -287,13 +394,17 @@ namespace KFS
 		/// Periodically clean out dead leases
 		LeaseCleaner mLeaseCleaner;
 
-
 		/// Similar to the lease cleaner: periodically check if there are
 		/// sufficient copies of each chunk.
 		ChunkReplicator mChunkReplicator;
 
+		uint32_t mMinChunkserversToExitRecovery;
+
                 /// List of connected chunk servers.
                 std::vector <ChunkServerPtr> mChunkServers;
+
+		/// State about how each rack (such as, servers/space etc)
+		std::vector<RackInfo> mRacks;
 
                 /// Mapping from a chunk to its location(s).
                 CSMap mChunkToServerMap;
@@ -306,6 +417,17 @@ namespace KFS
 		Counter *mTotalReplicationStats;
 		/// Track the # of replication ops that failed
 		Counter *mFailedReplicationStats;
+		/// Track the # of stale chunks we have seen so far
+		Counter *mStaleChunkCount;
+
+		/// Find a set of racks to place a chunk on; the racks are
+		/// ordered by space.
+		void FindCandidateRacks(std::vector<int> &result);
+
+		/// Find a set of racks to place a chunk on; the racks are
+		/// ordered by space.  The set excludes defines the set of racks
+		/// that should be excluded from consideration.
+		void FindCandidateRacks(std::vector<int> &result, const std::set<int> &excludes);
 
 		/// Helper function to generate candidate servers
 		/// for hosting a chunk.  The list of servers returned is
@@ -313,8 +435,11 @@ namespace KFS
 		/// @param[out] result  The set of available servers
 		/// @param[in] excludes  The set of servers to exclude from
 		///    candidate generation.
+		/// @param[in] rackId   The rack to restrict the candidate
+		/// selection to; if rackId = -1, then all servers are fair game
 		void FindCandidateServers(std::vector<ChunkServerPtr> &result,
-					const std::vector<ChunkServerPtr> &excludes);
+					const std::vector<ChunkServerPtr> &excludes, 
+					int rackId = -1);
 
 		/// Helper function to generate candidate servers from
 		/// the specified set of sources for hosting a chunk.  
@@ -323,9 +448,12 @@ namespace KFS
 		/// @param[out] result  The set of available servers
 		/// @param[in] sources  The set of possible source servers 
 		/// @param[in] excludes  The set of servers to exclude from
+		/// @param[in] rackId   The rack to restrict the candidate
+		/// selection to; if rackId = -1, then all servers are fair game
 		void FindCandidateServers(std::vector<ChunkServerPtr> &result,
 					const std::vector<ChunkServerPtr> &sources,
-					const std::vector<ChunkServerPtr> &excludes);
+					const std::vector<ChunkServerPtr> &excludes,
+					int rackId = -1);
 
 		/// Helper function that takes a set of servers and sorts
 		/// them by space utilization.  The list of servers returned is
@@ -352,8 +480,18 @@ namespace KFS
 		/// @param[in] chunkId   The id of the chunk which we are checking
 		/// @param[in] clli  The lease/location information about the chunk.
 		/// @param[in] extraReplicas  The target # of additional replicas for the chunk
-		void ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
-				int extraReplicas);
+		/// @param[in] candidates   The set of servers on which the additional replicas 
+		/// 				should be stored
+		/// @retval  The # of actual replications triggered
+		int ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
+				uint32_t extraReplicas);
+		int ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
+				uint32_t extraReplicas, const std::vector<ChunkServerPtr> &candidates);
+
+		/// The server has finished re-replicating a chunk.  If there is more
+		/// re-replication to be done, send it the server's way.
+		/// @param[in] server  The server to which re-replication work should be sent
+		void FindReplicationWorkForServer(ChunkServerPtr &server);
 
 		/// There are more replicas of a chunk than the requested amount.  So,
 		/// delete the extra replicas and reclaim space.  When deleting the addtional
@@ -373,17 +511,33 @@ namespace KFS
 		bool IsChunkHostedOnServer(const vector<ChunkServerPtr> &hosters,
 						const ChunkServerPtr &server);
 
+		/// Periodically, update our estimate of how much space is
+		/// used/available in each rack.
+		void UpdateRackSpaceUsageCounts();
+
 		/// Periodically, rebalance servers by moving chunks around from
 		/// "over utilized" servers to "under utilized" servers.
 		void RebalanceServers();
+		void FindIntraRackRebalanceCandidates(vector<ChunkServerPtr> &candidates,
+				const vector<ChunkServerPtr> &nonloadedServers,
+				const ChunkPlacementInfo &clli);
+
+		void FindInterRackRebalanceCandidate(ChunkServerPtr &candidate,
+				const vector<ChunkServerPtr> &nonloadedServers,
+				const ChunkPlacementInfo &clli);
+
 
 		/// Return true if c is a server in mChunkServers[].
 		bool ValidServer(ChunkServer *c);
 
 		/// For a time period that corresponds to the length of a lease interval,
 		/// we are in recovery after a restart.
+		/// Also, if the # of chunkservers that are connected to us is
+		/// less than some threshold, we are in recovery mode.
 		bool InRecovery()
 		{
+			if (mChunkServers.size() < mMinChunkserversToExitRecovery)
+				return true;
 			time_t now = time(0);
 			return now - mRecoveryStartTime <= 
 				KFS::LEASE_INTERVAL_SECS;

@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/20
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -32,9 +33,9 @@
 #include <string>
 
 #include "libkfsIO/ITimeout.h"
-#include "libkfsIO/Chunk.h"
 #include "libkfsIO/NetManager.h"
 #include "KfsOps.h"
+#include "Chunk.h"
 
 #include "meta/queue.h"
 #include "meta/thread.h"
@@ -72,14 +73,26 @@ public:
     /// been logged.  Processing for the logged requests resumes.
     void Dispatch();
 
+    /// Starting with V2 of the chunk meta file, the checkpoint only
+    /// contains a version number.  This is used to detect if we need
+    /// to upgrade.
+    /// @param[in] op  WHen non-null, the checkpoint op that contains data to be
+    /// written out.
+    void Checkpoint(KfsOp *op);
 
     /// Restore state from checkpoint/log after a shutdown
     void Restore();
 
+    int GetVersionFromCkpt();
+
+    int GetLoggerVersionNum() const {
+        return KFS_LOG_VERSION;
+    }
 
 private:
     /// Version # to be written out in the ckpt file
-    static const int KFS_VERSION = 1;
+    static const int KFS_LOG_VERSION = 2;
+    static const int KFS_LOG_VERSION_V1 = 1;
 
     /// The path to the directory for writing out logs
     std::string mLogDir;
@@ -99,10 +112,6 @@ private:
     /// Timer object to pull out logged requests and dispatch them
     LoggerTimeoutImpl *mLoggerTimeoutImpl;
 
-    /// Write out a checkpoint and then rotate the logs.
-    /// @param[in] op  The checkpoint op that contains data to be
-    /// written out.
-    void Checkpoint(KfsOp *op);
 
     /// Rotate the logs whenever the system takes a checkpoint
     void RotateLog();
@@ -129,7 +138,10 @@ private:
 
     /// Replay the log after a dirty shutdown
     void ReplayLog();
-
+    
+    /// parse the line to get the version #
+    int GetCkptVersion(const char *versionLine);
+    int GetLogVersion(const char *versionLine);
 };
 
 /// A Timeout interface object for pulling out the logged requests and

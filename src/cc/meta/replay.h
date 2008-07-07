@@ -5,7 +5,8 @@
  * \brief log replay definitions
  * \author Blake Lewis (Kosmix Corp.)
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -42,6 +43,8 @@ public:
 	void openlog(const string &p);	//!< open the log file for replay
 	int playlog();			//!< read and apply its contents
 	int logno() { return number; }
+	int playAllLogs();		//!< starting from log for logno(),
+					//!< replay whatever logs we have in the logdir.
 };
 
 extern Replay replayer;

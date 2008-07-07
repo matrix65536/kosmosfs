@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/23
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -28,6 +29,7 @@
 #include "ChunkManager.h"
 #include "ChunkServer.h"
 #include "Utils.h"
+#include "KfsOps.h"
 
 #include <string>
 #include <sstream>
@@ -35,10 +37,16 @@ using std::string;
 using std::ostringstream;
 
 #include "common/log.h"
+#include "libkfsIO/Globals.h"
+
 #include <boost/scoped_array.hpp>
 using boost::scoped_array;
 
 using namespace KFS;
+using namespace KFS::libkfsio;
+
+// each op---read/write uses say 64K mem; so, 3000 * 64 = ~192MB
+int gMaxOutstandingOps = 10000;
 
 ClientSM::ClientSM(NetConnectionPtr &conn) 
 {
@@ -70,13 +78,20 @@ ClientSM::SendResponse(KfsOp *op)
     ostringstream os;
     ReadOp *rop;
     string s = op->Show();
+    int len;
 
+#ifdef DEBUG
+    verifyExecutingOnNetProcessor();
+#endif    
     op->Response(os);
 
     KFS_LOG_VA_DEBUG("Command %s: Response status: %d\n", 
                      s.c_str(), op->status);
 
-    mNetConnection->Write(os.str().c_str(), os.str().length());
+    len = os.str().length();
+    if (len > 0)
+        mNetConnection->Write(os.str().c_str(), len);
+
     if (op->op == CMD_READ) {
         // need to send out the data read
         rop = static_cast<ReadOp *> (op);
@@ -86,6 +101,10 @@ ClientSM::SendResponse(KfsOp *op)
             assert(rop->dataBuf->BytesConsumable() == rop->status);
             mNetConnection->Write(rop->dataBuf, rop->numBytesIO);
         }
+    } else if (op->op == CMD_GET_CHUNK_METADATA) {
+        GetChunkMetadataOp *gcm = static_cast<GetChunkMetadataOp *>(op);
+        if (op->status >= 0)
+            mNetConnection->Write(gcm->dataBuf, gcm->numBytesIO);            
     }
 }
 
@@ -103,6 +122,10 @@ ClientSM::HandleRequest(int code, void *data)
     IOBuffer *iobuf;
     KfsOp *op;
     int cmdLen;
+
+#ifdef DEBUG
+    verifyExecutingOnNetProcessor();
+#endif    
 
     switch (code) {
     case EVENT_NET_READ:
@@ -123,11 +146,15 @@ ClientSM::HandleRequest(int code, void *data)
 	break;
 
     case EVENT_CMD_DONE:
-	// An op finished execution.  Send a response back
+	// An op finished execution.  Send response back in FIFO
+        gChunkServer.OpFinished();
+        if (gChunkServer.GetNumOps() < gMaxOutstandingOps / 2) {
+            globals().netManager.ChangeOverloadState(false);            
+        }
+            
 	op = (KfsOp *) data;
 	op->done = true;
-	if (op != mOps.front())
-	    break;
+        assert(!mOps.empty());
 	while (!mOps.empty()) {
 	    op = mOps.front();
 	    if (!op->done)
@@ -137,6 +164,7 @@ ClientSM::HandleRequest(int code, void *data)
 	    mOps.pop_front();
 	    delete op;
 	}
+        mNetConnection->StartFlush();
 	break;
 
     case EVENT_NET_ERROR:
@@ -172,8 +200,16 @@ ClientSM::HandleTerminate(int code, void *data)
 {
     KfsOp *op;
 
+#ifdef DEBUG
+    verifyExecutingOnNetProcessor();
+#endif    
+
     switch (code) {
     case EVENT_CMD_DONE:
+        gChunkServer.OpFinished();
+        if (gChunkServer.GetNumOps() < gMaxOutstandingOps / 2) {
+            globals().netManager.ChangeOverloadState(false);            
+        }
 	// An op finished execution.  Send a response back
 	op = (KfsOp *) data;
 	op->done = true;
@@ -245,7 +281,7 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
         nAvail = wop->dataBuf->BytesConsumable();
         // KFS_LOG_VA_DEBUG("Got command: %s", buf.get());
 
-        KFS_LOG_VA_DEBUG("# of bytes avail for write: %lu", nAvail);
+        // KFS_LOG_VA_DEBUG("# of bytes avail for write: %lu", nAvail);
     } else {
         string s = op->Show();
 
@@ -257,7 +293,12 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
     mOps.push_back(op);
 
     op->clnt = this;
-    op->Execute();
-    
+    // op->Execute();
+    gChunkServer.OpInserted();
+    if (gChunkServer.GetNumOps() > gMaxOutstandingOps) {
+        globals().netManager.ChangeOverloadState(true);
+    }
+    SubmitOp(op);
+
     return true;
 }

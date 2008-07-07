@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/09
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -42,8 +43,9 @@ static const kfsChunkId_t chunkIdForCleanup = 0;
 
 LeaseClerk::LeaseClerk()
 {
+    mLastLeaseCheckTime = time(0);
     SET_HANDLER(this, &LeaseClerk::HandleEvent);
-    RegisterLease(chunkIdForCleanup, 0);
+    // RegisterLease(chunkIdForCleanup, 0);
 }
 
 void
@@ -56,17 +58,20 @@ LeaseClerk::RegisterLease(kfsChunkId_t chunkId, int64_t leaseId)
 
     if (iter != mLeases.end()) {
         lease = iter->second;
-        lease.timer->Cancel();
+        // lease.timer->Cancel();
         mLeases.erase(iter);
     }
 
     lease.leaseId = leaseId;
     lease.expires = now + LEASE_INTERVAL_SECS;
     lease.lastWriteTime = now;
+    lease.leaseRenewSent = false;
+    /*
     lease.timer.reset(new Event(this, (void *) chunkId,
                                 LEASE_RENEW_INTERVAL_MSECS, false));
+    */
     mLeases[chunkId] = lease;
-    globals().eventManager.Schedule(lease.timer, LEASE_RENEW_INTERVAL_MSECS);
+    // globals().eventManager.Schedule(lease.timer, LEASE_RENEW_INTERVAL_MSECS);
     // Dont' print msgs for lease cleanup events.
     if (chunkId != 0)
         KFS_LOG_VA_DEBUG("Registered lease: chunk=%ld, lease=%ld",
@@ -132,8 +137,9 @@ LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
     }
     
     lease.expires = now + LEASE_INTERVAL_SECS;
+    lease.leaseRenewSent = false;
     mLeases[chunkId] = lease;
-    globals().eventManager.Schedule(lease.timer, LEASE_RENEW_INTERVAL_MSECS);
+    //globals().eventManager.Schedule(lease.timer, LEASE_RENEW_INTERVAL_MSECS);
 }
 
 int
@@ -144,6 +150,10 @@ LeaseClerk::HandleEvent(int code, void *data)
     LeaseRenewOp *op;
     kfsChunkId_t chunkId;
     time_t now = time(0);
+
+#ifdef DEBUG
+    verifyExecutingOnEventProcessor();
+#endif
 
     switch(code) {
     case EVENT_CMD_DONE:
@@ -168,7 +178,7 @@ LeaseClerk::HandleEvent(int code, void *data)
 
 	if (chunkId == 0) {
 	    CleanupExpiredLeases();
-	     LeaseRenewed(chunkIdForCleanup);
+            LeaseRenewed(chunkIdForCleanup);
 	    return 0;
 	}
 	// Renew the lease if a write is pending or a write
@@ -183,7 +193,7 @@ LeaseClerk::HandleEvent(int code, void *data)
 	    chunkId, lease.leaseId);
 
 	    op->clnt = this;
-	    gMetaServerSM.SubmitOp(op);
+	    gMetaServerSM.EnqueueOp(op);
 	} else {
 	    KFS_LOG_VA_DEBUG("not renewing lease for: chunk=%ld, lease=%ld",
 	    chunkId, lease.leaseId);
@@ -214,4 +224,47 @@ LeaseClerk::CleanupExpiredLeases()
         } else
             ++curr;
     }
+}
+
+class LeaseRenewer {
+    LeaseClerk *lc;
+    time_t now;
+public:
+    LeaseRenewer(LeaseClerk *l, time_t n) : lc(l), now(n) { }
+    void operator()(std::tr1::unordered_map <kfsChunkId_t, LeaseInfo_t>::value_type &v) {
+        kfsChunkId_t chunkId = v.first;
+        LeaseInfo_t lease = v.second;
+        
+        if ((lease.expires - now > LeaseClerk::LEASE_EXPIRE_WINDOW_SECS) || 
+            (lease.leaseRenewSent)) {
+            // if the lease is valid for a while or a lease renew is in flight, move on
+            return;
+        }
+	// Renew the lease if a write is pending or a write
+	// occured when we had a valid lease.
+	if ((gChunkManager.IsWritePending(chunkId)) ||
+	    (now - lease.lastWriteTime <= LEASE_INTERVAL_SECS)) {
+	    // The seq # is something that the metaserverSM will fill
+	    LeaseRenewOp *op = new LeaseRenewOp(-1, chunkId, lease.leaseId,
+			"WRITE_LEASE");
+
+	    KFS_LOG_VA_DEBUG("renewing lease for: chunk=%ld, lease=%ld, lease valid=%d secs",
+                             chunkId, lease.leaseId, lease.expires - now);
+
+	    op->clnt = lc;
+            v.second.leaseRenewSent = true;
+	    gMetaServerSM.EnqueueOp(op);
+        }
+    }
+};
+
+void
+LeaseClerk::Timeout()
+{
+    time_t now = time(0);
+    if (now - mLastLeaseCheckTime < 1) 
+        return;
+    // once per second, check the state of the leases
+    CleanupExpiredLeases();
+    for_each(mLeases.begin(), mLeases.end(), LeaseRenewer(this, now));
 }

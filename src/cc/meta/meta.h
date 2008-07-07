@@ -5,7 +5,8 @@
  * \brief Base class and derived classes for KFS metadata objects.
  * \author Blake Lewis (Kosmix Corp.)
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -129,15 +130,15 @@ public:
 class MetaFattr: public Meta {
 public:
 	FileType type;		//!< file or directory
+	int16_t numReplicas;    //!< Desired number of replicas for a file
 	struct timeval mtime;	//!< modification time
 	struct timeval ctime;	//!< attribute change time
 	struct timeval crtime;	//!< creation time
 	long long chunkcount;	//!< number of constituent chunks
-	int16_t numReplicas;    //!< Desired number of replicas for a file
 
 	MetaFattr(FileType t, fid_t id, int16_t n):
-		Meta(KFS_FATTR, id), type(t), chunkcount(0),
-		numReplicas(n)
+		Meta(KFS_FATTR, id), type(t), 
+		numReplicas(n), chunkcount(0)
 	{
 		int UNUSED_ATTR s = gettimeofday(&crtime, NULL);
 		assert(s == 0);
@@ -147,9 +148,8 @@ public:
 	MetaFattr(FileType t, fid_t id, struct timeval mt,
 		struct timeval ct, struct timeval crt,
 		long long c, int16_t n): Meta(KFS_FATTR, id),
-				 type(t), mtime(mt), ctime(ct),
-				 crtime(crt), chunkcount(c),
-				 numReplicas(n) { }
+				 type(t), numReplicas(n), mtime(mt), ctime(ct),
+				 crtime(crt), chunkcount(c) { }
 
 	MetaFattr(): Meta(KFS_FATTR, 0), type(KFS_NONE) { }
 

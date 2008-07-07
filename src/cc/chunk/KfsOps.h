@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/05/26
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -32,6 +33,7 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <sys/time.h>
 
 namespace KFS
 {
@@ -43,9 +45,8 @@ struct KfsOp;
 #include "libkfsIO/IOBuffer.h"
 #include "libkfsIO/DiskConnection.h"
 
-#include "libkfsIO/Chunk.h"
-
 #include "common/properties.h"
+#include "Chunk.h"
 #include "ClientSM.h"
 
 namespace KFS
@@ -61,6 +62,7 @@ enum KfsOp_t {
     CMD_CHANGE_CHUNK_VERS,
     CMD_HEARTBEAT,
     CMD_STALE_CHUNKS,
+    CMD_RETIRE,
     // Chunk server->Meta server ops
     CMD_META_HELLO,
     CMD_CORRUPT_CHUNK,
@@ -71,9 +73,17 @@ enum KfsOp_t {
     CMD_OPEN,
     CMD_CLOSE,
     CMD_READ,
+    CMD_WRITE_ID_ALLOC,
     CMD_WRITE_PREPARE,
+    CMD_WRITE_PREPARE_FWD,
     CMD_WRITE_SYNC,
     CMD_SIZE,
+    // when data is loaded KFS, we need a way to verify that what was
+    // copied in matches the source.  analogous to md5 model, client
+    // can issue this RPC and get the checksums stored for a chunk;
+    // the client can comptue checksum on input data and verify that
+    // they both match
+    CMD_GET_CHUNK_METADATA,
     // Chunkserver -> Chunkserver ops
     CMD_WRITE_COMMIT,
     // Monitoring ops
@@ -82,27 +92,45 @@ enum KfsOp_t {
     // Internally generated ops
     CMD_CHECKPOINT,
     CMD_WRITE,
+    CMD_WRITE_CHUNKMETA, // write out the chunk meta-data
+    CMD_READ_CHUNKMETA, // read out the chunk meta-data
+    // op sent by the network thread to event thread to kill a
+    // "RemoteSyncSM".
+    CMD_KILL_REMOTE_SYNC,
+    // this op is to periodically "kick" the event processor thread
+    CMD_TIMEOUT,
+    // op to signal the disk manager that some disk I/O has finished
+    CMD_DISKIO_COMPLETION,
     CMD_NCMDS
+};
+
+enum OpType_t {
+    OP_REQUEST,
+    OP_RESPONSE
 };
 
 struct KfsOp : public KfsCallbackObj {
     KfsOp_t op;
+    OpType_t type;
     kfsSeq_t   seq;
     int32_t   status;
     bool      cancelled;
     bool      done;
     KfsCallbackObj  *clnt;
+    // keep statistics
+    struct timeval startTime;
     KfsOp (KfsOp_t o, kfsSeq_t s, KfsCallbackObj *c = NULL) :
         op(o), seq(s), status(0), cancelled(false), done(false),
         clnt(c)
     {
         SET_HANDLER(this, &KfsOp::HandleDone);
+        gettimeofday(&startTime, NULL);
     }
     void Cancel() {
         cancelled = true;
     }
     // to allow dynamic-type-casting, make the destructor virtual
-    virtual ~KfsOp() { };
+    virtual ~KfsOp();
     virtual void Request(std::ostringstream &os) {
         // fill this method if the op requires a message to be sent to a server.
         (void) os;
@@ -132,13 +160,16 @@ struct AllocChunkOp : public KfsOp {
     int64_t chunkVersion; // input
     int64_t leaseId; // input
     AllocChunkOp(kfsSeq_t s) :
-        KfsOp(CMD_ALLOC_CHUNK, s)
+        KfsOp(CMD_ALLOC_CHUNK, s), leaseId(-1)
     {
         // All inputs will be parsed in
     }
     void Response(std::ostringstream &os);
     void Execute();
     void Log(std::ofstream &ofs);
+    // handlers for reading/writing out the chunk meta-data
+    int HandleChunkMetaReadDone(int code, void *data);
+    int HandleChunkMetaWriteDone(int code, void *data);
     std::string Show() const {
         std::ostringstream os;
 
@@ -159,6 +190,10 @@ struct ChangeChunkVersOp : public KfsOp {
     }
     void Execute();
     void Log(std::ofstream &ofs);
+    // handler for reading in the chunk meta-data
+    int HandleChunkMetaReadDone(int code, void *data);
+    // handler for writing out the chunk meta-data
+    int HandleChunkMetaWriteDone(int code, void *data);
     std::string Show() const {
         std::ostringstream os;
 
@@ -195,6 +230,10 @@ struct TruncateChunkOp : public KfsOp {
     }
     void Execute();
     void Log(std::ofstream &ofs);
+    // handler for reading in the chunk meta-data
+    int HandleChunkMetaReadDone(int code, void *data);
+    // handler for writing out the chunk meta-data
+    int HandleChunkMetaWriteDone(int code, void *data);
     std::string Show() const {
         std::ostringstream os;
 
@@ -234,6 +273,7 @@ struct ReplicateChunkOp : public KfsOp {
 struct HeartbeatOp : public KfsOp {
     int64_t totalSpace;
     int64_t usedSpace;
+    long numChunks;
     HeartbeatOp(kfsSeq_t s) :
         KfsOp(CMD_HEARTBEAT, s)
     {
@@ -262,6 +302,14 @@ struct StaleChunksOp : public KfsOp {
         
         os << "stale chunks: " << " # stale: " << numStaleChunks;
         return os.str();
+    }
+};
+
+struct RetireOp : public KfsOp {
+    RetireOp(kfsSeq_t s) : KfsOp(CMD_RETIRE, s) { }
+    void Execute();
+    std::string Show() const {
+        return "meta-server is telling us to retire";
     }
 };
 
@@ -300,60 +348,120 @@ struct CloseOp : public KfsOp {
 
 struct ReadOp;
 struct WriteOp;
+struct WriteSyncOp;
+struct WritePrepareFwdOp;
+
+struct WriteIdAllocOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    int64_t	 chunkVersion;
+    off_t 	 offset;   /* input */
+    size_t 	 numBytes; /* input */
+    int64_t      writeId; /* output */
+    std::string  writeIdStr; /* output */
+    uint32_t     numServers; /* input */
+    std::string  servers; /* input: set of servers on which to write */
+    WriteIdAllocOp *fwdedOp; /* if we did any fwd'ing, this is the op that tracks it */
+    WriteIdAllocOp(kfsSeq_t s) :
+        KfsOp(CMD_WRITE_ID_ALLOC, s), writeId(-1), fwdedOp(NULL)
+    {
+        SET_HANDLER(this, &WriteIdAllocOp::HandleDone);
+    }
+    
+    WriteIdAllocOp(kfsSeq_t s, const WriteIdAllocOp *other) :
+        KfsOp(CMD_WRITE_ID_ALLOC, s), chunkId(other->chunkId),
+        chunkVersion(other->chunkVersion), offset(other->offset),
+        numBytes(other->numBytes), writeId(-1), numServers(other->numServers),
+        servers(other->servers), fwdedOp(NULL) 
+    {
+        SET_HANDLER(this, &WriteIdAllocOp::HandleDone);
+    }
+
+    ~WriteIdAllocOp();
+
+    void Request(std::ostringstream &os);
+    void Response(std::ostringstream &os);
+    void Execute();
+
+    int ForwardToPeer(const ServerLocation &peer);
+    int HandlePeerReply(int code, void *data);
+
+    std::string Show() const {
+        std::ostringstream os;
+        
+        os << "write-id-alloc: seq = " << seq << " chunkId = " << chunkId 
+           << " chunkversion = " << chunkVersion;
+        return os.str();
+    }
+};
 
 struct WritePrepareOp : public KfsOp {
     kfsChunkId_t chunkId;
     int64_t	 chunkVersion;
     off_t 	 offset;   /* input */
     size_t 	 numBytes; /* input */
-    int64_t      writeId; /* output */
+    int64_t      writeId; /* value for the local server */
+    uint32_t     numServers; /* input */
+    uint32_t     checksum; /* input: as computed by the sender; 0 means sender didn't send */
+    std::string  servers; /* input: set of servers on which to write */
     IOBuffer *dataBuf; /* buffer with the data to be written */
+    WritePrepareFwdOp *writeFwdOp; /* op that tracks the data we
+                                      fwd'ed to a peer */
+    WriteOp *writeOp; /* the underlying write that is queued up locally */
+    uint32_t numDone; // if we did forwarding, we wait for
+                      // local/remote to be done; otherwise, we only
+                      // wait for local to be done
+
     WritePrepareOp(kfsSeq_t s) :
-        KfsOp(CMD_WRITE_PREPARE, s), writeId(-1), dataBuf(NULL) 
+        KfsOp(CMD_WRITE_PREPARE, s), writeId(-1), checksum(0), 
+        dataBuf(NULL), writeFwdOp(NULL), writeOp(NULL), numDone(0)
     {
         SET_HANDLER(this, &WritePrepareOp::HandleDone);
     }
-    ~WritePrepareOp() {
-        // on a successful prepapre, dataBuf should be moved to a write op.
-        assert((status != 0) || (dataBuf == NULL));
-
-        if (dataBuf != NULL)
-            delete dataBuf;
-    }
+    ~WritePrepareOp();
 
     void Response(std::ostringstream &os);
     void Execute();
+
+    int ForwardToPeer(const ServerLocation &peer, IOBuffer *data);
+    int HandleDone(int code, void *data);
+
     std::string Show() const {
         std::ostringstream os;
         
-        os << "write-prepare: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
+        os << "write-prepare: seq = " << seq << " chunkId = " << chunkId 
+           << " chunkversion = " << chunkVersion;
         os << " offset: " << offset << " numBytes: " << numBytes;
         return os.str();
     }
 };
 
-struct WriteCommitOp : public KfsOp {
-    kfsChunkId_t chunkId;
-    int64_t	 chunkVersion;
-    int64_t      writeId; /* input */
-    WriteOp	*writeOp; /* write Op that maps to writeId */
-    WriteCommitOp(kfsSeq_t s, kfsChunkId_t c = -1,
-                  int64_t v = -1, int64_t w = -1, KfsCallbackObj *owner = NULL) :
-        KfsOp(CMD_WRITE_COMMIT, s, owner), chunkId(c), chunkVersion(v),
-        writeId(w), writeOp(NULL) 
-    {  
-        SET_HANDLER(this, &WriteCommitOp::HandleDone);
+struct WritePrepareFwdOp : public KfsOp {
+    WritePrepareOp *owner;
+    ServerLocation location; /* for debugging purposes */
+    std::string  writeIdStr; /* input */
+    IOBuffer *dataBuf; /* buffer with the data to be written */
+    WritePrepareFwdOp(kfsSeq_t s, WritePrepareOp *o, IOBuffer *d, const ServerLocation &l) :
+        KfsOp(CMD_WRITE_PREPARE_FWD, s), owner(o), location(l), dataBuf(d)
+    {
+        SET_HANDLER(this, &WritePrepareFwdOp::HandleDone);
     }
-    ~WriteCommitOp();
+
+    ~WritePrepareFwdOp() {
+        if (dataBuf != NULL)
+            delete dataBuf;
+    }
 
     void Request(std::ostringstream &os);
-    void Response(std::ostringstream &os);
-    void Execute();
     int HandleDone(int code, void *data);
+
+    // nothing to do...we send the data to peer and wait. have a
+    // decl. to keep compiler happy
+    void Execute() { }
+
     std::string Show() const {
         std::ostringstream os;
         
-        os << "write-commit: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
+        os << "write-prepare-fwd: " << location.ToString() << ' ' << owner->Show();
         return os.str();
     }
 };
@@ -374,13 +482,25 @@ struct WriteOp : public KfsOp {
      * out data.  This buffer holds the data read in from disk.
     */
     ReadOp *rop;
+    /*
+     * The owning write prepare op
+     */
+    WritePrepareOp *wpop;
+    /*
+     * Should we wait for aio_sync() to finish before replying to
+     * upstream clients? By default, we don't
+     */
+    bool waitForSyncDone;
+    /* Set if the write was triggered due to re-replication */
+    bool isFromReReplication;
     int64_t      writeId;
     // time at which the write was enqueued at the ChunkManager
     time_t	 enqueueTime;
 
     WriteOp(kfsChunkId_t c, int64_t v) :
         KfsOp(CMD_WRITE, 0), chunkId(c), chunkVersion(v),
-        dataBuf(NULL), rop(NULL)
+        dataBuf(NULL), rop(NULL), wpop(NULL), waitForSyncDone(false),
+        isFromReReplication(false)
     {
         SET_HANDLER(this, &WriteOp::HandleWriteDone);
     }
@@ -389,7 +509,9 @@ struct WriteOp : public KfsOp {
             IOBuffer *b, int64_t id) :
         KfsOp(CMD_WRITE, s), chunkId(c), chunkVersion(v),
         offset(o), numBytes(n), numBytesIO(0),
-        dataBuf(b), chunkSize(0), rop(NULL), writeId(id) 
+        dataBuf(b), chunkSize(0), rop(NULL), wpop(NULL), 
+        waitForSyncDone(false), isFromReReplication(false),
+        writeId(id)
     {
         SET_HANDLER(this, &WriteOp::HandleWriteDone);
     }
@@ -404,6 +526,8 @@ struct WriteOp : public KfsOp {
     void Log(std::ofstream &ofs);
     int HandleWriteDone(int code, void *data);    
     int HandleSyncDone(int code, void *data);
+    int HandleLoggingDone(int code, void *data);
+    
     std::string Show() const {
         std::ostringstream os;
         
@@ -413,60 +537,100 @@ struct WriteOp : public KfsOp {
     }
 };
 
-struct RemoteWriteInfo {
-    ServerLocation location;
-    int64_t writeId;
-    // Trying to write a copy constructor that'll work for
-    // WriteCommitOp is too painful.  We need a copy constructor
-    // if we simply had "WriteCommitOp *wc": all the
-    // vector manipulations we do in WriteSyncOp need to copy the
-    // object.  Since the default copy constructor does the "wrong"
-    // thing, make write-commit-op a smart pointer.  Then, the default
-    // copy constructor does the "right" thing.
-    boost::shared_ptr<WriteCommitOp> wc;
-    RemoteWriteInfo() : writeId(-1) { }
-    std::string Show() const {
-        std::ostringstream os;
-        
-        os << " location= " << location.ToString() << " writeId = " << writeId;
-        return os.str();
-    }
-};
-
-class ShowRemoteWriteInfo {
-    std::ostringstream &os;
-public:
-    ShowRemoteWriteInfo(std::ostringstream &o) : os(o) { }
-    void operator() (const RemoteWriteInfo &r) {
-        os << r.Show() << ' ';
-    }
-};
-
 // sent by the client to force data to disk
 struct WriteSyncOp : public KfsOp {
     kfsChunkId_t chunkId;    
     int64_t chunkVersion;
-    std::vector<RemoteWriteInfo> remoteWriteInfo;
-    std::vector<RemoteWriteInfo>::size_type numDone;
+    int64_t writeId; /* corresponds to the local write */
+    uint32_t numServers;
+    std::string servers;
+    WriteSyncOp *fwdedOp;
+    WriteOp *writeOp; // the underlying write that needs to be pushed to disk
+    uint32_t numDone; // if we did forwarding, we wait for
+                      // local/remote to be done; otherwise, we only
+                      // wait for local to be done
+    bool writeMaster; // infer from the server list if we are the "master" for doing the writes
 
-    WriteSyncOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, int32_t n, 
-                const std::string &writeInfo);
+    WriteSyncOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
+        KfsOp(CMD_WRITE_SYNC, s), chunkId(c), chunkVersion(v), writeId(-1),
+        numServers(0), fwdedOp(NULL), writeOp(NULL), numDone(0), writeMaster(false)
+    { 
+        SET_HANDLER(this, &WriteSyncOp::HandleDone);        
+    }
+    ~WriteSyncOp();
 
+    void Request(std::ostringstream &os);
     void Response(std::ostringstream &os);
     void Execute();
-    // on a write sync, first do the write locally.  after that is
-    // done, send out requests to remote servers to do the write.
-    // after they finish, notify the client
-    int HandleLocalDone(int code, void *data);
+
+    int ForwardToPeer(const ServerLocation &peer);
+    int HandlePeerReply(int code, void *data);
     int HandleDone(int code, void *data);    
+
     std::string Show() const {
         std::ostringstream os;
         
         os << "write-sync: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
-        for_each(remoteWriteInfo.begin(), remoteWriteInfo.end(),
-                 ShowRemoteWriteInfo(os));
+        os << " write-id info: " << servers;
         return os.str();
     }
+};
+
+
+// OP for reading/writing out the meta-data associated with each chunk.  This
+// is an internally generated op (ops that generate this one are
+// allocate/write/truncate/change-chunk-vers). 
+struct WriteChunkMetaOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    DiskConnectionPtr diskConnection; /* disk connection used for writing data */
+    IOBuffer *dataBuf; /* buffer with the data to be written */
+
+    WriteChunkMetaOp(kfsChunkId_t c, KfsCallbackObj *o) : 
+        KfsOp(CMD_WRITE_CHUNKMETA, 0, o), chunkId(c), dataBuf(NULL)  
+    {
+        SET_HANDLER(this, &WriteChunkMetaOp::HandleDone);
+    }
+    ~WriteChunkMetaOp() {
+        delete dataBuf;
+    }
+    void Execute() { }
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "write-chunk-meta: chunkid = " << chunkId;
+        return os.str();
+
+    }
+    // Notify the op that is waiting for the write to finish that all
+    // is done
+    int HandleDone(int code, void *data) {
+        clnt->HandleEvent(EVENT_CMD_DONE, NULL);
+        delete this;
+        return 0;
+    }
+};
+
+struct ReadChunkMetaOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    DiskConnectionPtr diskConnection; /* disk connection used for reading data */
+
+    ReadChunkMetaOp(kfsChunkId_t c, KfsCallbackObj *o) : 
+        KfsOp(CMD_READ_CHUNKMETA, 0, o), chunkId(c)
+    {
+        SET_HANDLER(this, &ReadChunkMetaOp::HandleDone);
+    }
+
+    void Execute() { }
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "read-chunk-meta: chunkid = " << chunkId;
+        return os.str();
+
+    }
+    // Update internal data structures and then notify the waiting op
+    // that read of meta-data is done.
+    int HandleDone(int code, void *data);
 };
 
 struct ReadOp : public KfsOp {
@@ -477,20 +641,22 @@ struct ReadOp : public KfsOp {
     ssize_t	 numBytesIO; /* output: # of bytes actually read */
     DiskConnectionPtr diskConnection; /* disk connection used for reading data */
     IOBuffer *dataBuf; /* buffer with the data read */
+    uint32_t checksum; /* checksum over the data that is sent back to client */
     /*
      * for writes that require the associated checksum block to be
      * read in, store the pointer to the associated write op.
     */
     WriteOp *wop;
     ReadOp(kfsSeq_t s) :
-        KfsOp(CMD_READ, s), numBytesIO(0), dataBuf(NULL), wop(NULL)
+        KfsOp(CMD_READ, s), numBytesIO(0), dataBuf(NULL),
+        checksum(0), wop(NULL)
     {
         SET_HANDLER(this, &ReadOp::HandleDone);
     }
     ReadOp(WriteOp *w, off_t o, size_t n) :
         KfsOp(CMD_READ, w->seq), chunkId(w->chunkId),
         chunkVersion(w->chunkVersion), offset(o), numBytes(n),
-        numBytesIO(0), dataBuf(NULL), wop(w)
+        numBytesIO(0), dataBuf(NULL), checksum(0), wop(w)
     {
         clnt = w;
         SET_HANDLER(this, &ReadOp::HandleDone);
@@ -508,6 +674,10 @@ struct ReadOp : public KfsOp {
     void Response(std::ostringstream &os);
     void Execute();
     int HandleDone(int code, void *data);
+    // handler for reading in the chunk meta-data
+    int HandleChunkMetaReadDone(int code, void *data);
+    // handler for dealing with re-replication events
+    int HandleReplicatorDone(int code, void *data);
     std::string Show() const {
         std::ostringstream os;
         
@@ -534,6 +704,33 @@ struct SizeOp : public KfsOp {
         std::ostringstream os;
         
         os << "size: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
+        return os.str();
+    }
+    int HandleDone(int code, void *data);
+};
+
+struct GetChunkMetadataOp : public KfsOp {
+    kfsChunkId_t chunkId;  // input
+    IOBuffer *dataBuf; // buffer with the checksum info
+    size_t numBytesIO;
+    GetChunkMetadataOp(kfsSeq_t s) :
+        KfsOp(CMD_GET_CHUNK_METADATA, s), dataBuf(NULL), numBytesIO(0)
+    {
+
+    }
+    ~GetChunkMetadataOp() 
+    {
+        delete dataBuf;
+    }
+    void Execute();
+    // handler for reading in the chunk meta-data
+    int HandleChunkMetaReadDone(int code, void *data);
+
+    void Response(std::ostringstream &os);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "get-chunk-metadata: " << " chunkid = " << chunkId;
         return os.str();
     }
 };
@@ -607,13 +804,14 @@ struct LeaseRenewOp : public KfsOp {
 struct HelloMetaOp : public KfsOp {
     ServerLocation myLocation;
     std::string clusterKey;
+    int rackId;
     int64_t totalSpace;
     int64_t usedSpace;
     std::vector<ChunkInfo_t> chunks;
-    HelloMetaOp(kfsSeq_t s, ServerLocation &l, std::string &k) :
-        KfsOp(CMD_META_HELLO, s), myLocation(l), clusterKey(k) {
-    }
-    void Execute() { }
+    HelloMetaOp(kfsSeq_t s, ServerLocation &l, std::string &k, int r) :
+        KfsOp(CMD_META_HELLO, s), myLocation(l), 
+        clusterKey(k), rackId(r) {  }
+    void Execute();
     void Request(std::ostringstream &os);
     std::string Show() const {
         std::ostringstream os;
@@ -646,6 +844,31 @@ struct CorruptChunkOp : public KfsOp {
     }
 };
 
+struct TimeoutOp : public KfsOp {
+
+    TimeoutOp(kfsSeq_t s) :
+        KfsOp(CMD_TIMEOUT, s)
+    {
+
+    }
+    void Request(std::ostringstream &os) { }
+    void Execute();
+    std::string Show() const { return "timeout"; }
+};
+
+struct KillRemoteSyncOp : public KfsOp {
+
+    // pass in the remote sync SM that needs to be nuked
+    KillRemoteSyncOp(kfsSeq_t s, KfsCallbackObj *owner) :
+        KfsOp(CMD_KILL_REMOTE_SYNC, s, owner)
+    {
+
+    }
+    void Request(std::ostringstream &os) { }
+    void Execute();
+    std::string Show() const { return "kill remote sync"; }
+};
+
 // Helper functor that matches ops based on seq #
 
 class OpMatcher {
@@ -661,6 +884,9 @@ extern void InitParseHandlers();
 extern void RegisterCounters();
 
 extern int ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res);
+
+extern void SubmitOp(KfsOp *op);
+extern void SubmitOpResponse(KfsOp *op);
 
 }
 

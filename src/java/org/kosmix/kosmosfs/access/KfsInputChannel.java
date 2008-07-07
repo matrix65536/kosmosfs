@@ -3,9 +3,10 @@
  *
  * Created 2007/09/11
  *
- * @author: Sriram Rao (Kosmix Corp.)
+ * @author: Sriram Rao 
  *
- * Copyright 2007 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2007-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -40,25 +41,27 @@ public class KfsInputChannel implements ReadableByteChannel, Positionable
     private static final int DEFAULT_BUF_SIZE = 1 << 20;
     private ByteBuffer readBuffer;
     private int kfsFd = -1;
+    private long cPtr;
 
     private final static native
-    int read(int fd, ByteBuffer buf, int begin, int end);
+    int read(long cPtr, int fd, ByteBuffer buf, int begin, int end);
 
     private final static native
-    int close(int fd);
+    int close(long cPtr, int fd);
 
     private final static native
-    int seek(int fd, long offset);
+    int seek(long cPtr, int fd, long offset);
 
     private final static native
-    long tell(int fd);
+    long tell(long cPtr, int fd);
 
-    public KfsInputChannel(int fd) 
+    public KfsInputChannel(long ptr, int fd) 
     {
         readBuffer = ByteBuffer.allocateDirect(DEFAULT_BUF_SIZE);
         readBuffer.flip();
 
         kfsFd = fd;
+        cPtr = ptr;
     }
 
     public boolean isOpen()
@@ -127,7 +130,7 @@ public class KfsInputChannel implements ReadableByteChannel, Positionable
             throw new IllegalArgumentException("need direct buffer");
 
         int pos = buf.position();
-        int sz = read(kfsFd, buf, pos, buf.limit());
+        int sz = read(cPtr, kfsFd, buf, pos, buf.limit());
         if(sz < 0)
             throw new IOException("readDirect failed");
 
@@ -146,7 +149,7 @@ public class KfsInputChannel implements ReadableByteChannel, Positionable
         readBuffer.clear();
         readBuffer.flip();
 
-        return seek(kfsFd, offset);
+        return seek(cPtr, kfsFd, offset);
     }
 
     public long tell() throws IOException
@@ -154,7 +157,7 @@ public class KfsInputChannel implements ReadableByteChannel, Positionable
         if (kfsFd < 0) 
             throw new IOException("File closed");
 
-        return tell(kfsFd);
+        return tell(cPtr, kfsFd);
     }
 
     public void close() throws IOException
@@ -162,7 +165,7 @@ public class KfsInputChannel implements ReadableByteChannel, Positionable
         if (kfsFd < 0)
             return;
 
-        close(kfsFd);
+        close(cPtr, kfsFd);
         kfsFd = -1;
     }
 

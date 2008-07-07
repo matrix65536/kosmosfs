@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/12
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -29,7 +30,6 @@
 #define LIBKFSCLIENT_LEASECLERK_H
 
 #include "common/kfstypes.h"
-#include "libkfsIO/Chunk.h"
 #include "common/cxxutil.h"
 #include <tr1/unordered_map>
 

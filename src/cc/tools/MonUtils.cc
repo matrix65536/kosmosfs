@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/07/18
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -145,6 +146,25 @@ ChunkStatsOp::ParseResponse(const char *resp, int len)
     string respStr(resp, len);
 
     ParseResponseCommon(respStr, stats);
+}
+
+void 
+RetireChunkserverOp::Request(ostringstream &os)
+{
+    os << "RETIRE_CHUNKSERVER\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Chunk-server-name: " << chunkLoc.hostname << "\r\n";
+    os << "Chunk-server-port: " << chunkLoc.port << "\r\n\r\n";
+}
+
+void
+RetireChunkserverOp::ParseResponse(const char *resp, int len)
+{
+    string respStr(resp, len);
+    Properties prop;
+
+    ParseResponseCommon(respStr, prop);
 }
 
 int

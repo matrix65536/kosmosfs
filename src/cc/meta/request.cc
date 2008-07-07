@@ -3,9 +3,10 @@
  *
  * \file request.cc
  * \brief process queue of outstanding metadata requests
- * \author Blake Lewis and Sriram Rao (Kosmix Corp.)
+ * \author Blake Lewis and Sriram Rao 
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -61,6 +62,8 @@ static int parseHandlerGetlayout(Properties &prop, MetaRequest **r);
 static int parseHandlerAllocate(Properties &prop, MetaRequest **r);
 static int parseHandlerTruncate(Properties &prop, MetaRequest **r);
 static int parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r);
+static int parseHandlerRetireChunkserver(Properties &prop, MetaRequest **r);
+static int parseHandlerToggleRebalancing(Properties &prop, MetaRequest **r);
 
 static int parseHandlerLeaseAcquire(Properties &prop, MetaRequest **r);
 static int parseHandlerLeaseRenew(Properties &prop, MetaRequest **r);
@@ -70,6 +73,7 @@ static int parseHandlerHello(Properties &prop, MetaRequest **r);
 
 static int parseHandlerPing(Properties &prop, MetaRequest **r);
 static int parseHandlerStats(Properties &prop, MetaRequest **r);
+static int parseHandlerOpenFiles(Properties &prop, MetaRequest **r);
 
 /// command -> parsehandler map
 typedef map<string, ParseHandler> ParseHandlerMap;
@@ -85,6 +89,7 @@ OpCounterMap gCounters;
 
 // see the comments in setClusterKey()
 string gClusterKey;
+bool gWormMode = false;
 
 static bool
 file_exists(fid_t fid)
@@ -133,6 +138,8 @@ KFS::RegisterCounters()
 	AddCounter("Corrupt Chunk ", META_CHUNK_CORRUPT);
 	AddCounter("Chunkserver Hello ", META_HELLO);
 	AddCounter("Chunkserver Bye ", META_BYE);
+	AddCounter("Chunkserver Retire Start", META_RETIRE_CHUNKSERVER);
+	// AddCounter("Chunkserver Retire Done", META_CHUNK_RETIRE_DONE);
 	AddCounter("Replication Checker ", META_CHUNK_REPLICATION_CHECK);
 	AddCounter("Replication Done ", META_CHUNK_REPLICATE);
 }
@@ -158,7 +165,9 @@ UpdateCounter(MetaOp opName)
 void
 KFS::ChangeIncarnationNumber(MetaRequest *r)
 {
-	++chunkVersionInc;
+	if (chunkVersionInc < 1) 
+		// disable this bumping for now
+		++chunkVersionInc;
 	MetaChangeChunkVersionInc *ccvi = new MetaChangeChunkVersionInc(chunkVersionInc, r);
 
 	submit_request(ccvi);
@@ -173,6 +182,15 @@ void
 KFS::setClusterKey(const char *key)
 {
 	gClusterKey = key;
+}
+
+/*
+ * In WORM mode, deletes are disabled.
+ */
+void
+KFS::setWORMMode()
+{
+	gWormMode = true;
 }
 
 /*
@@ -227,6 +245,20 @@ handle_mkdir(MetaRequest *r)
 	req->fid = fid;
 }
 
+
+/*!
+ * Specially named files (such as, those that end with ".tmp") can be
+ * mutated by remove/rename.  Otherwise, in WORM no deletes/renames are allowed.
+ */
+static bool
+isWormMutationAllowed(const string &pathname)
+{
+	string::size_type pos;
+
+	pos = pathname.rfind(".tmp");
+	return pos != string::npos;
+}
+
 /*!
  * \brief Remove a file in a directory.  Also, remove the chunks
  * associated with the file.  For removing chunks, we send off
@@ -237,6 +269,12 @@ static void
 handle_remove(MetaRequest *r)
 {
 	MetaRemove *req = static_cast <MetaRemove *>(r);
+	if (gWormMode && (!isWormMutationAllowed(req->name))) {
+		// deletes are disabled in WORM mode except for specially named
+		// files
+		req->status = -EPERM;
+		return;
+	}
 	req->status = metatree.remove(req->dir, req->name);
 }
 
@@ -244,6 +282,11 @@ static void
 handle_rmdir(MetaRequest *r)
 {
 	MetaRmdir *req = static_cast <MetaRmdir *>(r);
+	if (gWormMode && (!isWormMutationAllowed(req->name))) {
+		// deletes are disabled in WORM mode
+		req->status = -EPERM;
+		return;
+	}
 	req->status = metatree.rmdir(req->dir, req->name);
 }
 
@@ -476,6 +519,11 @@ handle_truncate(MetaRequest *r)
 	MetaTruncate *req = static_cast <MetaTruncate *>(r);
 	chunkOff_t allocOffset = 0;
 
+	if (gWormMode) {
+		req->status = -EPERM;
+		return;
+	}
+
 	req->status = metatree.truncate(req->fid, req->offset, &allocOffset);
 	if (req->status > 0) {
 		// an allocation is needed
@@ -496,6 +544,12 @@ static void
 handle_rename(MetaRequest *r)
 {
 	MetaRename *req = static_cast <MetaRename *>(r);
+	if (gWormMode && (!isWormMutationAllowed(req->oldname))) {
+		// renames are disabled in WORM mode: otherwise, we could
+		// overwrite an existing file
+		req->status = -EPERM;
+		return;
+	}
 	req->status = metatree.rename(req->dir, req->oldname, req->newname,
 					req->overwrite);
 }
@@ -511,7 +565,24 @@ handle_change_file_replication(MetaRequest *r)
 }
 
 static void
-handle_checkpoint(MetaRequest *r)
+handle_retire_chunkserver(MetaRequest *r)
+{
+	MetaRetireChunkserver *req = static_cast <MetaRetireChunkserver *>(r);
+
+	req->status = gLayoutManager.RetireServer(req->location);
+}
+
+static void
+handle_toggle_rebalancing(MetaRequest *r)
+{
+	MetaToggleRebalancing *req = static_cast <MetaToggleRebalancing *>(r);
+
+	gLayoutManager.ToggleRebalancing(req->value);
+	req->status = 0;
+}
+
+static void
+handle_log_rollover(MetaRequest *r)
 {
 	r->status = 0;
 }
@@ -622,7 +693,15 @@ handle_stats(MetaRequest *r)
 
 }
 
+static void
+handle_open_files(MetaRequest *r)
+{
+	MetaOpenFiles *req = static_cast <MetaOpenFiles *>(r);
 
+	req->status = 0;
+
+	gLayoutManager.GetOpenFiles(req->openForRead, req->openForWrite);
+}
 
 /*
  * Map request types to the functions that handle them.
@@ -643,9 +722,11 @@ setup_handlers()
 	handler[META_TRUNCATE] = handle_truncate;
 	handler[META_RENAME] = handle_rename;
 	handler[META_CHANGE_FILE_REPLICATION] = handle_change_file_replication;
-	handler[META_CHECKPOINT] = handle_checkpoint;
+	handler[META_LOG_ROLLOVER] = handle_log_rollover;
 	handler[META_CHUNK_REPLICATE] = handle_chunk_replication_done;
 	handler[META_CHUNK_REPLICATION_CHECK] = handle_chunk_replication_check;
+	handler[META_RETIRE_CHUNKSERVER] = handle_retire_chunkserver;
+	handler[META_TOGGLE_REBALANCING] = handle_toggle_rebalancing;
 	// Chunk server -> Meta server op
 	handler[META_HELLO] = handle_hello;
 	handler[META_BYE] = handle_bye;
@@ -662,6 +743,7 @@ setup_handlers()
 	// Monitoring RPCs
 	handler[META_PING] = handle_ping;
 	handler[META_STATS] = handle_stats;
+	handler[META_OPEN_FILES] = handle_open_files;
 
 	gParseHandlers["LOOKUP"] = parseHandlerLookup;
 	gParseHandlers["LOOKUP_PATH"] = parseHandlerLookupPath;
@@ -676,6 +758,8 @@ setup_handlers()
 	gParseHandlers["TRUNCATE"] = parseHandlerTruncate;
 	gParseHandlers["RENAME"] = parseHandlerRename;
 	gParseHandlers["CHANGE_FILE_REPLICATION"] = parseHandlerChangeFileReplication;
+	gParseHandlers["RETIRE_CHUNKSERVER"] = parseHandlerRetireChunkserver;
+	gParseHandlers["TOGGLE_REBALANCING"] = parseHandlerToggleRebalancing;
 
 	// Lease related ops
 	gParseHandlers["LEASE_ACQUIRE"] = parseHandlerLeaseAcquire;
@@ -687,6 +771,7 @@ setup_handlers()
 
 	gParseHandlers["PING"] = parseHandlerPing;
 	gParseHandlers["STATS"] = parseHandlerStats;
+	gParseHandlers["OPEN_FILES"] = parseHandlerOpenFiles;
 }
 
 /*!
@@ -875,12 +960,29 @@ MetaChangeFileReplication::log(ofstream &file) const
 	return 0;
 }
 
-
 /*!
- * \brief close log and begin checkpoint generation
+ * \brief log retire chunkserver (nop)
  */
 int
-MetaCheckpoint::log(ofstream &file) const
+MetaRetireChunkserver::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief log toggling of chunkserver rebalancing state (nop)
+ */
+int
+MetaToggleRebalancing::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief close log and open a new one
+ */
+int
+MetaLogRollover::log(ofstream &file) const
 {
 	return oplog.finishLog();
 }
@@ -949,6 +1051,15 @@ MetaChunkStaleNotify::log(ofstream &file) const
 }
 
 /*!
+ * \brief log a chunk server retire; (nop)
+ */
+int
+MetaChunkRetire::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
  * \brief when a chunkserver tells us of a corrupted chunk, there is nothing to log
  */
 int
@@ -991,6 +1102,15 @@ MetaPing::log(ofstream &file) const
  */
 int
 MetaStats::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief for an open files request, there is nothing to log
+ */
+int
+MetaOpenFiles::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1329,6 +1449,39 @@ parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r)
 }
 
 /*!
+ * \brief Message that initiates the retiring of a chunkserver.
+*/
+static int
+parseHandlerRetireChunkserver(Properties &prop, MetaRequest **r)
+{
+	ServerLocation location;
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+
+	location.hostname = prop.getValue("Chunk-server-name", "");
+	location.port = prop.getValue("Chunk-server-port", -1);
+	if (!location.IsValid()) {
+		return -1;
+	}
+	*r = new MetaRetireChunkserver(seq, location);
+	KFS_LOG_VA_INFO("initiating chunkserver retire for %s",
+			location.ToString().c_str());
+	return 0;
+}
+
+static int
+parseHandlerToggleRebalancing(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	// 1 is enable; 0 is disable
+	int value = prop.getValue("Toggle-rebalancing", 0);
+	bool v = (value == 1);
+
+	*r = new MetaToggleRebalancing(seq, v);
+	KFS_LOG_VA_INFO("Toggle rebalancing: %d", value);
+	return 0;
+}
+
+/*!
  * \brief Parse out the headers from a HELLO message.  The message
  * body contains the id's of the chunks hosted on the server.
  */
@@ -1354,6 +1507,7 @@ parseHandlerHello(Properties &prop, MetaRequest **r)
 	}
 	hello->totalSpace = prop.getValue("Total-space", (long long) 0);
 	hello->usedSpace = prop.getValue("Used-space", (long long) 0);
+	hello->rackId = prop.getValue("Rack-id", (int) -1);
 	// # of chunks hosted on this server
 	hello->numChunks = prop.getValue("Num-chunks", 0);
 	// The chunk names follow in the body.  This field tracks
@@ -1433,6 +1587,18 @@ parseHandlerStats(Properties &prop, MetaRequest **r)
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
 
 	*r = new MetaStats(seq);
+	return 0;
+}
+
+/*!
+ * \brief Parse out the headers from a STATS message.
+ */
+int
+parseHandlerOpenFiles(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+
+	*r = new MetaOpenFiles(seq);
 	return 0;
 }
 
@@ -1715,6 +1881,22 @@ MetaChangeFileReplication::response(ostringstream &os)
 }
 
 void
+MetaRetireChunkserver::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
+MetaToggleRebalancing::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
 MetaPing::response(ostringstream &os)
 {
 	os << "OK\r\n";
@@ -1730,6 +1912,16 @@ MetaStats::response(ostringstream &os)
 	os << "Cseq: " << opSeqno << "\r\n";
 	os << "Status: " << status << "\r\n";
 	os << stats << "\r\n";
+}
+
+void
+MetaOpenFiles::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n";
+	os << "Read: " << openForRead << "\r\n";
+	os << "Write: " << openForWrite << "\r\n\r\n";
 }
 
 /*!
@@ -1806,6 +1998,14 @@ MetaChunkStaleNotify::request(ostringstream &os)
 	}
 	os << "Content-length: " << s.length() << "\r\n\r\n";
 	os << s;
+}
+
+void
+MetaChunkRetire::request(ostringstream &os)
+{
+	os << "RETIRE \r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Version: KFS/1.0\r\n\r\n";
 }
 
 void

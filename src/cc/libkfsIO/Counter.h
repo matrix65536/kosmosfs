@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/07/20
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -52,13 +53,13 @@ class Counter {
 public:
     // XXX: add threshold values for counts
 
-    Counter() : mName(""), mCount(0) { }
-    Counter(const char *name) : mName(name), mCount(0) { }
+    Counter() : mName(""), mCount(0), mTimeSpent(0.0) { }
+    Counter(const char *name) : mName(name), mCount(0), mTimeSpent(0.0) { }
     virtual ~Counter() { }
 
     /// Print out some information about this counter
     virtual void Show(std::ostringstream &os) {
-        os << mName << ": " << mCount << "\r\n";
+        os << mName << ": " << mCount << "," << mTimeSpent << "\r\n";
     }
 
     void SetName(const char *name) {
@@ -68,20 +69,24 @@ public:
     /// Update the counter 
     virtual void Update(int amount) { mCount += amount; }
 
+    virtual void Update(float timeSpent) { mTimeSpent += timeSpent; }
+
     /// Reset the state of this counter
-    virtual void Reset() { mCount = 0; }
+    virtual void Reset() { mCount = 0; mTimeSpent = 0.0; }
 
     const std::string & GetName() const {
         return mName;
     }
-    long long GetValue() const {
+    uint64_t GetValue() const {
         return mCount;
     }
 protected:
     /// Name of this counter object
     std::string mName;
     /// Value of this counter
-    long long mCount;
+    uint64_t mCount;
+    /// time related statistics
+    float mTimeSpent;
 };
 
 class ShowCounter {

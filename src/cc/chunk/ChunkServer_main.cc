@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/22
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -47,13 +48,6 @@ using std::vector;
 using std::cout;
 using std::endl;
 
-// all the globals we need...
-ChunkServer KFS::gChunkServer;
-ChunkManager KFS::gChunkManager;
-Logger KFS::gLogger;
-MetaServerSM KFS::gMetaServerSM;
-ClientManager KFS::gClientManager;
-
 string gLogDir;
 vector<string> gChunkDirs;
 
@@ -63,7 +57,7 @@ int gChunkServerClientPort;	// Port at which kfs clients connect to us
 
 Properties gProp;
 const char *gClusterKey;
-
+int gChunkServerRackId;
 int gChunkServerCleanupOnStart;
 
 int ReadChunkServerProperties(char *fileName);
@@ -90,15 +84,18 @@ main(int argc, char **argv)
     // Initialize things...
     libkfsio::InitGlobals();
     
-    // setup the default allocation unit to be large (16MB); clients
-    // are going to be reading/writing 64MB chunks, so allocate as
-    // much as possible.
-    libkfsio::SetIOBufferSize(1 << 24);
-    
+    // for writes, the client is sending WRITE_PREPARE with 64K bytes;
+    // to enable the data to fit into a single buffer (and thereby get
+    // the data to the underlying FS via a single aio_write()), allocate a bit
+    // of extra space. 64K + 4k
+    libkfsio::SetIOBufferSize(69632);
+
+    globals().diskManager.InitForAIO();
+
     gChunkServer.Init();
     gChunkManager.Init(gChunkDirs, gTotalSpace);
     gLogger.Init(gLogDir);
-    gMetaServerSM.Init(gMetaServerLoc, gClusterKey);
+    gMetaServerSM.SetMetaInfo(gMetaServerLoc, gClusterKey, gChunkServerRackId);
 
     signal(SIGPIPE, SIG_IGN);
 
@@ -137,6 +134,12 @@ ReadChunkServerProperties(char *fileName)
 {
     string::size_type curr = 0, next;
     string chunkDirPaths;
+    string logLevel;
+#ifdef NDEBUG
+    const char *defLogLevel = "INFO";
+#else
+    const char *defLogLevel = "DEBUG";
+#endif
 
     if (gProp.loadProperties(fileName, '=', true) != 0)
         return -1;
@@ -201,8 +204,17 @@ ReadChunkServerProperties(char *fileName)
     gChunkServerCleanupOnStart = gProp.getValue("chunkServer.cleanupOnStart", 0);
     cout << "cleanup on start = " << gChunkServerCleanupOnStart << endl;
 
+    gChunkServerRackId = gProp.getValue("chunkServer.rackId", (int) -1);
+    cout << "Chunk server rack: " << gChunkServerRackId << endl;
+
     gClusterKey = gProp.getValue("chunkServer.clusterKey", "");
     cout << "using cluster key = " << gClusterKey << endl;
+
+    logLevel = gProp.getValue("chunkServer.loglevel", defLogLevel);
+    if (logLevel == "INFO")
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    else
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
 
     return 0;
 }

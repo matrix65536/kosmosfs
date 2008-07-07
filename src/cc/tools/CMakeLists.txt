@@ -30,7 +30,14 @@ kfsshell
 kfsping
 kfsput
 kfsstats
+kfsfileenum
+kfsdataverify
+kfsretire
 )
+
+if (APPLE)
+   target_link_libraries(tools-shared kfsClient-shared kfsCommon-shared)
+endif (APPLE)
 
 #
 # Every executable depends on its namesake source with _main.cc
@@ -38,9 +45,11 @@ kfsstats
 foreach (exe_file ${exe_files})
         add_executable (${exe_file} ${exe_file}_main.cc)
         if (USE_STATIC_LIB_LINKAGE)
-                target_link_libraries (${exe_file} tools kfsClient)
+                add_dependencies (${exe_file} tools)
+                target_link_libraries (${exe_file} tools kfsClient $(Tcmalloc_LIBRARIES))
         else (USE_STATIC_LIB_LINKAGE)
-                target_link_libraries (${exe_file} tools-shared kfsClient-shared)
+                add_dependencies (${exe_file} tools-shared)
+                target_link_libraries (${exe_file} tools-shared kfsClient-shared $(Tcmalloc_LIBRARIES))
         endif (USE_STATIC_LIB_LINKAGE)
 endforeach (exe_file)
 

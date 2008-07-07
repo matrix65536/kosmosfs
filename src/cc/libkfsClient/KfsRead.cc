@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/02
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -74,6 +75,8 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
     if (cb->dirty)
 	FlushBuffer(fd);
 
+    cb->allocate();
+    
     // Loop thru chunk after chunk until we either get the desired #
     // of bytes or we hit EOF.
     while (nread < numBytes) {
@@ -126,7 +129,9 @@ KfsClientImpl::IsChunkReadable(int fd)
     ChunkAttr *chunk = GetCurrChunk(fd);
 
     if (pos->preferredServer == NULL && chunk->chunkId != (kfsChunkId_t)-1) {
-	int status = OpenChunk(fd);
+        // use nonblocking connect to chunkserver; if one fails to
+        // connect, we switch to another replica. 
+	int status = OpenChunk(fd, true);
 	if (status < 0)
 	    return false;
     }
@@ -189,8 +194,9 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
 	    retryCount++;
 	    Sleep(RETRY_DELAY_SECS);
 
-            // open failed..so, bail....
-	    status = OpenChunk(fd);
+            // open failed..so, bail....we use non-blocking connect to
+            // switch another replica
+	    status = OpenChunk(fd, true);
 	    if (status < 0)
 	        return status;
 	}
@@ -202,7 +208,7 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
 	if (numBytes < ChunkBuffer::BUF_SIZE) {
 	    // small reads...so buffer the data
 	    ChunkBuffer *cb = FdBuffer(fd);
-	    numIO = ReadFromServer(fd, cb->buf, sizeof (cb->buf));
+	    numIO = ReadFromServer(fd, cb->buf, ChunkBuffer::BUF_SIZE);
 	    if (numIO > 0) {
 	        cb->chunkno = pos->chunkNum;
 	        cb->start = pos->chunkOffset;
@@ -369,8 +375,8 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     while (numRead < numAvail) {
 	ReadOp *op = new ReadOp(nextSeq(), chunk->chunkId, chunk->chunkVersion);
 
-	// op->numBytes = min(MIN_BYTES_PIPELINE_IO, numAvail - numRead);
-        op->numBytes = min(KFS::CHUNKSIZE, numAvail - numRead);
+	op->numBytes = min(MAX_BYTES_PER_READ_IO, numAvail - numRead);
+        // op->numBytes = min(KFS::CHUNKSIZE, numAvail - numRead);
 	assert(op->numBytes > 0);
 
 	op->offset = pos->chunkOffset + numRead;
@@ -438,11 +444,12 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 {
     vector<ReadOp *>::size_type first = 0, next, minOps;
     int res;
+    uint32_t cksum;
     ReadOp *op;
     bool leaseExpired = false;
 
-    // if we are readingin 64K blocks, plumb with a 1MB
-    minOps = min((size_t) 16, ops.size());
+    // plumb the pipe with 8MB
+    minOps = min((size_t) (MIN_BYTES_PIPELINE_IO / MAX_BYTES_PER_IO), ops.size());
     // plumb the pipe with a few ops
     for (next = 0; next < minOps; ++next) {
         op = ops[next];
@@ -460,6 +467,15 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 	if (res < 0)
 	    return -1;
 	++first;
+
+        if ((op->status >= 0) && (op->checksum != 0)) {
+            cksum = ComputeBlockChecksum(op->contentBuf, op->status);
+            if (cksum != op->checksum) {
+                KFS_LOG_VA_INFO("Checksum mismatch: got = %d, computed = %d for %s",
+                                op->checksum, cksum, op->Show().c_str());
+                op->status = -KFS::EBADCKSUM;
+            }
+        }
 
 	op = ops[next];
 

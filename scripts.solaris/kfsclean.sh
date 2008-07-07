@@ -24,7 +24,7 @@
 # specified, then the checkpoint files are backed up.
 #
 # usage: ./kfsclean.sh [-m min] [-M max] [-t time] [-s sleep] [-d dir]
-# {[-r remote] [-p remote_path]}
+# {[-b backup_node] [-p path on backup node to put the data]}
 
 me=$0
 CLEANER="scripts/kfsprune.py"
@@ -34,7 +34,8 @@ sleep_time=3600
 min_save=10
 max_save=100
 keep_time=3600
-kfs_dir="."
+kfs_dir=`pwd`
+backup_node=
 backup_path=
 
 # process any command-line arguments
@@ -42,7 +43,7 @@ backup_path=
 # 		-n kfsclean.sh -- "$@"`
 # eval set -- "$TEMP"
 
-set -- `getopt m:M:t:s:d:b:h $*`
+set -- `getopt m:M:t:s:d:b:p:h $*`
 # while true
 for i in $*
 do
@@ -52,10 +53,12 @@ do
 	-t|--time) keep_time=$2;;
 	-s|--sleep) sleep_time=$2;;
 	-d|--dir) kfs_dir=$2;;
-	-b|--backup) backup_path=$2;;
-	-h|--help) echo "usage: $0 [-m min] [-M max] [-t time] [-s sleep] [-d dir] {[-b backup]}"; exit ;;
-	--) shift; break ;;
+	-b|--node) backup_node=$2;;
+	-p|--path) backup_path=$2;;
+	-h|--help) echo "usage: $0 [-m min] [-M max] [-t time] [-s sleep] [-d dir] {[-b backup_node] [-p backup_path]}"; exit ;;
+	--) break ;;
 	esac
+	shift
 done
 
 if [ -f $kfs_dir/bin/metaserver ];
@@ -64,7 +67,7 @@ if [ -f $kfs_dir/bin/metaserver ];
     logdir="$kfs_dir/bin/kfslog"
     cpfile="chkpt"
     logfile="log"
-    if [ -n "$backup_path" ];
+    if [ -n "$backup_node" ];
 	then
 	metabkup="$kfs_dir/scripts/metabkup.sh"
 	chmod a+x $metabkup
@@ -83,16 +86,24 @@ else
     exit
 fi
 
+export LD_LIBRARY_PATH=$kfs_dir/lib:$LD_LIBRARY_PATH
+
 # clean up forever
 while true
 do
+	sleep $sleep_time
 	echo " `date` : Cleaning cp/logs" 
+	# compact the logs and create a new checkpoint if possible
+	if [ -f $kfs_dir/bin/logcompactor ];
+	   then
+ 	   $kfs_dir/bin/logcompactor -l $logdir -c $cpdir
+	fi
+	# prune the old checkpoints; keep the logs around
 	$CLEANER -m $min_save -M $max_save -t $keep_time $cpdir $cpfile
-	$CLEANER -m $min_save -M $max_save -t $keep_time $logdir $logfile
+	$CLEANER -m $min_save -M $max_save -t $keep_time -z $logdir $logfile
 	if [ -n "$metabkup" ];
 	    then
-	    echo " `date` : Backing up metaserver checkpoints to: $backup_path"
-	    $metabkup -d $cpdir -b $backup_path
+	    echo " `date` : Backing up metaserver logs/checkpoints to: $backup_path"
+	    $metabkup -d "$kfs_dir" -b $backup_node -p $backup_path
 	fi
-	sleep $sleep_time
 done

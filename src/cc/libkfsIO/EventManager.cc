@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/31
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -54,23 +55,23 @@ EventManager::Init()
 
 void EventManager::Schedule(EventPtr &event, int afterMs)
 {
-    int slot;
+    int slotDelta;
 
     assert(afterMs >= 0);
 
     event->SetStatus(EVENT_SCHEDULED);
 
-    if (afterMs <= 0)
-        slot = (mCurrentSlot + 1) % MAX_EVENT_SLOTS;
+    if (afterMs <= 0) 
+        slotDelta = 1;
     else
-        slot = afterMs / EVENT_GRANULARITY_MS;
+        slotDelta = afterMs / EVENT_GRANULARITY_MS;
 
-    if (slot > MAX_EVENT_SLOTS) {
+    if (slotDelta > MAX_EVENT_SLOTS) {
         event->SetLongtermWait(afterMs);
         mLongtermEvents.push_back(event);
         return;
     }
-    slot = (MAX_EVENT_SLOTS + slot - mCurrentSlot) % MAX_EVENT_SLOTS;
+    int slot = (mCurrentSlot + slotDelta) % MAX_EVENT_SLOTS;
     mSlots[slot].push_back(event);
 
 }
@@ -96,16 +97,21 @@ void EventManager::Timeout()
     if (mCurrentSlot == MAX_EVENT_SLOTS)
         mCurrentSlot = 0;
 
+    /*
     if ((mLongtermEvents.size() > 0) &&
         (msElapsed - EVENT_GRANULARITY_MS >= 3 * EVENT_GRANULARITY_MS)) {
         KFS_LOG_VA_DEBUG("Elapsed ms = %d", msElapsed);
     }
+    */
+
     // Now, pull all the long-term events
     iter = mLongtermEvents.begin();
     while (iter != mLongtermEvents.end()) {
         event = *iter;
         // count down for each ms that ticks by
         waitMs = event->DecLongtermWait(msElapsed);
+        if (waitMs < 0)
+            waitMs = 0;
         if (waitMs >= MAX_EVENT_SLOTS) {
             ++iter;
             continue;

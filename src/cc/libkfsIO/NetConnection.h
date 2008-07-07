@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/14
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -60,25 +61,22 @@ class NetConnection {
 public:
     /// @param[in] sock TcpSocket on which I/O can be done
     /// @param[in] c KfsCallbackObj associated with this connection
-    NetConnection(TcpSocket *sock, KfsCallbackObj *c) {
-	mSock = sock;
-	mCallbackObj = c;
-	mListenOnly = false;
-	mInBuffer = mOutBuffer = NULL;
-        mNumBytesOut = 0;
-    }
+    NetConnection(TcpSocket *sock, KfsCallbackObj *c) : 
+        mListenOnly(false), mEnableReadIfOverloaded(false), mCallbackObj(c), 
+        mSock(sock), mInBuffer(NULL), mOutBuffer(NULL), 
+        mNumBytesOut(0), mLastFlushResult(0) { }
 
     /// @param[in] sock TcpSocket on which I/O can be done
     /// @param[in] c KfsCallbackObj associated with this connection
     /// @param[in] listenOnly boolean that specifies whether this
     /// connection is setup only for accepting new connections.
-    NetConnection(TcpSocket *sock, KfsCallbackObj *c, bool listenOnly) {
-        mSock = sock;
-        mCallbackObj = c;
-        mListenOnly = listenOnly;
-        mInBuffer = NULL;
-        mOutBuffer = NULL;
-        mNumBytesOut = 0;
+    NetConnection(TcpSocket *sock, KfsCallbackObj *c, bool listenOnly) :
+        mListenOnly(listenOnly),  mCallbackObj(c), mSock(sock), 
+        mInBuffer(NULL), mOutBuffer(NULL), 
+        mNumBytesOut(0), mLastFlushResult(0) 
+    {
+        if (listenOnly)
+            mEnableReadIfOverloaded = true;
     }
 
     ~NetConnection() {
@@ -91,11 +89,17 @@ public:
         mCallbackObj = c;
     }
 
+    void EnableReadIfOverloaded() {
+        mEnableReadIfOverloaded = true;
+    }
+
     int GetFd() { return mSock->GetFd(); }
 
     /// Callback for handling a read.  That is, select() thinks that
-    /// data is available for reading. So, do something.
-    void HandleReadEvent();
+    /// data is available for reading. So, do something.  If system is
+    /// overloaded and we don't have a special pass, leave the data in
+    /// the buffer alone.
+    void HandleReadEvent(bool isSystemOverloaded);
 
     /// Callback for handling a writing.  That is, select() thinks that
     /// data can be sent out.  So, do something.
@@ -105,8 +109,9 @@ public:
     /// an error occurred.  So, do something.
     void HandleErrorEvent();
 
-    /// Do we expect data to be read in?
-    bool IsReadReady();
+    /// Do we expect data to be read in?  If the system is overloaded,
+    /// check the connection poll state to determine the return value.
+    bool IsReadReady(bool isSystemOverloaded);
     /// Is data available for writing?
     bool IsWriteReady();
 
@@ -133,15 +138,24 @@ public:
         mNumBytesOut += numBytes;
     }
 
+    void StartFlush() {
+        if (mLastFlushResult < 0)
+            return;
+        // if there is any data to be sent out, start the send
+        if (mOutBuffer && mOutBuffer->BytesConsumable() > 0)
+            mLastFlushResult = mOutBuffer->Write(mSock->GetFd());
+    }
     /// Close the connection.
     void Close() {
         // KFS_LOG_DEBUG("Closing socket: %d", mSock->GetFd());
         mSock->Close();
     }
     
-
 private:
     bool		mListenOnly;
+    /// should we add this connection to the poll vector for reads
+    /// even when the system is overloaded? 
+    bool		mEnableReadIfOverloaded;
     /// KfsCallbackObj that will be notified whenever "events" occur.
     KfsCallbackObj	*mCallbackObj;
     /// Socket on which I/O will be done.
@@ -152,6 +166,7 @@ private:
     IOBuffer		*mOutBuffer;
     /// # of bytes from the out buffer that should be sent out.
     int			mNumBytesOut;
+    int			mLastFlushResult;
 };
 
 typedef boost::shared_ptr<NetConnection> NetConnectionPtr;

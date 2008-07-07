@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/05/24
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -31,10 +32,15 @@ extern "C" {
 #include <sys/stat.h>
 #include <fcntl.h>
 }
+#include "libkfsIO/Checksum.h"
 
 using std::istringstream;
 using std::ostringstream;
 using std::string;
+
+#include <iostream>
+using std::cout;
+using std::endl;
 
 static const char *KFS_VERSION_STR = "KFS/1.0";
 
@@ -156,6 +162,15 @@ GetLayoutOp::Request(ostringstream &os)
 }
 
 void
+GetChunkMetadataOp::Request(ostringstream &os)
+{
+    os << "GET_CHUNK_METADATA \r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Chunk-handle: " << chunkId << "\r\n\r\n";
+}
+
+void
 AllocateOp::Request(ostringstream &os)
 {
     os << "ALLOCATE \r\n";
@@ -216,6 +231,27 @@ ReadOp::Request(ostringstream &os)
 }
 
 void
+WriteIdAllocOp::Request(ostringstream &os)
+{
+    os << "WRITE_ID_ALLOC \r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Chunk-handle: " << chunkId << "\r\n";
+    os << "Chunk-version: " << chunkVersion << "\r\n";
+    os << "Offset: " << offset << "\r\n";
+    os << "Num-bytes: " << numBytes << "\r\n";
+    if (chunkServerLoc.size() > 1) {
+        os << "Num-servers: " << chunkServerLoc.size() << "\r\n";
+        os << "Servers:";
+        for (vector<ServerLocation>::size_type i = 0; i < chunkServerLoc.size(); ++i) {
+            os << chunkServerLoc[i].ToString().c_str() << ' ';
+        }
+        os << "\r\n";
+    }
+    os << "\r\n";
+}
+
+void
 WritePrepareOp::Request(ostringstream &os)
 {
     os << "WRITE_PREPARE \r\n";
@@ -224,7 +260,15 @@ WritePrepareOp::Request(ostringstream &os)
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Chunk-version: " << chunkVersion << "\r\n";
     os << "Offset: " << offset << "\r\n";
-    os << "Num-bytes: " << numBytes << "\r\n\r\n";
+    os << "Num-bytes: " << numBytes << "\r\n";
+    os << "Checksum: " << checksum << "\r\n";
+    os << "Num-servers: " << writeInfo.size() << "\r\n";
+    os << "Servers:";
+    for (vector<WriteInfo>::size_type i = 0; i < writeInfo.size(); ++i) {
+	os << writeInfo[i].serverLoc.ToString().c_str();
+	os << ' ' << writeInfo[i].writeId << ' ';
+    }
+    os << "\r\n\r\n";
 }
 
 void
@@ -512,13 +556,23 @@ SizeOp::ParseResponseHeader(char *buf, int len)
 }
 
 void
-WritePrepareOp::ParseResponseHeader(char *buf, int len)
+ReadOp::ParseResponseHeader(char *buf, int len)
 {
     string resp(buf, len);
     Properties prop;
 
     ParseResponseHeaderCommon(resp, prop);
-    writeId = prop.getValue("Write-id", (long long) 0);
+    checksum = prop.getValue("Checksum", 0);
+}
+
+void
+WriteIdAllocOp::ParseResponseHeader(char *buf, int len)
+{
+    string resp(buf, len);
+    Properties prop;
+
+    ParseResponseHeaderCommon(resp, prop);
+    writeIdStr = prop.getValue("Write-id", "");
 }
 
 void

@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/10/09
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -49,6 +50,8 @@ KFS::libkfsio::InitGlobals()
 
     globals().diskManager.Init();
     globals().eventManager.Init();
+
+    globals().netKicker.Init(globals().netManager);
 
     globals().ctrOpenNetFds.SetName("Open network fds");
     globals().ctrOpenDiskFds.SetName("Open disk fds");

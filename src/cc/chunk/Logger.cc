@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/20
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -34,6 +35,8 @@ extern "C" {
 
 #include "Logger.h"
 #include "ChunkManager.h"
+#include "ChunkServer.h"
+#include "KfsOps.h"
 
 using std::ios_base;
 using std::map;
@@ -48,6 +51,7 @@ using std::vector;
 using namespace KFS;
 using namespace KFS::libkfsio;
 
+Logger KFS::gLogger;
 // checksums for a 64MB chunk can make a long line...
 const int MAX_LINE_LENGTH = 32768;
 char ckptLogVersionStr[128];
@@ -75,7 +79,7 @@ Logger::Logger()
     mLogFilename = "";
     mLoggerTimeoutImpl = new LoggerTimeoutImpl(this);
     mLogGenNum = 1;
-    sprintf(ckptLogVersionStr, "version: %d", KFS_VERSION);
+    sprintf(ckptLogVersionStr, "version: %d", KFS_LOG_VERSION);
 }
 
 Logger::~Logger()
@@ -119,8 +123,10 @@ Logger::MainLoop()
                 mFile.flush();
                 Checkpoint(op);
                 delete op;
-            } else {
-                op->Log(mFile);
+            } else { 
+                if (op->status >= 0) {
+                    op->Log(mFile);
+                }
                 done.push_back(op);
             }
             op = mPending.dequeue_nowait();
@@ -133,13 +139,24 @@ Logger::MainLoop()
             done.erase(iter);
             mLogged.enqueue(op);
         }
+        globals().netKicker.Kick();
+        KFS_LOG_DEBUG("Kicked the net manager");
     }
 }
 
 void
 Logger::Submit(KfsOp *op)
 {
-    mPending.enqueue(op);
+    if (op->op == CMD_CHECKPOINT) {
+        delete op;
+        return;
+    }
+    if (op->op == CMD_WRITE) {
+        KFS::SubmitOpResponse(op);
+    } else {
+        assert(op->clnt != NULL);
+        op->clnt->HandleEvent(EVENT_CMD_DONE, op);
+    }
 }
 
 void
@@ -147,12 +164,25 @@ Logger::Dispatch()
 {
     KfsOp *op;
 
+#ifdef DEBUG
+    verifyExecutingOnNetProcessor();    
+#endif
+
+    // KFS_LOG_DEBUG("Logger timeout");
+
     while (!mLogged.empty()) {
         op = mLogged.dequeue_nowait();
         if (op == NULL)
             break;
-        assert(op->clnt != NULL);
-        op->clnt->HandleEvent(EVENT_CMD_DONE, op);
+
+        // When internally generated ops are done, they go
+        // back to the event processor to finish up processing
+        if (op->op == CMD_WRITE) {
+            KFS::SubmitOpResponse(op);
+        } else {
+            assert(op->clnt != NULL);
+            op->clnt->HandleEvent(EVENT_CMD_DONE, op);
+        }
     }
 }
 
@@ -208,9 +238,11 @@ Logger::Checkpoint(KfsOp *op)
     // this log file contains all the activities since this checkpoint.
     ofs << "log: " << mLogFilename << '.' << mLogGenNum + 1 << '\n';
 
-    ofs << cop->data.str();
-    ofs.flush();
-    assert(!ofs.fail());
+    if (cop != NULL) {
+        ofs << cop->data.str();
+        ofs.flush();
+        assert(!ofs.fail());
+    }
     ofs.close();
 
     // now, link the latest
@@ -276,6 +308,57 @@ Logger::RotateLog()
     mFile.flush();
 }
 
+int
+Logger::GetVersionFromCkpt()
+{
+    string lastCP;
+    ifstream ifs;
+    char line[MAX_LINE_LENGTH];
+
+    lastCP = MakeLatestCkptFilename();
+
+    if (!file_exists(lastCP.c_str()))
+        return KFS_LOG_VERSION;
+
+    ifs.open(lastCP.c_str(), ios_base::in);
+    if (!ifs) {
+        return KFS_LOG_VERSION;
+    }
+    
+    // Read the header
+    // Line 1 is the version
+    memset(line, '\0', MAX_LINE_LENGTH);
+    ifs.getline(line, MAX_LINE_LENGTH);
+    if (ifs.eof()) {
+        // if we can't read the file...we claim to be new version
+        return KFS_LOG_VERSION;
+    }
+
+    return GetCkptVersion(line);
+}
+
+int
+Logger::GetCkptVersion(const char *versionLine)
+{
+    if (strncmp(versionLine, ckptLogVersionStr, strlen(ckptLogVersionStr)) == 0) {
+        return KFS_LOG_VERSION;
+    }
+    // check if it is an earlier version
+    char olderVersionStr[128];
+    sprintf(olderVersionStr, "version: %d", KFS_LOG_VERSION_V1);
+    if (strncmp(versionLine, olderVersionStr, strlen(olderVersionStr)) == 0) {
+        return KFS_LOG_VERSION_V1;
+    }
+    return 0;
+}
+
+int
+Logger::GetLogVersion(const char *versionLine)
+{
+    // both are in the same format
+    return GetCkptVersion(versionLine);
+}
+
 void
 Logger::Restore()
 {
@@ -284,6 +367,7 @@ Logger::Restore()
     char line[MAX_LINE_LENGTH], *genNum;
     ChunkInfoHandle_t *cih;
     ChunkInfo_t entry;
+    int version;
 
     lastCP = MakeLatestCkptFilename();
 
@@ -302,7 +386,9 @@ Logger::Restore()
     ifs.getline(line, MAX_LINE_LENGTH);
     if (ifs.eof())
         goto out;
-    if (strncmp(line, ckptLogVersionStr, strlen(ckptLogVersionStr)) != 0) {
+    
+    version = GetCkptVersion(line);
+    if (version != KFS_LOG_VERSION_V1) {
         KFS_LOG_VA_ERROR("Restore ckpt: Ckpt version str mismatch: read: %s",
                          line);
         goto out;
@@ -364,7 +450,6 @@ Logger::ParseCkptEntry(const char *line, ChunkInfo_t &entry)
     ist >> entry.chunkSize;
     ist >> entry.chunkVersion;
     ist >> count;
-    entry.chunkBlockChecksum.resize(count);
     for (vector<uint32_t>::size_type i = 0; i < count; ++i) {
         ist >> entry.chunkBlockChecksum[i];
     }
@@ -461,6 +546,7 @@ Logger::ReplayLog()
     ifstream ifs;
     string filename;
     string opName;
+    int version;
 
     filename = MakeLogFilename();
 
@@ -484,8 +570,9 @@ Logger::ReplayLog()
         ifs.close();
         return;
     }
-
-    if (strncmp(line, ckptLogVersionStr, strlen(ckptLogVersionStr)) != 0) {
+    
+    version = GetLogVersion(line);
+    if (version != KFS_LOG_VERSION_V1) {
         KFS_LOG_VA_ERROR("Replay log failed: Log version str mismatch: read: %s",
                          line);
         ifs.close();

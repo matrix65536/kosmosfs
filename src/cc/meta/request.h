@@ -11,7 +11,8 @@
  * When the operation is finished, the server calls back to the
  * receiver with status and any results.
  *
- * Copyright 2006 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2006-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -65,8 +66,12 @@ enum MetaOp {
 	META_ALLOCATE,
 	META_TRUNCATE,
 	META_RENAME,
-	META_CHECKPOINT,
+	META_LOG_ROLLOVER,
 	META_CHANGE_FILE_REPLICATION, //! < Client is asking for a change in file's replication factor
+	//!< Admin is notifying us to retire a chunkserver
+	META_RETIRE_CHUNKSERVER, 
+	//!< Admin is notifying us to toggle rebalancing
+	META_TOGGLE_REBALANCING,
 	//!< Metadata server <-> Chunk server ops
 	META_HELLO,  //!< Hello RPC sent by chunkserver on startup
 	META_BYE,  //!< Internally generated op whenever a chunkserver goes down
@@ -79,7 +84,9 @@ enum MetaOp {
 	META_CHUNK_REPLICATE, //!< Ask chunkserver to replicate a chunk
 	META_CHUNK_REPLICATION_CHECK, //!< Internally generated
 	META_CHUNK_CORRUPT, //!< Chunkserver is notifying us that a chunk is corrupt
-
+	//!< All the blocks on the retiring server have been evacuated and the
+	//!< server can safely go down.  We are asking the server to take a graceful bow
+	META_CHUNK_RETIRE, 
 	//!< Lease related messages
 	META_LEASE_ACQUIRE,
 	META_LEASE_RENEW,
@@ -90,7 +97,8 @@ enum MetaOp {
 
 	//!< Metadata server monitoring
 	META_PING, //!< Print out chunkserves and their configs
-	META_STATS //!< Print out whatever statistics/counters we have
+	META_STATS, //!< Print out whatever statistics/counters we have
+	META_OPEN_FILES //!< Print out open files---for which there is a valid read/write lease 
 
 };
 
@@ -432,15 +440,52 @@ struct MetaChangeFileReplication: public MetaRequest {
 };
 
 /*!
- * \brief start a checkpoint
+ * \brief Notification to retire a chunkserver.  We use this server (preferably)
+ * to evacuate/re-replicate all the blocks on it.
  */
-struct MetaCheckpoint: public MetaRequest {
-	MetaCheckpoint():
-		MetaRequest(META_CHECKPOINT, 0, true) { }
+
+struct MetaRetireChunkserver : public MetaRequest {
+	ServerLocation location; //<! Location of this server
+	MetaRetireChunkserver(seq_t s, const ServerLocation &l) :
+		MetaRequest(META_RETIRE_CHUNKSERVER, s, false), location(l) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show() 
+	{
+		return "Retiring server: " + location.ToString();
+	}
+};
+
+/*!
+ * \brief Notification to toggle rebalancing state.
+ */
+
+struct MetaToggleRebalancing : public MetaRequest {
+	bool value; // !< Enable/disable rebalancing
+	MetaToggleRebalancing(seq_t s, bool v) :
+		MetaRequest(META_TOGGLE_REBALANCING, s, false), value(v) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show() 
+	{
+		if (value)
+			return "Toggle rebalancing: Enable";
+		else
+			return "Toggle rebalancing: Disable";
+	}
+};
+
+
+/*!
+ * \brief close a log file and start a new one
+ */
+struct MetaLogRollover: public MetaRequest {
+	MetaLogRollover():
+		MetaRequest(META_LOG_ROLLOVER, 0, true) { }
 	int log(ofstream &file) const;
 	string Show()
 	{
-		return "Checkpoint";
+		return "log rollover";
 	}
 };
 
@@ -485,6 +530,7 @@ struct MetaHello: public MetaRequest {
 	uint64_t totalSpace; //!< How much storage space does the
 			//!< server have (bytes)
 	uint64_t usedSpace; //!< How much storage space is used up (in bytes)
+	int rackId; //!< the rack on which the server is located
 	int numChunks; //!< # of chunks hosted on this server
 	int contentLength; //!< Length of the message body
 	vector<ChunkInfo> chunks; //!< Chunks  hosted on this server
@@ -683,6 +729,22 @@ struct MetaChunkStaleNotify: public MetaChunkRequest {
 };
 
 /*!
+ * For scheduled downtime, we evacaute all the chunks on a server; when
+ * we know that the evacuation is finished, we tell the chunkserver to retire.
+ */
+struct MetaChunkRetire: public MetaChunkRequest {
+	MetaChunkRetire(seq_t n, ChunkServer *s):
+		MetaChunkRequest(META_CHUNK_RETIRE, n, false, NULL, s) { }
+	int log(ofstream &file) const;
+	//!< generate the request string that should be sent out
+	void request(ostringstream &os);
+	string Show()
+	{
+		return "chunkserver retire";
+	}
+};
+
+/*!
  * \brief For monitoring purposes, a client/tool can send a PING
  * request.  In response, the server replies with the list of all
  * connected chunk servers and their locations as well as some state
@@ -714,6 +776,25 @@ struct MetaStats: public MetaRequest {
 	string Show()
 	{
 		return "stats";
+	}
+};
+
+
+/*!
+ * \brief For monitoring purposes, a client/tool can send a OPEN FILES
+ * request.  In response, the server replies with the list of all
+ * open files---files for which there is a valid lease
+ */
+struct MetaOpenFiles: public MetaRequest {
+	string openForRead; //!< result
+	string openForWrite; //!< result
+	MetaOpenFiles(seq_t s):
+		MetaRequest(META_OPEN_FILES, s, false) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		return "open files";
 	}
 };
 
@@ -833,6 +914,7 @@ extern void printleaves();
 extern void ChangeIncarnationNumber(MetaRequest *r);
 extern void RegisterCounters();
 extern void setClusterKey(const char *key);
+extern void setWORMMode();
 
 }
 #endif /* !defined(KFS_REQUEST_H) */

@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/06/23
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -29,6 +30,9 @@
 #include <iostream>    
 #include <fstream>
 #include <cerrno>
+#include <boost/scoped_array.hpp>
+using boost::scoped_array;
+using std::ios_base;
 
 extern "C" {
 #include <sys/types.h>
@@ -37,6 +41,7 @@ extern "C" {
 #include <string.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <openssl/md5.h>
 }
 
 #include "libkfsClient/KfsClient.h"
@@ -47,9 +52,10 @@ extern "C" {
 using std::cout;
 using std::endl;
 using std::ifstream;
+using std::ofstream;
 using namespace KFS;
 
-KfsClient *gKfsClient;
+KfsClientPtr gKfsClient;
 bool doMkdirs(const char *path);
 
 //
@@ -112,14 +118,13 @@ main(int argc, char **argv)
     if (help || (sourcePath == NULL) || (kfsPath == "") || (serverHost == "") || (port < 0)) {
         cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> "
              << " -d <source path> -k <Kfs path> " << endl;
-        exit(0);
+        exit(-1);
     }
 
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(serverHost, port);
-    if (!gKfsClient->IsInitialized()) {
+    gKfsClient = getKfsClientFactory()->GetClient(serverHost, port);
+    if (!gKfsClient) {
 	cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
+        exit(-1);
     }
 
     if (stat(sourcePath, &statInfo) < 0) {
@@ -134,7 +139,7 @@ main(int argc, char **argv)
 
     if ((dirp = opendir(sourcePath)) == NULL) {
 	perror("opendir: ");
-        exit(0);
+        exit(-1);
     }
 
     // when doing cp -r a/b kfs://c, we need to create c/b in KFS.
@@ -203,7 +208,7 @@ BackupDir(const string &dirname, string &kfsdirname)
 
     if ((dirp = opendir(dirname.c_str())) == NULL) {
         perror("opendir: ");
-        exit(0);
+        exit(-1);
     }
 
     if (!doMkdirs(kfsdirname.c_str())) {
@@ -239,46 +244,88 @@ BackupDir(const string &dirname, string &kfsdirname)
 int
 BackupFile2(string srcfilename, string kfsfilename)
 {
-    const int bufsize = 65536;
-    char kfsBuf[bufsize];
+    // 64MB buffers
+    const int bufsize = 1 << 26;
+    scoped_array<char> kfsBuf;
     int kfsfd, nRead;
-    long long n = 0;
-    ifstream ifs;
+    int srcFd;
     int res;
 
-    ifs.open(srcfilename.c_str(), std::ios_base::in);
-    if (!ifs) {
+    srcFd = open(srcfilename.c_str(), O_RDONLY);
+    if (srcFd  < 0) {
         cout << "Unable to open: " << srcfilename.c_str() << endl;
-        exit(0);
+        exit(-1);
     }
 
     kfsfd = gKfsClient->Create((char *) kfsfilename.c_str());
     if (kfsfd < 0) {
         cout << "Create " << kfsfilename << " failed: " << kfsfd << endl;
-        exit(0);
+        exit(-1);
+    }
+    kfsBuf.reset(new char[bufsize]);
+
+    while (1) {
+        nRead = read(srcFd, kfsBuf.get(), bufsize);
+        
+        if (nRead <= 0)
+            break;
+        
+        res = gKfsClient->Write(kfsfd, kfsBuf.get(), nRead);
+        if (res < 0) {
+            cout << "Write failed with error code: " << res << endl;
+            exit(-1);
+        }
+    }
+    close(srcFd);
+    gKfsClient->Close(kfsfd);
+
+    return 0;
+}
+
+int
+BackupFile3(string srcfilename, string kfsfilename)
+{
+    // 64MB buffers
+    const int bufsize = 1 << 26;
+    scoped_array<char> kfsBuf;
+    int kfsfd, nRead;
+    long long n = 0;
+    ifstream ifs;
+    int res;
+
+    ifs.open(srcfilename.c_str(), ios_base::in);
+    if (!ifs) {
+        cout << "Unable to open: " << srcfilename.c_str() << endl;
+        exit(-1);
     }
 
+    kfsfd = gKfsClient->Create((char *) kfsfilename.c_str());
+    if (kfsfd < 0) {
+        cout << "Create " << kfsfilename << " failed: " << kfsfd << endl;
+        exit(-1);
+    }
+    kfsBuf.reset(new char[bufsize]);
+
     while (!ifs.eof()) {
-        ifs.read(kfsBuf, bufsize);
+        ifs.read(kfsBuf.get(), bufsize);
 
         nRead = ifs.gcount();
         
         if (nRead <= 0)
             break;
         
-        res = gKfsClient->Write(kfsfd, kfsBuf, nRead);
+        res = gKfsClient->Write(kfsfd, kfsBuf.get(), nRead);
         if (res < 0) {
             cout << "Write failed with error code: " << res << endl;
-            exit(0);
+            exit(-1);
         }
         n += nRead;
         // cout << "Wrote: " << n << endl;
     }
+    ifs.close();
     gKfsClient->Close(kfsfd);
 
-
     return 0;
-
 }
 
 bool

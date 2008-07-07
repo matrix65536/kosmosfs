@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2007/01/17
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2007 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2007-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -29,6 +30,7 @@
 #include "libkfsIO/KfsCallbackObj.h"
 #include "libkfsIO/NetConnection.h"
 #include "KfsOps.h"
+#include "RemoteSyncSM.h"
 
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
@@ -47,6 +49,18 @@ public:
     //        - write N bytes to disk
     // - Third, notify the metaserver of the status (0 to mean
     // success, -1 on failure). 
+    //
+    // Implementing the above model given the thread setup is done as
+    // follows:
+    // 1. The event thread triggers the creation of a Replicator
+    // object
+    // 2. All the network I/O is done via the network thread.  This
+    // accomplished by setting up a timer handler which does the
+    // network dispatching.
+    // 3. When we read data from the peer, that comes in via the
+    // network thread; we then submit a write op to the event thread
+    // to get the data written out.
+    //
     // During replication, the chunk isn't part of the chunkTable data
     // structure that is maintained locally.  This is done for
     // simplifying failure handling: if we die in the midst of
@@ -61,16 +75,17 @@ public:
     //
     Replicator(ReplicateChunkOp *op);
     ~Replicator();
-    // Connect to peer
-    bool Connect();
     // Start by sending out a size request
-    void Start();
+    void Start(RemoteSyncSMPtr &peer);
     // Handle the callback for a size request
-    int HandleStart(int code, void *data);
+    int HandleStartDone(int code, void *data);
     // Handle the callback for a remote read request
-    int HandleRead(int code, void *data);
-    // Handle the callback for a disk write request
-    int HandleWrite(int code, void *data);
+    int HandleReadDone(int code, void *data);
+    // Handle the callback for a write
+    int HandleWriteDone(int code, void *data);
+    // When replication done, we write out chunk meta-data; this is
+    // the handler that gets called when this event is done.
+    int HandleReplicationDone(int code, void *data);
     // Cleanup...
     void Terminate();
 
@@ -84,33 +99,23 @@ private:
     size_t mChunkSize;
     // The op that triggered this replication operation.
     ReplicateChunkOp *mOwner;
-    // For efficiency, we keep a pair of ops---the write for doing the
-    // writes to disk and the read for doing the reads from the remote
-    // chunk server.
-    WriteOp mWriteOp;
-    ReadOp mReadOp;
     // Are we done yet?
     bool mDone;
-    // Seq # that we increment when we send out read requests to the peer
-    kfsSeq_t mSeq;
     // What is the offset we are currently reading at
     off_t mOffset;
-    // A handle to the net connection to the peer.
-    NetConnectionPtr mNetConnection;
 
-    // Do the work for setting up the read such as obtaining the
-    // chunk's size.
-    int ReadSetup(IOBuffer *iobuf, int msgLen);
+    // Handle to the peer from where we have to get data
+    RemoteSyncSMPtr mPeer;
 
-    // We got a reply.  Is it good?
-    bool IsValidReadResponse(IOBuffer *iobuf, int msgLen, size_t &numBytes);
+    SizeOp mSizeOp;
+    ReadOp mReadOp;
+    WriteOp mWriteOp;
+
     // Send out a read request to the peer
     void Read();
-    // Send out a write request to disk.
-    void Write(IOBuffer *iobuf, int numBytes);
-    kfsSeq_t NextSeq() { return mSeq++; }
 
 };
+
 
 typedef boost::shared_ptr<Replicator> ReplicatorPtr;
 

@@ -2,9 +2,10 @@
 // $Id$ 
 //
 // Created 2006/03/16
-// Author: Sriram Rao (Kosmix Corp.) 
+// Author: Sriram Rao
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -42,7 +43,7 @@ namespace KFS
 {
 class ChunkServer {
 public:
-    ChunkServer() { };
+    ChunkServer() : mOpCount(0), mKickNetThread(false) { };
     
     void Init();
 
@@ -55,13 +56,44 @@ public:
                                bool connect = true);
     void RemoveServer(RemoteSyncSM *target);
 
+    std::string GetMyLocation() const {
+        return mLocation.ToString();
+    }
+
+    void ToggleNetThreadKicking (bool v) {
+        mKickNetThread = v;
+    }
+
+    bool NeedToKickNetThread() {
+        return mKickNetThread;
+    }
+    
+    void OpInserted() {
+        mOpCount++;
+    }
+
+    void OpFinished() {
+        mOpCount--;
+        if (mOpCount < 0)
+            mOpCount = 0;
+    }
+    int GetNumOps() const {
+        return mOpCount;
+    }
+
 private:
     int mClientAcceptPort;
-    
+    // # of ops in the system
+    int mOpCount;
+    bool mKickNetThread;
     ServerLocation mLocation;
     std::list<RemoteSyncSMPtr> mRemoteSyncers;
 
 };
+
+extern void verifyExecutingOnNetProcessor();
+extern void verifyExecutingOnEventProcessor();
+extern void StopNetProcessor(int status);
 
 extern ChunkServer gChunkServer;
 }

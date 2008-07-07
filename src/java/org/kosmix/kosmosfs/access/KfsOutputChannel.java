@@ -3,9 +3,10 @@
  *
  * Created 2007/09/11
  *
- * @author: Sriram Rao (Kosmix Corp.)
+ * @author: Sriram Rao 
  *
- * Copyright 2007 Kosmix Corp.
+ * Copyright 2008 Quantcast Corp.
+ * Copyright 2007-2008 Kosmix Corp.
  *
  * This file is part of Kosmos File System (KFS).
  *
@@ -39,28 +40,30 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
     private static final int DEFAULT_BUF_SIZE = 1 << 20;
     private ByteBuffer writeBuffer;
     private int kfsFd = -1;
+    private long cPtr;
 
     private final static native
-    int close(int fd);
+    int close(long ptr, int fd);
 
     private final static native
-    int write(int fd, ByteBuffer buf, int begin, int end);
+    int write(long ptr, int fd, ByteBuffer buf, int begin, int end);
 
     private final static native
-    int sync(int fd);
+    int sync(long ptr, int fd);
 
     private final static native
-    int seek(int fd, long offset);
+    int seek(long ptr, int fd, long offset);
 
     private final static native
-    long tell(int fd);
+    long tell(long ptr, int fd);
 
-    public KfsOutputChannel(int fd) 
+    public KfsOutputChannel(long ptr, int fd) 
     {
         writeBuffer = ByteBuffer.allocateDirect(DEFAULT_BUF_SIZE);
         writeBuffer.clear();
 
         kfsFd = fd;
+        cPtr = ptr;
     }
 
     public boolean isOpen()
@@ -116,7 +119,7 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
         if (last - pos == 0)
             return;
 
-        int sz = write(kfsFd, buf, pos, last);
+        int sz = write(cPtr, kfsFd, buf, pos, last);
         
         if(sz < 0)
             throw new IOException("writeDirect failed");
@@ -153,7 +156,7 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
         writeBuffer.flip();
         writeDirect(writeBuffer);
 
-        return sync(kfsFd);
+        return sync(cPtr, kfsFd);
     }
 
     // is modeled after the seek of Java's RandomAccessFile; offset is
@@ -165,7 +168,7 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
 
         sync();
 
-        return seek(kfsFd, offset);
+        return seek(cPtr, kfsFd, offset);
     }
 
     public long tell() throws IOException
@@ -173,7 +176,7 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
         if (kfsFd < 0) 
             throw new IOException("File closed");
 
-        return tell(kfsFd);
+        return tell(cPtr, kfsFd);
     }
 
     public void close() throws IOException
@@ -183,7 +186,7 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
 
         sync();
 
-        close(kfsFd);
+        close(cPtr, kfsFd);
         kfsFd = -1;
     }
 

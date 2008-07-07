@@ -4,7 +4,8 @@
 // Created 2006/08/01
 // Author: Blake Lewis (Kosmix Corp.) 
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -53,7 +54,7 @@ struct kfs_Client {
 	PyObject_HEAD
 	PyObject *propfile;		// Properties file
 	PyObject *cwd;			// Current directory
-	KfsClient *client;		// The client itself
+	KfsClientPtr client;		// The client itself
 };
 
 static void Client_dealloc(PyObject *pself);
@@ -585,7 +586,6 @@ Client_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 
 	self->propfile = p;
 	self->cwd = c;
-	self->client = NULL;
 
 	return (PyObject *)self;
 }
@@ -599,9 +599,8 @@ Client_init(PyObject *pself, PyObject *args, PyObject *kwds)
 	if (!PyArg_ParseTuple(args, "s", &pf))
 		return -1;
 
-	KfsClient *client = KFS::getKfsClient();
-	client->Init(pf);
-	if (!client->IsInitialized()) {
+	KfsClientPtr client = KFS::getKfsClientFactory()->GetClient(pf);
+	if (!client) {
 		PyErr_SetString(PyExc_IOError, "Unable to start client.");
 		return -1;
 	}

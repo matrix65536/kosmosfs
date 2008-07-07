@@ -3,7 +3,8 @@
 //
 // Created 2006/06/23
 //
-// Copyright 2006 Kosmix Corp.
+// Copyright 2008 Quantcast Corp.
+// Copyright 2006-2008 Kosmix Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -39,7 +40,7 @@ using std::cout;
 using std::endl;
 using std::ifstream;
 using namespace KFS;
-KfsClient *gKfsClient;
+KfsClientPtr gKfsClient;
 
 bool doMkdir(char *dirname);
 bool doFileOps(char *testDataFile, char *dirname, int seqNum, int numIter);
@@ -55,9 +56,8 @@ main(int argc, char **argv)
         exit(0);
     }
 
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(argv[2]);
-    if (!gKfsClient->IsInitialized()) {
+    gKfsClient = getKfsClientFactory()->GetClient(argv[2]);
+    if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(0);
     }
@@ -117,7 +117,7 @@ bool doFileOps(char *testDataFile,
         numBytes = rand() % MAX_FILE_SIZE;
     }
 
-    numBytes = 8192;
+    numBytes = 70000;
 
     cout << "Writing " << numBytes << endl;
 
@@ -139,8 +139,24 @@ bool doFileOps(char *testDataFile,
 
     if (gKfsClient->Write(fd, kfsBuf, numBytes) < 0) {
         cout << "Write failed: " << endl;
-        exit(0);
+        exit(-1);
     }
+
+    // flush out the write
+    gKfsClient->Sync(fd);
+
+    cout << "sync is done...writing some more" << endl;
+    
+
+    // write some more; since we are writing in sizes that are
+    // different from the checksum block size, this will force reading
+    // in the "block" to recompute the checksum.
+    //
+    if (gKfsClient->Write(fd, kfsBuf, numBytes) < 0) {
+        cout << "Write failed: " << endl;
+        exit(-1);
+    }
+
 
     cout << "write is done...." << endl;
     gKfsClient->Close(fd);
