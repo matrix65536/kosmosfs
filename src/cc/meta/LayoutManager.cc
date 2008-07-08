@@ -506,7 +506,6 @@ LayoutManager::SortServersByUtilization(vector<ChunkServerPtr> &servers)
 int
 LayoutManager::AllocateChunk(MetaAllocate *r)
 {
-	vector<ChunkServerPtr> candidates, dummy;
 	vector<ChunkServerPtr>::size_type i;
 	vector<int> racks;
 
@@ -526,6 +525,8 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 		numServersPerRack++;
 
 	for (uint32_t idx = 0; idx < racks.size(); idx++) {
+		vector<ChunkServerPtr> candidates, dummy;
+
 		if (r->servers.size() >= (uint32_t) r->numReplicas)
 			break;
 		FindCandidateServers(candidates, dummy, racks[idx]);
@@ -1544,10 +1545,11 @@ LayoutManager::FindIntraRackRebalanceCandidates(vector<ChunkServerPtr> &candidat
 			const vector<ChunkServerPtr> &nonloadedServers,
 			const ChunkPlacementInfo &clli)
 {
-	vector<ChunkServerPtr> servers;
 	vector<ChunkServerPtr>::const_iterator iter;
 
 	for (uint32_t i = 0; i < clli.chunkServers.size(); i++) {
+		vector<ChunkServerPtr> servers;
+
 		if (clli.chunkServers[i]->GetSpaceUtilization() <
 			MAX_SERVER_SPACE_UTIL_THRESHOLD) {
 			continue;
