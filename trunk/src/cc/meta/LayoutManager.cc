@@ -430,25 +430,27 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 		return;
 
 	vector<ServerSpace> ss;
-	ChunkServerPtr c;
 	vector<ChunkServerPtr>::size_type i, j;
 	vector<ChunkServerPtr>::const_iterator iter;
 
 	ss.resize(sources.size());
 
 	for (i = 0, j = 0; i < sources.size(); i++) {
-		c = sources[i];
+		ChunkServerPtr c = sources[i];
+
 		if ((rackId >= 0) && (c->GetRack() != rackId))
 			continue;
-		if ((c->GetAvailSpace() < CHUNKSIZE) || (!c->IsResponsiveServer()) 
+		if ((c->GetAvailSpace() < ((uint64_t) CHUNKSIZE)) || (!c->IsResponsiveServer()) 
 			|| (c->IsRetiring())) {
 			// one of: no space, non-responsive, retiring...we leave
 			// the server alone
 			continue;
 		}
-		iter = find(excludes.begin(), excludes.end(), c);
-		if (iter != excludes.end()) {
-			continue;
+		if (excludes.size() > 0) {
+			iter = find(excludes.begin(), excludes.end(), c);
+			if (iter != excludes.end()) {
+				continue;
+			}
 		}
 		ss[j].serverIdx = i;
 		ss[j].availSpace = c->GetAvailSpace();
@@ -456,6 +458,11 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 		ss[j].loadEstimate = c->GetNumChunkWrites();
 		j++;
 	}
+
+	assert(j > 0);
+	if (j == 0)
+		return;
+
 	ss.resize(j);
 
 	sort(ss.begin(), ss.end());
