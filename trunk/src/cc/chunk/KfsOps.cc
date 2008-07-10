@@ -1835,6 +1835,15 @@ WritePrepareFwdOp::HandleDone(int code, void *data)
     return owner->HandleEvent(EVENT_CMD_DONE, this);
 }
 
+class ReadChunkMetaNotifier {
+    int res;
+public:
+    ReadChunkMetaNotifier(int r) : res(r) { }
+    void operator()(KfsOp *op) {
+        op->HandleEvent(EVENT_CMD_DONE, &res);
+    }
+};
+
 int
 ReadChunkMetaOp::HandleDone(int code, void *data)
 {
@@ -1853,7 +1862,11 @@ ReadChunkMetaOp::HandleDone(int code, void *data)
         }
     }
     
+    gChunkManager.ReadChunkMetadataDone(chunkId);
     clnt->HandleEvent(EVENT_CMD_DONE, (void *) &res);
+
+    for_each(waiters.begin(), waiters.end(), ReadChunkMetaNotifier(res));
+
     delete this;
     return 0;
 }
@@ -1901,7 +1914,7 @@ WriteSyncOp::~WriteSyncOp()
 
     gChunkManager.ChunkSize(chunkId, &chunkSize);
     if ((chunkSize > 0) && 
-        (chunkSize > (off_t) KFS::CHUNKSIZE)) {
+        (chunkSize >= (off_t) KFS::CHUNKSIZE)) {
         // we are done with all the writing to this chunk; so, close it
         gChunkManager.CloseChunk(chunkId);
     }

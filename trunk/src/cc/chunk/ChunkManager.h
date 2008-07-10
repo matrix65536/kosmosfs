@@ -50,7 +50,8 @@ const size_t KFS_CHUNK_HEADER_SIZE = 16384;
 /// Encapsulate a chunk file descriptor and information about the
 /// chunk such as name and version #.
 struct ChunkInfoHandle_t {
-    ChunkInfoHandle_t() : lastIOTime(0), isBeingReplicated(false) {  };
+    ChunkInfoHandle_t() : lastIOTime(0), isBeingReplicated(false), 
+                          isMetadataReadOngoing(false), readChunkMetaOp(NULL) {  };
 
     struct ChunkInfo_t chunkInfo;
     /// Chunks are stored as files in he underlying filesystem; each
@@ -61,6 +62,11 @@ struct ChunkInfoHandle_t {
     time_t lastIOTime;  // when was the last I/O done on this chunk
     bool isBeingReplicated;  // is the chunk being replicated from
                              // another server
+
+    /// set if a read request for the chunk meta-data has been issued to disk.
+    bool isMetadataReadOngoing;
+    /// keep track of the op that is doing the read
+    ReadChunkMetaOp *readChunkMetaOp;
 
     void Release() {
         chunkInfo.UnloadChecksums();
@@ -158,6 +164,9 @@ public:
     /// @retval 0 if op was successfully scheduled; -errno otherwise
     int		WriteChunkMetadata(kfsChunkId_t chunkId, KfsOp *cb);
     int		ReadChunkMetadata(kfsChunkId_t chunkId, KfsOp *cb);
+    
+    /// Notification that read is finished
+    void	ReadChunkMetadataDone(kfsChunkId_t chunkId);
 
     /// We read the chunk metadata out of disk; we update the chunk
     /// table with this info.

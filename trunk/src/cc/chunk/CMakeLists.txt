@@ -51,8 +51,8 @@ if (NOT APPLE)
 endif (NOT APPLE)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
-   target_link_libraries(chunk umem)
-   target_link_libraries(chunkserver umem)
+   target_link_libraries(chunk mtmalloc)
+   target_link_libraries(chunkserver mtmalloc)
 endif (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
 
 #
