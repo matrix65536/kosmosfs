@@ -218,6 +218,14 @@ ChunkManager::ReadChunkMetadata(kfsChunkId_t chunkId, KfsOp *cb)
     if (cih->chunkInfo.AreChecksumsLoaded())
         return cb->HandleEvent(EVENT_CMD_DONE, (void *) &res);
 
+    if (cih->isMetadataReadOngoing) {
+        // if we have issued a read request for this chunk's metadata,
+        // don't submit another one; otherwise, we will simply drive
+        // up memory usage for useless IO's
+        cih->readChunkMetaOp->AddWaiter(cb);
+        return 0;
+    }
+
     ReadChunkMetaOp *rcm = new ReadChunkMetaOp(chunkId, cb);
     DiskConnection *d = SetupDiskConnection(chunkId, rcm);
     if (d == NULL)
@@ -229,7 +237,25 @@ ChunkManager::ReadChunkMetadata(kfsChunkId_t chunkId, KfsOp *cb)
     if (res < 0) {
         delete rcm;
     }
+
+    cih->isMetadataReadOngoing = true;
+    cih->readChunkMetaOp = rcm;
+    
     return res >= 0 ? 0 : res;
+}
+
+void
+ChunkManager::ReadChunkMetadataDone(kfsChunkId_t chunkId)
+{
+    CMI tableEntry = mChunkTable.find(chunkId);
+
+    if (tableEntry == mChunkTable.end()) 
+        return;
+
+    ChunkInfoHandle_t *cih = tableEntry->second;
+
+    cih->isMetadataReadOngoing = false;
+    cih->readChunkMetaOp = NULL;
 }
 
 int

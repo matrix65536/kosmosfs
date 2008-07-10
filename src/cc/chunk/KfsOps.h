@@ -614,6 +614,9 @@ struct ReadChunkMetaOp : public KfsOp {
     kfsChunkId_t chunkId;
     DiskConnectionPtr diskConnection; /* disk connection used for reading data */
 
+    // others ops that are also waiting for this particular meta-data
+    // read to finish; they'll get notified when the read is done
+    std::list<KfsOp *> waiters;
     ReadChunkMetaOp(kfsChunkId_t c, KfsCallbackObj *o) : 
         KfsOp(CMD_READ_CHUNKMETA, 0, o), chunkId(c)
     {
@@ -626,7 +629,10 @@ struct ReadChunkMetaOp : public KfsOp {
 
         os << "read-chunk-meta: chunkid = " << chunkId;
         return os.str();
+    }
 
+    void AddWaiter(KfsOp *op) {
+        waiters.push_back(op);
     }
     // Update internal data structures and then notify the waiting op
     // that read of meta-data is done.
