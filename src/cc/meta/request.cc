@@ -298,8 +298,21 @@ handle_readdir(MetaRequest *r)
 		req->status = -ENOENT;
 	else if (!is_dir(req->dir))
 		req->status = -ENOTDIR;
-	else
-		req->status = metatree.readdir(req->dir, req->v);
+	else {
+		vector<MetaDentry *> res;
+		req->status = metatree.readdir(req->dir, res);
+		//
+		// Previously, req->v used to be vector<MetaDentry *>.  This
+		// meant that req->v carried out a pointer for something in the
+		// metatree.  Now, if the pointer was deleted, then req->v
+		// contains dangling references and can corrupt memory.
+		// Instead, make a copy of the dentry and we are good.
+		//
+		if (req->status == 0) {
+			for (uint32_t i = 0; i < res.size(); i++)
+				req->v.push_back(res[i]);
+		}
+	}
 }
 
 class EnumerateLocations {
@@ -1696,8 +1709,7 @@ MetaRmdir::response(ostringstream &os)
 void
 MetaReaddir::response(ostringstream &os)
 {
-	vector<MetaDentry *>::iterator iter;
-	MetaDentry *d;
+	vector<MetaDentry>::iterator iter;
 	string res;
 	int numEntries = 0;
 
@@ -1715,12 +1727,11 @@ MetaReaddir::response(ostringstream &os)
 	// eof indicator to support reading less than a whole
 	// directory at a time.
 	for (iter = v.begin(); iter != v.end(); ++iter) {
-		d = *iter;
 		// "/" doesn't have "/" as an entry in it.
-		if ((dir == ROOTFID) && (d->getName() == "/"))
+		if ((dir == ROOTFID) && (iter->getName() == "/"))
 			continue;
 
-		res = res + d->getName() + "\n";
+		res = res + iter->getName() + "\n";
 		++numEntries;
 	}
 	os << "Num-Entries: " << numEntries << "\r\n";

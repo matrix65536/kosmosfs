@@ -95,6 +95,9 @@ class MetaDentry: public Meta {
 public:
 	MetaDentry(fid_t parent, string fname, fid_t myID):
 		Meta(KFS_DENTRY, myID), dir(parent), name(fname) { }
+	
+	MetaDentry(const MetaDentry *other) :
+		Meta(KFS_DENTRY, other->id()), dir(other->dir), name(other->name) { }
 
 	const Key key() const { return Key(KFS_DENTRY, dir); }
 	const string show() const;
