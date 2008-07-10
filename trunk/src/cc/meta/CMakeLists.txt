@@ -51,8 +51,8 @@ if (NOT APPLE)
 endif (NOT APPLE)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
-   target_link_libraries(kfsMeta umem)
-   target_link_libraries(metaserver umem)
+   target_link_libraries(kfsMeta mtmalloc)
+   target_link_libraries(metaserver mtmalloc)
 endif (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
 
 #
