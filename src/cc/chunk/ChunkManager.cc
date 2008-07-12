@@ -672,16 +672,19 @@ ChunkManager::WriteChunk(WriteOp *op)
                                      CHECKSUM_BLOCKSIZE);
             KFS_LOG_VA_DEBUG("Write triggered a read for offset = %ld",
                              op->offset);
+
+            op->rop = rop;
+
             rop->Execute();
 
             if (rop->status < 0) {
                 int res = rop->status;
 
+                op->rop = NULL;
                 rop->wop = NULL;
                 delete rop;
                 return res;
             }
-            op->rop = rop;
 
             return 0;
         }
@@ -1548,6 +1551,7 @@ ChunkManager::ScavengePendingWrites()
     list<WriteOp *>::iterator i;
     WriteOp *op;
     time_t now = time(NULL);
+    ChunkInfoHandle_t *cih;
 
     i = mPendingWrites.begin();
     while (i != mPendingWrites.end()) {
@@ -1560,7 +1564,13 @@ ChunkManager::ScavengePendingWrites()
         KFS_LOG_VA_DEBUG("Retiring write with id=%ld as it has been too long",
                          op->writeId);
         mPendingWrites.pop_front();
-        CloseChunk(op->chunkId);
+
+        if ((GetChunkInfoHandle(op->chunkId, &cih) == 0) &&
+            (now - cih->lastIOTime >= INACTIVE_FDS_CLEANUP_INTERVAL_SECS)) {
+            // close the chunk only if it is inactive
+            CloseChunk(op->chunkId);
+        }
+
         delete op;
         i = mPendingWrites.begin();
     }
