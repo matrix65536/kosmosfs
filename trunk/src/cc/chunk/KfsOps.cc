@@ -1490,7 +1490,6 @@ WriteSyncOp::HandleDone(int code, void *data)
     return 0;
 }
 
-#if 0
 void 
 WriteOp::Execute()
 {
@@ -1503,7 +1502,6 @@ WriteOp::Execute()
         wpop->HandleEvent(EVENT_CMD_DONE, this);
     }
 }
-#endif
 
 void
 SizeOp::Execute()
