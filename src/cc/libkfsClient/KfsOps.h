@@ -547,10 +547,15 @@ struct WriteSyncOp : public KfsOp {
     kfsChunkId_t chunkId;
     int64_t chunkVersion;
     std::vector<WriteInfo> writeInfo;
+    WriteSyncOp() : KfsOp(CMD_WRITE_SYNC, 0) { }
     WriteSyncOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, std::vector<WriteInfo> &w) :
-        KfsOp(CMD_WRITE_SYNC, s), chunkId(c), chunkVersion(v), writeInfo(w) 
-    { 
-    
+        KfsOp(CMD_WRITE_SYNC, s), chunkId(c), chunkVersion(v), writeInfo(w)
+    { }
+    void Init(kfsSeq_t s, kfsChunkId_t c, int64_t v, std::vector<WriteInfo> &w) {
+        seq = s;
+        chunkId = c;
+        chunkVersion = v;
+        writeInfo = w;
     }
     void Request(std::ostringstream &os);   
     std::string Show() const {

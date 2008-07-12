@@ -84,8 +84,6 @@ enum KfsOp_t {
     // the client can comptue checksum on input data and verify that
     // they both match
     CMD_GET_CHUNK_METADATA,
-    // Chunkserver -> Chunkserver ops
-    CMD_WRITE_COMMIT,
     // Monitoring ops
     CMD_PING,
     CMD_STATS,
@@ -522,7 +520,8 @@ struct WriteOp : public KfsOp {
         SET_HANDLER(this, &WriteOp::HandleWriteDone);
     }
     void Response(std::ostringstream &os) { };
-    void Execute();
+    // write op's aren't executed...they are internally generated.
+    void Execute() { }
     void Log(std::ofstream &ofs);
     int HandleWriteDone(int code, void *data);    
     int HandleSyncDone(int code, void *data);

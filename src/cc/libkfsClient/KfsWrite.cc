@@ -470,7 +470,7 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	WritePrepareOp *op = new WritePrepareOp(nextSeq(), chunk->chunkId,
 	                                        chunk->chunkVersion, writeId);
 
-	op->numBytes = min(MAX_BYTES_PER_IO, numAvail - numWrote);
+	op->numBytes = min(MAX_BYTES_PER_WRITE_IO, numAvail - numWrote);
 
 	if ((op->numBytes % CHECKSUM_BLOCKSIZE) != 0) {
 	    // if the write isn't aligned to end on a checksum block
@@ -633,26 +633,104 @@ KfsClientImpl::AllocateWriteId(int fd, off_t offset, size_t numBytes,
 }
 
 int
-KfsClientImpl::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops, TcpSocket *masterSock)
+KfsClientImpl::PushData(int fd, vector<WritePrepareOp *> &ops, 
+                        uint32_t start, uint32_t count, TcpSocket *masterSock)
 {
-    int res;
+    uint32_t last = min((size_t) (start + count), ops.size());
+    int res = 0;
 
-    if (ops.size() == 0)
-        return 0;
-
-    // push the data to the server
-    for (uint32_t i = 0; i < ops.size(); i++) {
+    for (uint32_t i = start; i < last; i++) {        
         res = DoOpSend(ops[i], masterSock);
         if (res < 0)
             break;
     }
-    if (res == 0) {
-        // do a commit
-        res = IssueCommit(fd, ops[0]->writeInfo, masterSock);
-        if (res >= 0)
-            res = 0;
+    return res;
+}
+
+int
+KfsClientImpl::SendCommit(int fd, vector<WriteInfo> &writeId, TcpSocket *masterSock,
+                          WriteSyncOp &sop)
+{
+    ChunkAttr *chunk = GetCurrChunk(fd);
+    int res = 0;
+
+    sop.Init(nextSeq(), chunk->chunkId, chunk->chunkVersion, writeId);
+
+    res = DoOpSend(&sop, masterSock);
+    if (res < 0)
+        return sop.status;
+
+    return 0;
+    
+}
+
+int
+KfsClientImpl::GetCommitReply(WriteSyncOp &sop, TcpSocket *masterSock)
+{
+    int res;
+
+    res = DoOpResponse(&sop, masterSock);
+    if (res < 0)
+        return sop.status;
+    return sop.status;
+
+}
+
+int
+KfsClientImpl::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops, TcpSocket *masterSock)
+{
+    int res;
+    vector<WritePrepareOp *>::size_type next, minOps;
+    WriteSyncOp syncOp[2];
+
+    if (ops.size() == 0)
+        return 0;
+
+    // push the data to the server; to avoid bursting the server with
+    // a full chunk, do it in a pipelined fashion:
+    //  -- send 512K of data; do a flush; send another 512K; do another flush
+    //  -- every time we get an ack back, we send another 512K
+    //
+  
+    // we got 2 commits: current is the one we just sent; previous is
+    // the one for which we are expecting a reply
+    int prevCommit = 0;
+    int currCommit = 1;
+  
+    minOps = min((size_t) (MIN_BYTES_PIPELINE_IO / MAX_BYTES_PER_WRITE_IO) / 2, ops.size());
+
+    res = PushData(fd, ops, 0, minOps, masterSock);
+    if (res < 0)
+        goto error_out;
+
+    res = SendCommit(fd, ops[0]->writeInfo, masterSock, syncOp[0]);
+
+    if (res < 0)
+        goto error_out;
+  
+    for (next = minOps; next < ops.size(); next += minOps) {
+        res = PushData(fd, ops, next, minOps, masterSock);
+        if (res < 0)
+            goto error_out;
+
+        res = SendCommit(fd, ops[next]->writeInfo, masterSock, syncOp[currCommit]);
+        if (res < 0)
+            goto error_out;
+
+        res = GetCommitReply(syncOp[prevCommit], masterSock);
+        prevCommit = currCommit;
+        currCommit++;
+        currCommit %= 2;
+        if (res < 0)
+            // the commit for previous failed; there is still the
+            // business of getting the reply for the "current" one
+            // that we sent out.
+            break;
     }
 
+    res = GetCommitReply(syncOp[prevCommit], masterSock);
+
+  error_out:
     if (res < 0) {
         // res will be -1; we need to pick out the error from the op that failed
         for (uint32_t i = 0; i < ops.size(); i++) {

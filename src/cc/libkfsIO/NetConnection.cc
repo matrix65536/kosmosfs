@@ -73,6 +73,10 @@ void NetConnection::HandleWriteEvent()
 {
     int nwrote;
 
+    // if non-blocking connect was set, then the first callback
+    // signaling write-ready means that connect() has succeeded.
+    mDoingNonblockingConnect = false;
+
     // clear the value so we can let flushes thru when possible
     mLastFlushResult = 0;
 
@@ -107,11 +111,27 @@ bool NetConnection::IsReadReady(bool isSystemOverloaded)
 
 bool NetConnection::IsWriteReady()
 {
+    if (mDoingNonblockingConnect)
+        return true;
+
     if (mOutBuffer == NULL)
     	return false;
 
     return (mOutBuffer->BytesConsumable() > 0);
 }
+
+int NetConnection::GetNumBytesToWrite()
+{
+    // force addition to the poll vector
+    if (mDoingNonblockingConnect)
+        return 1;
+
+    if (mOutBuffer == NULL)
+    	return 0;
+
+    return mOutBuffer->BytesConsumable();
+}
+
 
 bool NetConnection::IsGood()
 {

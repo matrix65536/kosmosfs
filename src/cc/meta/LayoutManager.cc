@@ -40,6 +40,7 @@ using std::mem_fun;
 using std::mem_fun_ref;
 using std::bind2nd;
 using std::sort;
+using std::random_shuffle;
 using std::remove_if;
 using std::set;
 using std::vector;
@@ -283,9 +284,9 @@ LayoutManager::ServerDown(ChunkServer *server)
 	/// this server.
 	server->FailPendingOps();
 
-	mChunkServers.erase(i);
 	MapPurger purge(mChunkToServerMap, mChunkReplicationCandidates, server);
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+	mChunkServers.erase(i);
 }
 
 int
@@ -353,7 +354,8 @@ LayoutManager::FindCandidateRacks(vector<int> &result, const set<int> &excludes)
 	set<int>::const_iterator iter;
 
 	result.clear();
-	sort(mRacks.begin(), mRacks.end());
+	// sort(mRacks.begin(), mRacks.end());
+	random_shuffle(mRacks.begin(), mRacks.end());
 	for (uint32_t i = 0; i < mRacks.size(); i++) {
 		if (!excludes.empty()) {
 			iter = excludes.find(mRacks[i].id());
@@ -459,7 +461,6 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 		j++;
 	}
 
-	assert(j > 0);
 	if (j == 0)
 		return;
 

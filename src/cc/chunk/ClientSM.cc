@@ -45,9 +45,6 @@ using boost::scoped_array;
 using namespace KFS;
 using namespace KFS::libkfsio;
 
-// each op---read/write uses say 64K mem; so, 3000 * 64 = ~192MB
-int gMaxOutstandingOps = 10000;
-
 ClientSM::ClientSM(NetConnectionPtr &conn) 
 {
     mNetConnection = conn;
@@ -148,9 +145,6 @@ ClientSM::HandleRequest(int code, void *data)
     case EVENT_CMD_DONE:
 	// An op finished execution.  Send response back in FIFO
         gChunkServer.OpFinished();
-        if (gChunkServer.GetNumOps() < gMaxOutstandingOps / 2) {
-            globals().netManager.ChangeOverloadState(false);            
-        }
             
 	op = (KfsOp *) data;
 	op->done = true;
@@ -207,9 +201,6 @@ ClientSM::HandleTerminate(int code, void *data)
     switch (code) {
     case EVENT_CMD_DONE:
         gChunkServer.OpFinished();
-        if (gChunkServer.GetNumOps() < gMaxOutstandingOps / 2) {
-            globals().netManager.ChangeOverloadState(false);            
-        }
 	// An op finished execution.  Send a response back
 	op = (KfsOp *) data;
 	op->done = true;
@@ -295,9 +286,7 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
     op->clnt = this;
     // op->Execute();
     gChunkServer.OpInserted();
-    if (gChunkServer.GetNumOps() > gMaxOutstandingOps) {
-        globals().netManager.ChangeOverloadState(true);
-    }
+
     SubmitOp(op);
 
     return true;

@@ -450,10 +450,10 @@ void IOBuffer::Consume(int nbytes)
         data = *iter;
         bytesConsumed = data->Consume(nbytes);
         nbytes -= bytesConsumed;
-        if (nbytes <= 0)
-            break;
         if (data->IsEmpty())
             mBuf.pop_front();
+        if (nbytes <= 0)
+            break;
         iter = mBuf.begin();
     }
     assert(nbytes == 0);

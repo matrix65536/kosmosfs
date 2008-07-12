@@ -448,8 +448,8 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
     ReadOp *op;
     bool leaseExpired = false;
 
-    // plumb the pipe with 8MB
-    minOps = min((size_t) (MIN_BYTES_PIPELINE_IO / MAX_BYTES_PER_IO), ops.size());
+    // plumb the pipe with 1MB
+    minOps = min((size_t) (MIN_BYTES_PIPELINE_IO / MAX_BYTES_PER_READ_IO), ops.size());
     // plumb the pipe with a few ops
     for (next = 0; next < minOps; ++next) {
         op = ops[next];

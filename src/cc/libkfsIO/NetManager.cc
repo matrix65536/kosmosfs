@@ -39,7 +39,7 @@ using std::list;
 using namespace KFS;
 using namespace KFS::libkfsio;
 
-NetManager::NetManager()
+NetManager::NetManager() : mDiskOverloaded(false), mNetworkOverloaded(false), mMaxOutgoingBacklog(0)
 {
     pthread_mutexattr_t mutexAttr;
     int rval;
@@ -53,7 +53,8 @@ NetManager::NetManager()
     mSelectTimeout.tv_usec = 0;
 }
 
-NetManager::NetManager(const struct timeval &selectTimeout)
+NetManager::NetManager(const struct timeval &selectTimeout) : 
+    mDiskOverloaded(false), mNetworkOverloaded(false), mMaxOutgoingBacklog(0)
 {
     mSelectTimeout.tv_sec = selectTimeout.tv_sec;
     mSelectTimeout.tv_usec = selectTimeout.tv_usec;
@@ -105,6 +106,10 @@ NetManager::MainLoop()
     NetConnectionListIter_t iter, eltToRemove;
     struct timeval selectTimeout;
 
+    // if we have too many bytes to send, throttle incoming
+    int64_t totalNumBytesToSend = 0;
+    bool overloaded = false;
+
     while (1) {
 
         maxFd = 0;
@@ -118,6 +123,11 @@ NetManager::MainLoop()
         FD_SET(fd, &readSet);
         maxFd = fd;
 
+        overloaded = IsOverloaded(totalNumBytesToSend);
+        int numBytesToSend;
+
+        totalNumBytesToSend = 0;
+
         for (iter = mConnections.begin(); iter != mConnections.end(); ++iter) {
             conn = *iter;
             fd = conn->GetFd();
@@ -129,7 +139,7 @@ NetManager::MainLoop()
             if (fd > maxFd)
                 maxFd = fd;
 
-            if (conn->IsReadReady(mOverloaded)) {
+            if (conn->IsReadReady(overloaded)) {
                 // By default, each connection is read ready.  We
                 // expect there to be 2-way data transmission, and so
                 // we are read ready.  In overloaded state, we only
@@ -138,14 +148,21 @@ NetManager::MainLoop()
                 FD_SET(fd, &readSet);
             }
 
-            if (conn->IsWriteReady()) {
+            numBytesToSend = conn->GetNumBytesToWrite();
+            if (numBytesToSend > 0) {
+                totalNumBytesToSend += numBytesToSend;
                 // An optimization: if we are not sending any data for
                 // this fd in this round of poll, don't bother adding
                 // it to the poll vector.
                 FD_SET(fd, &writeSet);
             }
-
             FD_SET(fd, &errSet);
+        }
+
+        if (!overloaded) {
+            overloaded = IsOverloaded(totalNumBytesToSend);
+            if (overloaded)
+                continue;
         }
 
         struct timeval startTime, endTime;
@@ -187,7 +204,7 @@ NetManager::MainLoop()
             conn = *iter;
             fd = conn->GetFd();
             if ((fd > 0) && (FD_ISSET(fd, &readSet))) {
-                conn->HandleReadEvent(mOverloaded);
+                conn->HandleReadEvent(overloaded);
                 FD_CLR(fd, &readSet);
             }
             // conn could have closed due to errors during read.  so,
@@ -217,16 +234,37 @@ NetManager::MainLoop()
     }
 }
 
-void
-NetManager::ChangeOverloadState(bool v)
+bool
+NetManager::IsOverloaded(int64_t numBytesToSend)
 {
-    if (mOverloaded == v)
-        return;
-    mOverloaded = v;
-    
-    if (mOverloaded) {
-        KFS_LOG_INFO("System is overloaded...");
-    } else {
-        KFS_LOG_INFO("Overload state is cleared...");
+    static bool wasOverloaded = false;
+
+    if (mMaxOutgoingBacklog > 0) {
+        if (!mNetworkOverloaded) {
+            mNetworkOverloaded = (numBytesToSend > mMaxOutgoingBacklog);
+        } else if (numBytesToSend <= mMaxOutgoingBacklog / 2) {
+            // network was overloaded and that has now cleared
+            mNetworkOverloaded = false;
+        }
     }
+
+    bool isOverloaded = mDiskOverloaded || mNetworkOverloaded;
+
+    if (!wasOverloaded && isOverloaded) {
+        KFS_LOG_VA_INFO("System is now in overloaded state (%ld bytes to send; %d disk IO's) ",
+                        numBytesToSend, globals().diskManager.NumDiskIOOutstanding());
+    } else if (wasOverloaded && !isOverloaded) {
+        KFS_LOG_VA_INFO("Clearing system overload state (%ld bytes to send; %d disk IO's)",
+                        numBytesToSend, globals().diskManager.NumDiskIOOutstanding());
+    }
+    wasOverloaded = isOverloaded;
+    return isOverloaded;
+}
+
+void
+NetManager::ChangeDiskOverloadState(bool v)
+{
+    if (mDiskOverloaded == v)
+        return;
+    mDiskOverloaded = v;
 }

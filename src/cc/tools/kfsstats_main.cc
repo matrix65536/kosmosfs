@@ -275,9 +275,8 @@ RpcStatsChunkServer(TcpSocket &chunkServerSock, int numSecs)
         PrintRpcStat("Size", op.stats);
         PrintRpcStat("Open", op.stats);
         PrintRpcStat("Read", op.stats);
-        PrintRpcStat("Write Prepare->Sync", op.stats);
+        PrintRpcStat("Write (AIO)", op.stats);
         PrintRpcStat("Write Prepare", op.stats);
-        PrintRpcStat("Write Commit", op.stats);
         PrintRpcStat("Write Sync", op.stats);
         PrintRpcStat("Write Master", op.stats);
         PrintRpcStat("Delete", op.stats);

@@ -71,7 +71,15 @@ public:
     void RegisterTimeoutHandler(ITimeout *handler);
     void UnRegisterTimeoutHandler(ITimeout *handler);
 
-    void ChangeOverloadState(bool v);
+    /// This API can be used to limit the backlog of outgoing data.
+    /// Whenever the backlog exceeds the threshold, poll vector bits
+    /// are turned off for incoming traffic.
+    void SetBacklogLimit(int64_t v) {
+        mMaxOutgoingBacklog = v;
+    }
+    void ChangeDiskOverloadState(bool v);
+
+    bool IsOverloaded(int64_t numBytesToSend);
 
     ///
     /// This function never returns.  It builds a poll vector, calls
@@ -92,10 +100,14 @@ private:
     NetConnectionList_t	mConnections;
     /// timeout interval specified in the call to select().
     struct timeval 	mSelectTimeout;
-    /// when the system is overloaded, we avoid polling fd's for
+    /// when the system is overloaded--either because of disk or we
+    /// have too much network I/O backlogged---we avoid polling fd's for
     /// read.  this causes back-pressure and forces the clients to
     /// slow down
-    bool		mOverloaded;
+    bool		mDiskOverloaded;
+    bool		mNetworkOverloaded;
+    int64_t		mMaxOutgoingBacklog;
+
     /// Handlers that are notified whenever a call to select()
     /// returns.  To the handlers, the notification is a timeout signal.
     std::list<ITimeout *>	mTimeoutHandlers;
