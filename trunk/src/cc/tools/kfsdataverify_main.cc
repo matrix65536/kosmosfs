@@ -40,6 +40,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <string.h>
 
 #include "libkfsIO/Checksum.h"
 #include "common/log.h"
