@@ -159,9 +159,8 @@ KFS::RegisterCounters()
     AddCounter("Open", CMD_OPEN);
     AddCounter("Read", CMD_READ);
     AddCounter("Write Prepare", CMD_WRITE_PREPARE);
-    AddCounter("Write Commit", CMD_WRITE_COMMIT);
     AddCounter("Write Sync", CMD_WRITE_SYNC);
-    AddCounter("Write Prepare->Sync", CMD_WRITE);
+    AddCounter("Write (AIO)", CMD_WRITE);
     AddCounter("Size", CMD_SIZE);
     AddCounter("Get Chunk Metadata", CMD_GET_CHUNK_METADATA);
     AddCounter("Alloc", CMD_ALLOC_CHUNK);
@@ -1300,6 +1299,8 @@ WritePrepareOp::Execute()
 
     // will clone only when the op is good
     writeOp = gChunkManager.CloneWriteOp(writeId);
+    UpdateCounter(CMD_WRITE);
+
     assert(writeOp != NULL);
 
     writeOp->offset = offset;
@@ -1374,11 +1375,11 @@ WriteSyncOp::Execute()
             writeMaster = true;
     }
 
-    writeOp = gChunkManager.GetWriteOp(writeId);
+    writeOp = gChunkManager.CloneWriteOp(writeId);
     if (writeOp == NULL) {
         KFS_LOG_VA_DEBUG("Write sync failed...unable to find write-id: %ld", writeId);
-        gLogger.Submit(this);
         status = -EINVAL;
+        gLogger.Submit(this);
         return;
     }
     
@@ -1489,6 +1490,7 @@ WriteSyncOp::HandleDone(int code, void *data)
     return 0;
 }
 
+#if 0
 void 
 WriteOp::Execute()
 {
@@ -1501,6 +1503,7 @@ WriteOp::Execute()
         wpop->HandleEvent(EVENT_CMD_DONE, this);
     }
 }
+#endif
 
 void
 SizeOp::Execute()

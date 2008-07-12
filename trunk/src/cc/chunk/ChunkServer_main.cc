@@ -92,6 +92,9 @@ main(int argc, char **argv)
 
     globals().diskManager.InitForAIO();
 
+    // would like to limit to 200MB outstanding
+    // globals().netManager.SetBacklogLimit(200 * 1024 * 1024);
+
     gChunkServer.Init();
     gChunkManager.Init(gChunkDirs, gTotalSpace);
     gLogger.Init(gLogDir);

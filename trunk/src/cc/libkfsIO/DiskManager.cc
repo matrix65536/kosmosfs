@@ -364,7 +364,7 @@ DiskManager::IOInitiated()
         KFS_LOG_VA_INFO("Too many disk IOs (%d) outstanding...overloaded", 
                         mDiskEvents.size());
         mOverloaded = true;
-        globals().netManager.ChangeOverloadState(true);
+        globals().netManager.ChangeDiskOverloadState(true);
     }
 }
 
@@ -380,7 +380,7 @@ DiskManager::IOCompleted()
         KFS_LOG_VA_INFO("# of disk I/Os outstanding (%d) is below limit...clearing overloaded",
                         mDiskEvents.size());
         mOverloaded = false;
-        globals().netManager.ChangeOverloadState(false);
+        globals().netManager.ChangeDiskOverloadState(false);
     }
 }
 

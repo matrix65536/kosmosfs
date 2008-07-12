@@ -62,16 +62,20 @@ public:
     /// @param[in] sock TcpSocket on which I/O can be done
     /// @param[in] c KfsCallbackObj associated with this connection
     NetConnection(TcpSocket *sock, KfsCallbackObj *c) : 
-        mListenOnly(false), mEnableReadIfOverloaded(false), mCallbackObj(c), 
+        mListenOnly(false), mEnableReadIfOverloaded(false), 
+        mDoingNonblockingConnect(false),
+        mCallbackObj(c), 
         mSock(sock), mInBuffer(NULL), mOutBuffer(NULL), 
-        mNumBytesOut(0), mLastFlushResult(0) { }
+        mNumBytesOut(0), mLastFlushResult(0) { } 
 
     /// @param[in] sock TcpSocket on which I/O can be done
     /// @param[in] c KfsCallbackObj associated with this connection
     /// @param[in] listenOnly boolean that specifies whether this
     /// connection is setup only for accepting new connections.
     NetConnection(TcpSocket *sock, KfsCallbackObj *c, bool listenOnly) :
-        mListenOnly(listenOnly),  mCallbackObj(c), mSock(sock), 
+        mListenOnly(listenOnly),  
+        mDoingNonblockingConnect(false),
+        mCallbackObj(c), mSock(sock), 
         mInBuffer(NULL), mOutBuffer(NULL), 
         mNumBytesOut(0), mLastFlushResult(0) 
     {
@@ -85,6 +89,9 @@ public:
         delete mInBuffer;
     }
 
+    void SetDoingNonblockingConnect() {
+        mDoingNonblockingConnect = true;
+    }
     void SetOwningKfsCallbackObj(KfsCallbackObj *c) {
         mCallbackObj = c;
     }
@@ -115,6 +122,9 @@ public:
     /// Is data available for writing?
     bool IsWriteReady();
 
+    /// # of bytes available for writing
+    int GetNumBytesToWrite();
+
     /// Is the connection still good?
     bool IsGood();
 
@@ -139,7 +149,7 @@ public:
     }
 
     void StartFlush() {
-        if (mLastFlushResult < 0)
+        if ((mLastFlushResult < 0) || (mDoingNonblockingConnect))
             return;
         // if there is any data to be sent out, start the send
         if (mOutBuffer && mOutBuffer->BytesConsumable() > 0)
@@ -156,6 +166,12 @@ private:
     /// should we add this connection to the poll vector for reads
     /// even when the system is overloaded? 
     bool		mEnableReadIfOverloaded;
+
+    /// Set if the connect was done in non-blocking manner.  In this
+    /// case, the first callback for "write ready" will mean that we
+    /// connect has finished.
+    bool		mDoingNonblockingConnect;
+
     /// KfsCallbackObj that will be notified whenever "events" occur.
     KfsCallbackObj	*mCallbackObj;
     /// Socket on which I/O will be done.

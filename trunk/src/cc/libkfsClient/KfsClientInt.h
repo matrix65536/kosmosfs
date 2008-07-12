@@ -44,11 +44,11 @@
 
 namespace KFS {
 
-/// Set this to 8MB
-const size_t MIN_BYTES_PIPELINE_IO = CHECKSUM_BLOCKSIZE * 128;
+/// Set this to 1MB: 64K * 16
+const size_t MIN_BYTES_PIPELINE_IO = CHECKSUM_BLOCKSIZE * 16;
 
 /// Per write, push out at most one checksum block size worth of data
-const size_t MAX_BYTES_PER_IO = CHECKSUM_BLOCKSIZE;
+const size_t MAX_BYTES_PER_WRITE_IO = CHECKSUM_BLOCKSIZE;
 /// on zfs, blocks are 128KB on disk; so, align reads appropriately
 const size_t MAX_BYTES_PER_READ_IO = CHECKSUM_BLOCKSIZE * 2;
 
@@ -715,6 +715,16 @@ private:
     /// Helpers for pipelined write
     int AllocateWriteId(int fd, off_t offset, size_t numBytes, std::vector<WriteInfo> &writeId, 
                         TcpSocket *masterSock);
+
+    int PushData(int fd, vector<WritePrepareOp *> &ops, 
+                 uint32_t start, uint32_t count, TcpSocket *masterSock);
+
+    int SendCommit(int fd, vector<WriteInfo> &writeId, TcpSocket *masterSock,
+                   WriteSyncOp &sop);
+
+    int GetCommitReply(WriteSyncOp &sop, TcpSocket *masterSock);
+
+    // this is going away...
     int IssueCommit(int fd, std::vector<WriteInfo> &writeId, TcpSocket *masterSock);
 
     /// Get a response from the server, where, the response is

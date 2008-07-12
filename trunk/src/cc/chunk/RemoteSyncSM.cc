@@ -64,12 +64,15 @@ bool
 RemoteSyncSM::Connect()
 {
     TcpSocket *sock;
+    int res;
 
     KFS_LOG_VA_DEBUG("Trying to connect to: %s", mLocation.ToString().c_str());
 
     sock = new TcpSocket();
-    if (sock->Connect(mLocation)) {
-        KFS_LOG_VA_DEBUG("Connect to remote server (%s) failed...",
+    // do a non-blocking connect
+    res = sock->Connect(mLocation, true);
+    if ((res < 0) && (res != -EINPROGRESS)) {
+        KFS_LOG_VA_INFO("Connect to remote server (%s) failed...",
                          mLocation.ToString().c_str());
         delete sock;
         return false;
@@ -86,6 +89,7 @@ RemoteSyncSM::Connect()
     SET_HANDLER(this, &RemoteSyncSM::HandleEvent);
 
     mNetConnection.reset(new NetConnection(sock, this));
+    mNetConnection->SetDoingNonblockingConnect();
     // Add this to the poll vector
     globals().netManager.AddConnection(mNetConnection);
 

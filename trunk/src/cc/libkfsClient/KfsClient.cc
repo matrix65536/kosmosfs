@@ -717,9 +717,6 @@ KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFiles
     // lookup the attributes
     if ((fte < 0) || ((!kfsattr.isDirectory) && computeFilesize && 
                       (kfsattr.fileSize < 0))) {
-        if (fte >= 0) {
-            ReleaseFileTableEntry(fte);
-        }
 	kfsFileId_t parentFid;
 	string filename;
 	int res = GetPathComponents(pathname, &parentFid, filename);
@@ -800,8 +797,12 @@ KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
     else
         result.fileSize = -1;
 
-    if (fte >= 0)
+    if (fte >= 0) {
+        // if we computed the filesize, then we stash it; otherwise, we'll
+        // set the value to -1 and force a recompute later...
+        mFileTable[fte]->fattr.fileSize = result.fileSize;
         return 0;
+    }
 
     // cache the entry if possible
     fte = AllocFileTableEntry(parentFid, filename);
