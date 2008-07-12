@@ -106,13 +106,17 @@ MetaFattr::show() const
 void
 MetaChunkInfo::DeleteChunk()
 {
+	// if the call to metatree.del() succeeds, the "this" pointer will be
+	// deleted.  so, save the chunk id before doing the deletion.
+	chunkId_t cid = chunkId;
+
 	// Update the metatree to reflect chunk deletion.  Since we got
 	// this MetaChunkInfo by retrieving the allocation information,
 	// deletion from the metatree should not fail.
 	if (metatree.del(this)) {
 		panic("deleteChunk", false);
 	}
-	gLayoutManager.DeleteChunk(chunkId);
+	gLayoutManager.DeleteChunk(cid);
 }
 
 void
