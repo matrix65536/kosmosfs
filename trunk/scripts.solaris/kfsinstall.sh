@@ -52,7 +52,7 @@ installServer()
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	-c|--chunk)
-	    mv tmp/fn.* $serverDir/bin/ChunkServer.prp 
+	    mv /tmp/ChunkServer.prp $serverDir/bin/ChunkServer.prp 
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	*)
@@ -80,7 +80,7 @@ upgradeServer()
 	    mv tmp/fn.* $serverDir/bin/MetaServer.prp 
 	    ;;
 	-c|--chunk)
-	    mv tmp/fn.* $serverDir/bin/ChunkServer.prp 
+	    mv /tmp/ChunkServer.prp $serverDir/bin/ChunkServer.prp 
 	    ;;
 	*)
 	    echo "Unknown server"
