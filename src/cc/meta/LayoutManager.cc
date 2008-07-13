@@ -431,6 +431,47 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 	if (sources.size() < 1)
 		return;
 
+	vector<ChunkServerPtr> candidates;
+	vector<ChunkServerPtr>::size_type i;
+	vector<ChunkServerPtr>::const_iterator iter;
+
+	for (i = 0; i < sources.size(); i++) {
+		ChunkServerPtr c = sources[i];
+
+		if ((rackId >= 0) && (c->GetRack() != rackId))
+			continue;
+		if ((c->GetAvailSpace() < ((uint64_t) CHUNKSIZE)) || (!c->IsResponsiveServer()) 
+			|| (c->IsRetiring())) {
+			// one of: no space, non-responsive, retiring...we leave
+			// the server alone
+			continue;
+		}
+		if (excludes.size() > 0) {
+			iter = find(excludes.begin(), excludes.end(), c);
+			if (iter != excludes.end()) {
+				continue;
+			}
+		}
+		candidates.push_back(c);
+	}
+	if (candidates.size() == 0)
+		return;
+	random_shuffle(candidates.begin(), candidates.end());
+	for (i = 0; i < candidates.size(); i++) {
+		result.push_back(candidates[i]);
+	}
+}
+
+#if 0
+void
+LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
+				const vector<ChunkServerPtr> &sources,
+				const vector<ChunkServerPtr> &excludes,
+				int rackId)
+{
+	if (sources.size() < 1)
+		return;
+
 	vector<ServerSpace> ss;
 	vector<ChunkServerPtr>::size_type i, j;
 	vector<ChunkServerPtr>::const_iterator iter;
@@ -473,6 +514,7 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 		result.push_back(sources[ss[i].serverIdx]);
 	}
 }
+#endif
 
 void
 LayoutManager::SortServersByUtilization(vector<ChunkServerPtr> &servers)
