@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
 # $Id: kfssetup.py 36 2007-11-12 02:43:36Z sriramsrao $
 #
@@ -92,7 +92,7 @@ def setupMeta(section, config, outputFn, packageFn):
     installArgs = "-d %s -m" % (rundir)
     return installArgs    
 
-def setupChunk(section, config, outputFn, packageFn):
+def setupChunkConfig(section, config, outputFn):
     """ Setup the chunkserver binaries/config files on a node. """    
     metaNode = config.get('metaserver', 'node')
     metaToChunkPort = config.getint('metaserver', 'baseport') + 100
@@ -139,8 +139,21 @@ def setupChunk(section, config, outputFn, packageFn):
         fh.write(s)
         
     fh.close()
+    
+
+def setupChunk(section, config, outputFn, packageFn):
+    """ Setup the chunkserver binaries/config files on a node. """
+    setupChunkConfig(section, config, outputFn)
+
     cmd = "%s -zcf %s bin/chunkupgrade bin/chunkscrubber bin/chunkserver %s lib scripts/*" % (tarProg, packageFn, outputFn)
     os.system(cmd)
+
+    rundir = config.get(section, 'rundir')
+    if config.has_option(section, 'chunkdir'):
+        chunkDir = config.get(section, 'chunkdir')
+    else:
+        chunkDir = "%s/bin/kfschunk" % (rundir)
+    
     installArgs = "-d %s -c \"%s\" " % (rundir, chunkDir)
     return installArgs
 
@@ -167,14 +180,11 @@ def getFiles(buildDir):
     s = "%s/lib" % buildDir
     copyDir(s, './lib')
 
-def cleanup():
+def cleanup(fn):
     """ Cleanout the dirs we created. """
-    cmd = "rm -rf ./scripts"
+    cmd = "rm -rf ./scripts ./bin ./lib %s " % fn
     os.system(cmd)
-    cmd = "rm -rf ./bin"
-    os.system(cmd)
-    cmd = "rm -rf ./lib"
-    os.system(cmd)
+
 
 class InstallWorker(threading.Thread):
     """InstallWorker thread that runs a command on remote node"""
@@ -185,6 +195,12 @@ class InstallWorker(threading.Thread):
         self.tmpdir = tmpdir
         self.id = i
         self.mode = m
+        self.doBuildPkg = 1
+
+    def singlePackageForAll(self, packageFn, installArgs):
+        self.doBuildPkg = 0
+        self.packageFn = packageFn
+        self.installArgs = installArgs
 
     def buildPackage(self):
         if (self.section == 'metaserver'):
@@ -194,21 +210,35 @@ class InstallWorker(threading.Thread):
 
     def doInstall(self):
         fn = os.path.basename(self.packageFn)
-        c = "scp -q %s kfsinstall.sh %s:/tmp/; ssh %s 'mv /tmp/%s /tmp/kfspkg.tgz; sh /tmp/kfsinstall.sh %s %s ' " % \
-            (self.packageFn, self.dest, self.dest, fn, self.mode, self.installArgs)
+        if ((self.section == 'metaserver') or (self.doBuildPkg > 0)):
+            c = "scp -q %s kfsinstall.sh %s:/tmp/; ssh %s 'mv /tmp/%s /tmp/kfspkg.tgz; sh /tmp/kfsinstall.sh %s %s ' " % \
+                (self.packageFn, self.dest, self.dest, fn, self.mode, self.installArgs)
+        else:
+            # chunkserver
+            configFn = os.path.basename(self.configOutputFn)
+            c = "scp -q %s kfsinstall.sh %s %s:/tmp/; ssh %s 'mv /tmp/%s /tmp/kfspkg.tgz; mv /tmp/%s /tmp/ChunkServer.prp; sh /tmp/kfsinstall.sh %s %s ' " % \
+                (self.packageFn, self.configOutputFn, self.dest, self.dest, fn, configFn, self.mode, self.installArgs)
+            
         os.system(c)
         
     def cleanup(self):
-        c = "rm -f %s %s" % (self.configOutputFn, self.packageFn)
+        if self.doBuildPkg > 0:
+            # if we built the package, nuke it
+            c = "rm -f %s %s" % (self.configOutputFn, self.packageFn)
+        else:
+            c = "rm -f %s" % (self.configOutputFn)
         os.system(c)
         c = "ssh %s 'rm -f /tmp/install.sh /tmp/kfspkg.tgz' " % self.dest
         os.system(c)
         
     def run(self):
         self.configOutputFn = "%s/fn.%d" % (self.tmpdir, self.id)
-        self.packageFn = "%s/kfspkg.%d.tgz" % (self.tmpdir, self.id)
+        if self.doBuildPkg > 0:
+            self.packageFn = "%s/kfspkg.%d.tgz" % (self.tmpdir, self.id)
+            self.buildPackage()
+        else:
+            setupChunkConfig(self.section, self.config, self.configOutputFn)
         self.dest = config.get(self.section, 'node')
-        self.buildPackage()
         self.doInstall()
         self.cleanup()
         
@@ -229,36 +259,46 @@ def doInstall(config, builddir, tmpdir, upgrade, serialMode):
         mode = "-u"
     else:
         mode = "-i"
-    
+
+    chunkPkgFn = ""
+    cleanupFn = ""
     for s in sections:
         w = InstallWorker(s, config, tmpdir, i, mode)
         workers.append(w)
         if serialMode == 1:
             w.start()
             w.join()
+        else:
+            # same package for all chunkservers
+            if (s != 'metaserver'):
+                if chunkPkgFn == "":
+                    configOutputFn = "%s/fn.common" % (tmpdir)
+                    chunkPkgFn = "kfspkg-chunk.tgz"
+                    cleanupFn = "%s %s" % (configOutputFn, chunkPkgFn)
+                    installArgs = setupChunk(s, config, configOutputFn, chunkPkgFn)
+                w.singlePackageForAll(chunkPkgFn, installArgs)
         i = i + 1
 
     if serialMode == 0:
-        for i in xrange(len(workers)):
+        for i in xrange(0, len(workers), maxConcurrent):
             #start a bunch 
             for j in xrange(maxConcurrent):
-                idx = i * maxConcurrent + j
+                idx = i + j
                 if idx >= len(workers):
                     break
                 workers[idx].start()
             #wait for each one to finish
             for j in xrange(maxConcurrent):
-                idx = i * maxConcurrent + j
+                idx = i + j
                 if idx >= len(workers):
                     break
                 workers[idx].join()
-                
+            print "Done with %d workers" % idx
             
-    print "Started all the workers..waiting for them to finish"
     for i in xrange(len(workers)):
         workers[i].join(120.0)
         
-    cleanup()
+    cleanup(cleanupFn)
 
 class UnInstallWorker(threading.Thread):
     """UnInstallWorker thread that runs a command on remote node"""
