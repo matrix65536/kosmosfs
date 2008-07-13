@@ -89,7 +89,7 @@ def setupMeta(section, config, outputFn, packageFn):
     fh.close()
     cmd = "%s -zcf %s bin/logcompactor bin/metaserver %s lib scripts/*" % (tarProg, packageFn, outputFn)
     os.system(cmd)
-    installArgs = "-d %s -m" % (rundir)
+    installArgs = "-r %s -d %s -m" % (tarProg, rundir)
     return installArgs    
 
 def setupChunkConfig(section, config, outputFn):
@@ -145,7 +145,7 @@ def setupChunk(section, config, outputFn, packageFn):
     """ Setup the chunkserver binaries/config files on a node. """
     setupChunkConfig(section, config, outputFn)
 
-    cmd = "%s -zcf %s bin/chunkupgrade bin/chunkscrubber bin/chunkserver %s lib scripts/*" % (tarProg, packageFn, outputFn)
+    cmd = "%s -zcf %s bin/chunkscrubber bin/chunkserver %s lib scripts/*" % (tarProg, packageFn, outputFn)
     os.system(cmd)
 
     rundir = config.get(section, 'rundir')
@@ -154,7 +154,7 @@ def setupChunk(section, config, outputFn, packageFn):
     else:
         chunkDir = "%s/bin/kfschunk" % (rundir)
     
-    installArgs = "-d %s -c \"%s\" " % (rundir, chunkDir)
+    installArgs = "-r %s -d %s -c \"%s\" " % (tarProg, rundir, chunkDir)
     return installArgs
 
 def usage():
@@ -210,7 +210,7 @@ class InstallWorker(threading.Thread):
 
     def doInstall(self):
         fn = os.path.basename(self.packageFn)
-        if ((self.section == 'metaserver') or (self.doBuildPkg > 0)):
+        if (self.section == 'metaserver'):
             c = "scp -q %s kfsinstall.sh %s:/tmp/; ssh %s 'mv /tmp/%s /tmp/kfspkg.tgz; sh /tmp/kfsinstall.sh %s %s ' " % \
                 (self.packageFn, self.dest, self.dest, fn, self.mode, self.installArgs)
         else:
@@ -238,6 +238,7 @@ class InstallWorker(threading.Thread):
             self.buildPackage()
         else:
             setupChunkConfig(self.section, self.config, self.configOutputFn)
+
         self.dest = config.get(self.section, 'node')
         self.doInstall()
         self.cleanup()
