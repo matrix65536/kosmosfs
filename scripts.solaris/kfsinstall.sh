@@ -21,6 +21,8 @@
 # Script to install/upgrade a server package on a machine
 #
 
+tarProg="gtar"
+
 installServer()
 {
     # if everything exists, return
@@ -40,7 +42,7 @@ installServer()
 	exit -1
     fi
 
-    cd $serverDir; gtar -zxf /tmp/kfspkg.tgz 
+    cd $serverDir; $tarProg -zxf /tmp/kfspkg.tgz 
 
     # Make a logs dir for the startup script
     mkdir -p $serverDir/logs
@@ -74,7 +76,7 @@ upgradeServer()
 
     sh $serverDir/scripts/kfsrun.sh -S $serverType 
 
-    cd $serverDir; gtar -zxf /tmp/kfspkg.tgz 
+    cd $serverDir; $tarProg -zxf /tmp/kfspkg.tgz 
     case $serverType in
 	-m|--meta) 
 	    mv tmp/fn.* $serverDir/bin/MetaServer.prp 
@@ -112,11 +114,11 @@ uninstallServer()
 }
 
 # Process any command line arguments
-# TEMP=`getopt -o d:mc:hiuU -l dir:,meta,chunk:,help,install,upgrade,uninstall \
+# TEMP=`getopt -o d:mc:r:hiuU -l dir:,meta,chunk:,tar:help,install,upgrade,uninstall \
 # 	-n kfsinstall.sh -- "$@"`
 # eval set -- "$TEMP"
 
-set -- `getopt d:mc:hiuU $*`
+set -- `getopt d:mc:r:hiuU $*`
 
 # while true
 for i in $*
@@ -129,6 +131,7 @@ for i in $*
 	  chunkDir=$2;
 	  serverBinary="chunkserver";;
       -i|--install) mode="install";;
+      -r|--tar) tarProg="$2";;
       -u|--upgrade) mode="upgrade";;
       -U|--uninstall) mode="uninstall";;
       -h|--help) 
