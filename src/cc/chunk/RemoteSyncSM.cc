@@ -275,6 +275,13 @@ RemoteSyncSM::HandleResponse(IOBuffer *iobuf, int msgLen)
         } else if (op->op == CMD_SIZE) {
             SizeOp *sop = static_cast<SizeOp *>(op);
             sop->size = prop.getValue("Size", 0);
+        } else if (op->op == CMD_GET_CHUNK_METADATA) {
+            GetChunkMetadataOp *gcm = static_cast<GetChunkMetadataOp *>(op);
+            gcm->chunkVersion = prop.getValue("Chunk-version", 0);
+            gcm->chunkSize = prop.getValue("Size", 0);
+            if (gcm->dataBuf == NULL)
+                gcm->dataBuf = new IOBuffer();
+            gcm->dataBuf->Move(iobuf, numBytes);            
         }
         // op->HandleEvent(EVENT_DONE, op);
         KFS::SubmitOpResponse(op);

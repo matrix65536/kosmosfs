@@ -58,7 +58,7 @@ extern "C" {
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
-        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jboolean jpreloadattr);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_remove(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
@@ -195,7 +195,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
-    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jboolean jpreloadattr)
 {
     KfsClient *clnt = (KfsClient *) jptr;
 
@@ -207,7 +207,18 @@ jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
 
     setStr(path, jenv, jpath);
 
-    res = clnt->Readdir(path.c_str(), entries);
+    if (jpreloadattr) {
+        std::vector<KFS::KfsFileAttr> fattr;
+        res = clnt->ReaddirPlus(path.c_str(), fattr);
+        if (res == 0) {
+            for (uint32_t i = 0; i < fattr.size(); i++) {
+                entries.push_back(fattr[i].filename);
+            }
+        }
+    }
+    else {
+        res = clnt->Readdir(path.c_str(), entries);
+    }
     if ((res < 0) || (entries.size() == 0))
         return NULL;
 

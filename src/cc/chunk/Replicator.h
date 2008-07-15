@@ -107,7 +107,7 @@ private:
     // Handle to the peer from where we have to get data
     RemoteSyncSMPtr mPeer;
 
-    SizeOp mSizeOp;
+    GetChunkMetadataOp mChunkMetadataOp;
     ReadOp mReadOp;
     WriteOp mWriteOp;
 

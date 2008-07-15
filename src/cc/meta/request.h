@@ -61,6 +61,7 @@ enum MetaOp {
 	META_REMOVE,
 	META_RMDIR,
 	META_READDIR,
+	META_READDIRPLUS,
 	META_GETALLOC,
 	META_GETLAYOUT,
 	META_ALLOCATE,
@@ -265,6 +266,26 @@ struct MetaReaddir: public MetaRequest {
 	vector <MetaDentry> v; //!< vector of results
 	MetaReaddir(seq_t s, fid_t d):
 		MetaRequest(META_READDIR, s, false), dir(d) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show() 
+	{
+		ostringstream os;
+
+		os << "readdir: dir fid = " << dir;
+		return os.str();
+	}
+};
+
+/*!
+ * \brief read directory contents and get file attributes
+ */
+struct MetaReaddirPlus: public MetaRequest {
+	fid_t dir;	//!< directory to read
+	ostringstream v; //!< results built out into a string
+	int numEntries; //!< # of entries in the directory
+	MetaReaddirPlus(seq_t s, fid_t d):
+		MetaRequest(META_READDIRPLUS, s, false), dir(d) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
 	string Show() 
@@ -670,7 +691,7 @@ struct MetaChunkTruncate: public MetaChunkRequest {
 struct MetaChunkReplicate: public MetaChunkRequest {
 	fid_t fid;  //!< input: we tell the chunkserver what it is
 	chunkId_t chunkId; //!< The chunk id to replicate
-	seq_t chunkVersion; //!< input: we tell the chunkserver what it is
+	seq_t chunkVersion; //!< output: the chunkservers tells us what it did
 	ServerLocation srcLocation; //!< where to get a copy from
 	ChunkServerPtr server;  //!< "dest" on which we put a copy
 	MetaChunkReplicate(seq_t n, ChunkServer *s, 

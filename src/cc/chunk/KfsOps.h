@@ -715,10 +715,12 @@ struct SizeOp : public KfsOp {
 
 struct GetChunkMetadataOp : public KfsOp {
     kfsChunkId_t chunkId;  // input
+    int64_t chunkVersion; // output
+    off_t chunkSize; // output
     IOBuffer *dataBuf; // buffer with the checksum info
     size_t numBytesIO;
     GetChunkMetadataOp(kfsSeq_t s) :
-        KfsOp(CMD_GET_CHUNK_METADATA, s), dataBuf(NULL), numBytesIO(0)
+        KfsOp(CMD_GET_CHUNK_METADATA, s), chunkVersion(0), chunkSize(0), dataBuf(NULL), numBytesIO(0)
     {
 
     }
@@ -730,6 +732,7 @@ struct GetChunkMetadataOp : public KfsOp {
     // handler for reading in the chunk meta-data
     int HandleChunkMetaReadDone(int code, void *data);
 
+    void Request(std::ostringstream &os);
     void Response(std::ostringstream &os);
     std::string Show() const {
         std::ostringstream os;
@@ -737,6 +740,7 @@ struct GetChunkMetadataOp : public KfsOp {
         os << "get-chunk-metadata: " << " chunkid = " << chunkId;
         return os.str();
     }
+    int HandleDone(int code, void *data);
 };
 
 // used for pinging the server and checking liveness

@@ -105,6 +105,9 @@ public:
     bool operator()(KfsClientPtr &clnt) const {
         return clnt->GetMetaserverLocation() == loc;
     }
+    bool operator()(const ServerLocation &other) const {
+        return other == loc;
+    }
 };
 
 KfsClientPtr
@@ -675,25 +678,130 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
 
     kfsFileId_t dirFid = fa->fileId;
 
-    ReaddirOp op(nextSeq(), dirFid);
+    ReaddirPlusOp op(nextSeq(), dirFid);
     (void)DoMetaOpWithRetry(&op);
     int res = op.status;
     if (res < 0) {
 	return res;
     }
 
+    vector<FileChunkInfo> fileChunkInfo;
     istringstream ist;
-    char filename[MAX_FILENAME_LEN];
+    string entryInfo;
+    boost::scoped_array<char> line;
+    int count = 0, linelen = 1 << 20, numchars;
+    const string entryDelim = "Begin-entry";
+
     ist.str(op.contentBuf);
-    result.resize(op.numEntries);
-    for (int i = 0; i < op.numEntries; ++i) {
-	ist.getline(filename, MAX_FILENAME_LEN);
-	result[i].filename = filename;
-        // KFS_LOG_VA_DEBUG("Entry: %s", filename);
-        // get the file size for files
-	LookupAttr(dirFid, result[i].filename.c_str(), result[i], 
-                   computeFilesize);
+    line.reset(new char[linelen]);
+    while (count < op.numEntries) {
+        ist.getline(line.get(), linelen);
+        numchars = ist.gcount();
+        if (line[numchars - 2] == '\r')
+            line[numchars - 2] = '\0';
+        if (line.get() != entryDelim) {
+            entryInfo += line.get();
+            entryInfo += "\r\n";
+            continue;
+        }
+        count++;
+        if (entryInfo == "")
+            continue;
+        // previous entry is all done...process it
+        Properties prop;
+        KfsFileAttr fattr;
+        string s;
+        istringstream parserStream(entryInfo);
+        const char separator = ':';
+
+        prop.loadProperties(parserStream, separator, false);
+        fattr.filename = prop.getValue("Name", "");
+        fattr.fileId = prop.getValue("File-handle", -1);
+        s = prop.getValue("Type", "");
+        fattr.isDirectory = (s == "dir");
+
+        s = prop.getValue("M-Time", "");
+        GetTimeval(s, fattr.mtime);
+
+        s = prop.getValue("C-Time", "");
+        GetTimeval(s, fattr.ctime);
+
+        s = prop.getValue("CR-Time", "");
+        GetTimeval(s, fattr.crtime);
+
+        entryInfo = "";
+        
+        // get the location info for the last chunk
+        FileChunkInfo lastChunkInfo(fattr.filename, fattr.fileId);
+
+        lastChunkInfo.lastChunkOffset = prop.getValue("Chunk-offset", 0);
+        lastChunkInfo.chunkCount = prop.getValue("Chunk-count", 0);
+        lastChunkInfo.numReplicas = prop.getValue("Replication", 1);
+        lastChunkInfo.cattr.chunkId = prop.getValue("Chunk-handle", (kfsFileId_t) -1);
+        lastChunkInfo.cattr.chunkVersion = prop.getValue("Chunk-version", (int64_t) -1);
+
+        int numReplicas = prop.getValue("Num-replicas", 0);
+        string replicas = prop.getValue("Replicas", "");
+
+        if (replicas != "") {
+            istringstream ser(replicas);
+            ServerLocation loc;
+
+            for (int i = 0; i < numReplicas; ++i) {
+                ser >> loc.hostname;
+                ser >> loc.port;
+                lastChunkInfo.cattr.chunkServerLoc.push_back(loc);
+            }
+        }
+        fileChunkInfo.push_back(lastChunkInfo);
+        result.push_back(fattr);
     }
+
+    if (computeFilesize) {
+        for (uint32_t i = 0; i < result.size(); i++) {
+            if ((fileChunkInfo[i].chunkCount == 0) || (result[i].isDirectory)) {
+                result[i].fileSize = 0;
+                continue;
+            }
+
+            int fte = LookupFileTableEntry(dirFid, result[i].filename.c_str());
+
+            if (fte >= 0) {
+                result[i].fileSize = mFileTable[fte]->fattr.fileSize;
+            }
+        }
+        ComputeFilesizes(result, fileChunkInfo);
+    }
+    
+    for (uint32_t i = 0; i < result.size(); i++) {
+        int fte = LookupFileTableEntry(dirFid, result[i].filename.c_str());
+
+        if (fte >= 0) {
+            // if we computed the filesize, then we stash it; otherwise, we'll
+            // set the value to -1 and force a recompute later...
+            mFileTable[fte]->fattr.fileSize = result[i].fileSize;
+            continue;
+        }
+
+        if (fte < 0) {
+            fte = AllocFileTableEntry(dirFid, result[i].filename.c_str());
+            if (fte < 0)
+                continue;
+        }
+        mFileTable[fte]->fattr.fileId = result[i].fileId;
+        mFileTable[fte]->fattr.mtime = result[i].mtime;
+        mFileTable[fte]->fattr.ctime = result[i].ctime;
+        mFileTable[fte]->fattr.ctime = result[i].crtime;
+        mFileTable[fte]->fattr.isDirectory = result[i].isDirectory;
+        mFileTable[fte]->fattr.chunkCount = fileChunkInfo[i].chunkCount;
+        mFileTable[fte]->fattr.numReplicas = fileChunkInfo[i].numReplicas;
+
+        mFileTable[fte]->openMode = 0;
+        // if we computed the filesize, then we stash it; otherwise, we'll
+        // set the value to -1 and force a recompute later...
+        mFileTable[fte]->fattr.fileSize = result[i].fileSize;
+    }
+
     sort(result.begin(), result.end());
 
     return res;
@@ -1582,7 +1690,7 @@ KFS::DoOpCommon(KfsOp *op, TcpSocket *sock)
 
     if (op->status < 0) {
 	string errstr = ErrorCodeToStr(op->status);
-	KFS_LOG_VA_DEBUG("%s failed with code: %s", op->Show().c_str(), errstr.c_str());
+	KFS_LOG_VA_DEBUG("%s failed with code(%d): %s", op->Show().c_str(), op->status, errstr.c_str());
     }
 
     return res;
@@ -1696,6 +1804,72 @@ KfsClientImpl::ComputeFilesize(kfsFileId_t kfsfid)
 
     return filesize;
 }
+
+void
+KfsClientImpl::ComputeFilesizes(vector<KfsFileAttr> &fattrs, vector<FileChunkInfo> &lastChunkInfo)
+{
+    for (uint32_t i = 0; i < lastChunkInfo.size(); i++) {
+        if (lastChunkInfo[i].chunkCount == 0)
+            continue;
+        if (fattrs[i].fileSize >= 0)
+            continue;
+        for (uint32_t j = 0; j < lastChunkInfo[i].cattr.chunkServerLoc.size(); j++) {
+            TcpSocket sock;
+            ServerLocation loc = lastChunkInfo[i].cattr.chunkServerLoc[j];
+
+            // get all the filesizes we can from this server
+            ComputeFilesizes(fattrs, lastChunkInfo, i, loc);
+        }
+
+        bool alldone = true;
+        for (uint32_t j = i; j < fattrs.size(); j++) {
+            if (fattrs[j].fileSize < 0) {
+                alldone = false;
+                break;
+            }
+        }
+        if (alldone)
+            break;
+        
+    }
+}
+
+void
+KfsClientImpl::ComputeFilesizes(vector<KfsFileAttr> &fattrs, vector<FileChunkInfo> &lastChunkInfo,
+                                uint32_t startIdx, const ServerLocation &loc)
+{
+    TcpSocket sock;
+    vector<ServerLocation>::const_iterator iter;
+
+    if (sock.Connect(loc) < 0) {
+        return;
+    }
+
+   for (uint32_t i = startIdx; i < lastChunkInfo.size(); i++) {
+        if (lastChunkInfo[i].chunkCount == 0)
+            continue;
+        if (fattrs[i].fileSize >= 0)
+            continue;
+        
+        iter = find_if(lastChunkInfo[i].cattr.chunkServerLoc.begin(),
+                       lastChunkInfo[i].cattr.chunkServerLoc.end(),
+                       MatchingServer(loc));
+        if (iter == lastChunkInfo[i].cattr.chunkServerLoc.end())
+            continue;
+
+        SizeOp sop(nextSeq(), lastChunkInfo[i].cattr.chunkId, lastChunkInfo[i].cattr.chunkVersion);
+	int numIO = DoOpCommon(&sop, &sock);
+	if (numIO < 0 && !sock.IsGood()) {
+            return;
+        }
+        if (sop.status >= 0) {
+            lastChunkInfo[i].cattr.chunkSize = sop.size;
+            fattrs[i].fileSize = lastChunkInfo[i].lastChunkOffset + lastChunkInfo[i].cattr.chunkSize;
+        }
+   }
+
+}
+
 
 // A simple functor to match chunkserver by hostname
 class ChunkserverMatcher {

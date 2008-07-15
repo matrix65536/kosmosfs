@@ -29,8 +29,10 @@
 
 #include <cassert>
 #include <vector>
+#include <sstream>
 using std::vector;
 using std::string;
+using std::istringstream;
 
 extern "C" {
 #include <sys/time.h>
@@ -100,4 +102,17 @@ KFS::Sleep(int nsecs)
 	timeout.tv_sec = nsecs;
 	timeout.tv_usec = 0;
 	select(1, &rfds, NULL, NULL, &timeout);
+}
+
+void
+KFS::GetTimeval(string &s, struct timeval &tv)
+{
+    if (s != "") {
+	istringstream ist(s);
+
+	ist >> tv.tv_sec;
+	ist >> tv.tv_usec;
+    } else {
+	tv.tv_sec = tv.tv_usec = 0;
+    }
 }

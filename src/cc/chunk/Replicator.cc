@@ -52,14 +52,14 @@ using namespace KFS::libkfsio;
 Replicator::Replicator(ReplicateChunkOp *op) :
     mFileId(op->fid), mChunkId(op->chunkId), 
     mChunkVersion(op->chunkVersion), 
-    mOwner(op), mDone(false),  mOffset(0), mSizeOp(0), 
+    mOwner(op), mDone(false),  mOffset(0), mChunkMetadataOp(0), 
     mReadOp(0), mWriteOp(op->chunkId, op->chunkVersion)
 {
     mReadOp.chunkId = op->chunkId;
     mReadOp.chunkVersion = op->chunkVersion;
     mReadOp.clnt = this;
     mWriteOp.clnt = this;
-    mSizeOp.clnt = this;
+    mChunkMetadataOp.clnt = this;
     mWriteOp.Reset();
     mWriteOp.isFromReReplication = true;
     SET_HANDLER(&mReadOp, &ReadOp::HandleReplicatorDone);
@@ -79,13 +79,13 @@ Replicator::Start(RemoteSyncSMPtr &peer)
 #endif
 
     mPeer = peer;
-    mSizeOp.seq = mPeer->NextSeqnum();
-    mSizeOp.chunkId = mChunkId;
-    mSizeOp.chunkVersion = mChunkVersion;
+
+    mChunkMetadataOp.seq = mPeer->NextSeqnum();
+    mChunkMetadataOp.chunkId = mChunkId;
 
     SET_HANDLER(this, &Replicator::HandleStartDone);
 
-    mPeer->Enqueue(&mSizeOp);
+    mPeer->Enqueue(&mChunkMetadataOp);
 }
 
 int
@@ -95,12 +95,15 @@ Replicator::HandleStartDone(int code, void *data)
     verifyExecutingOnEventProcessor();
 #endif
 
-    if (mSizeOp.status < 0) {
+    if (mChunkMetadataOp.status < 0) {
         Terminate();
         return 0;
     }
 
-    mChunkSize = mSizeOp.size;
+    mChunkSize = mChunkMetadataOp.chunkSize;
+    mChunkVersion = mChunkMetadataOp.chunkVersion;
+
+    mReadOp.chunkVersion = mWriteOp.chunkVersion = mChunkVersion;
 
     // set the version to a value that will never be used; if
     // replication is successful, we then bump up the counter.
@@ -233,7 +236,7 @@ Replicator::HandleReplicationDone(int code, void *data)
 {
     mOwner->status = 0;    
     // Notify the owner of completion
-    mOwner->HandleEvent(EVENT_CMD_DONE, NULL);
+    mOwner->HandleEvent(EVENT_CMD_DONE, (void *) &mChunkVersion);
     return 0;
 }
 

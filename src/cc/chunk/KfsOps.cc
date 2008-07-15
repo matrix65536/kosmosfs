@@ -1539,6 +1539,8 @@ GetChunkMetadataOp::HandleChunkMetaReadDone(int code, void *data)
     uint32_t *checksums;
     status = gChunkManager.GetChunkChecksums(chunkId, &checksums);
     if ((status == 0) && (checksums != NULL)) {
+        chunkVersion = gChunkManager.GetChunkVersion(chunkId);
+        gChunkManager.ChunkSize(chunkId, &chunkSize);
         dataBuf = new IOBuffer();
         dataBuf->CopyIn((const char *) checksums, MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
         numBytesIO = dataBuf->BytesConsumable();
@@ -1627,6 +1629,10 @@ GetChunkMetadataOp::Response(ostringstream &os)
         return;
     }
     os << "Status: " << status << "\r\n";    
+
+    os << "Chunk-handle: " << chunkId << "\r\n";
+    os << "Chunk-version: " << chunkVersion << "\r\n";
+    os << "Size: " << chunkSize << "\r\n";
     os << "Content-length: " << numBytesIO << "\r\n\r\n";
 }
 
@@ -1684,6 +1690,15 @@ SizeOp::Request(ostringstream &os)
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Chunk-version: " << chunkVersion << "\r\n\r\n";
+}
+
+void
+GetChunkMetadataOp::Request(ostringstream &os)
+{
+    os << "GET_CHUNK_METADATA \r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Chunk-handle: " << chunkId << "\r\n\r\n";
 }
 
 void
@@ -1823,8 +1838,17 @@ SizeOp::HandleDone(int code, void *data)
 }
 
 int
+GetChunkMetadataOp::HandleDone(int code, void *data)
+{
+    // notify the owning object that the op finished
+    clnt->HandleEvent(EVENT_CMD_DONE, this);
+    return 0;
+}
+
+int
 ReplicateChunkOp::HandleDone(int code, void *data)
 {
+    chunkVersion = * (kfsSeq_t *) data;
     gLogger.Submit(this);
     return 0;
 }
