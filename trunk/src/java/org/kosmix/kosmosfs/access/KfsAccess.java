@@ -51,7 +51,7 @@ public class KfsAccess
     int rmdir(long ptr, String  path);
 
     private final static native
-    String[] readdir(long ptr, String path);
+    String[] readdir(long ptr, String path, boolean prefetchAttr);
 
     private final static native
     String[][] getDataLocation(long ptr, String path, long start, long len);
@@ -137,7 +137,12 @@ public class KfsAccess
 
     public String[] kfs_readdir(String path)
     {
-        return readdir(cPtr, path);
+        return kfs_readdir(path, false);
+    }
+
+    public String[] kfs_readdir(String path, boolean prefetchAttr)
+    {
+        return readdir(cPtr, path, prefetchAttr);
     }
 
     public KfsOutputChannel kfs_append(String path)

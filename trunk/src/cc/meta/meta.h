@@ -103,6 +103,7 @@ public:
 	const string show() const;
 	//!< accessor that returns the name of this Dentry
 	const string getName() const { return name; }
+	fid_t getDir() const { return dir; }
 
 	const int compareName(const string test) const {
 		return name.compare(test);

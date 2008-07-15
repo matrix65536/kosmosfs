@@ -501,7 +501,7 @@ public:
 
 private:
      /// Maximum # of files a client can have open.
-    static const int MAX_FILES = 4096;
+    static const int MAX_FILES = 512000;
 
     /// Primitive support for concurrent access in the KFS client: at
     /// each entry point from the public interfaces, grab the mutex
@@ -692,6 +692,16 @@ private:
     /// file.  This involves looking up the size of the last chunk of
     /// the file and then adding with the size of the remaining (full) chunks.
     off_t ComputeFilesize(kfsFileId_t kfsfid);
+
+    /// Given the attributes for a set of files and the location info
+    /// of the last chunk of each file, compute the filesizes for each file
+    void ComputeFilesizes(vector<KfsFileAttr> &fattrs, vector<FileChunkInfo> &lastChunkInfo);
+
+    /// Helper function: given a starting index to the two vectors,
+    /// compute the file sizes for each file whose last chunk is
+    /// stored in chunkserver at location loc.
+    void ComputeFilesizes(vector<KfsFileAttr> &fattrs, vector<FileChunkInfo> &lastChunkInfo,
+                          uint32_t startIdx, const ServerLocation &loc);
 
     FileTableEntry *FdInfo(int fd) { return mFileTable[fd]; }
     FilePosition *FdPos(int fd) { return &FdInfo(fd)->currPos; }

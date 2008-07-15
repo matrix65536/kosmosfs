@@ -57,6 +57,7 @@ static int parseHandlerRename(Properties &prop, MetaRequest **r);
 static int parseHandlerMkdir(Properties &prop, MetaRequest **r);
 static int parseHandlerRmdir(Properties &prop, MetaRequest **r);
 static int parseHandlerReaddir(Properties &prop, MetaRequest **r);
+static int parseHandlerReaddirPlus(Properties &prop, MetaRequest **r);
 static int parseHandlerGetalloc(Properties &prop, MetaRequest **r);
 static int parseHandlerGetlayout(Properties &prop, MetaRequest **r);
 static int parseHandlerAllocate(Properties &prop, MetaRequest **r);
@@ -326,6 +327,100 @@ public:
 	}
 };
 
+class ListServerLocations {
+	ostringstream &os;
+public:
+	ListServerLocations(ostringstream &out): os(out) { }
+	void operator () (const ServerLocation &s)
+	{
+		os << " " <<  s.ToString();
+	}
+};
+
+class EnumerateReaddirPlusInfo {
+	ostringstream &os;
+public:
+	EnumerateReaddirPlusInfo(ostringstream &o) : os(o) { }
+	void operator()(MetaDentry *entry) {
+		static string fname[] = { "empty", "file", "dir" };
+		MetaFattr *fa = metatree.lookup(entry->getDir(), entry->getName());
+
+		os << "Begin-entry" << "\r\n";
+
+		if (fa == NULL) {
+			return;
+		}
+
+		os << "Name: " << entry->getName() << "\r\n";
+		os << "File-handle: " << toString(fa->id()) << "\r\n";
+		os << "Type: " << fname[fa->type] << "\r\n";
+		sendtime(os, "M-Time:", fa->mtime, "\r\n");
+		sendtime(os, "C-Time:", fa->ctime, "\r\n");
+		sendtime(os, "CR-Time:", fa->crtime, "\r\n");
+		if (fa->type == KFS_DIR) {
+			return;
+		}
+		// for a file, get the layout and provide location of last chunk
+		// so that the client can compute filesize
+		vector<MetaChunkInfo*> chunkInfo;
+		vector<ChunkServerPtr> c;
+		int status = metatree.getalloc(fa->id(), chunkInfo);
+
+		if ((status != 0) || (chunkInfo.size() == 0)) {
+			os << "Chunk-count: 0\r\n";
+			os << "Replication: " << toString(fa->numReplicas) << "\r\n";
+			return;
+		}
+		MetaChunkInfo* lastChunk = chunkInfo.back();
+		ChunkLayoutInfo l;
+
+		l.offset = lastChunk->offset;
+		l.chunkId = lastChunk->chunkId;
+		l.chunkVersion = lastChunk->chunkVersion;
+		if (gLayoutManager.GetChunkToServerMapping(l.chunkId, c) != 0) {
+			// if all the servers hosting the chunk are
+			// down...sigh...
+			os << "Chunk-count: 0\r\n";
+			os << "Replication: " << toString(fa->numReplicas) << "\r\n";
+			return;
+		}
+		for_each(c.begin(), c.end(), EnumerateLocations(l.locations));
+		os << "Chunk-count: " << toString(fa->chunkcount) << "\r\n";
+		os << "Replication: " << toString(fa->numReplicas) << "\r\n";
+		os << "Chunk-offset: " << l.offset << "\r\n";
+		os << "Chunk-handle: " << l.chunkId << "\r\n";
+		os << "Chunk-version: " << l.chunkVersion << "\r\n";
+		os << "Num-replicas: " << l.locations.size() << "\r\n";
+		os << "Replicas: ";
+		for_each(l.locations.begin(), l.locations.end(), ListServerLocations(os));
+		os << "\r\n";
+	}
+
+};
+
+static void
+handle_readdirplus(MetaRequest *r)
+{
+	MetaReaddirPlus *req = static_cast <MetaReaddirPlus *>(r);
+	if (!file_exists(req->dir)) {
+		req->status = -ENOENT;
+		return;
+	}
+	else if (!is_dir(req->dir)) {
+		req->status = -ENOTDIR;
+		return;
+	}
+	vector<MetaDentry *> res;
+	req->status = metatree.readdir(req->dir, res);
+	if (req->status != 0)
+		return;
+	// now that we have the entire directory read, for each entry in the
+	// directory, get the attributes out.
+	req->numEntries = res.size();
+	for_each(res.begin(), res.end(), EnumerateReaddirPlusInfo(req->v));
+}
+
+
 /*!
  * \brief Get the allocation information for a specific chunk in a file.
  */
@@ -381,7 +476,7 @@ handle_getlayout(MetaRequest *r)
 	if (req->status != 0)
 		return;
 
-	for (vector<ChunkLayoutInfo>::size_type i = 0; i < chunkInfo.size(); ++i) {
+	for (vector<ChunkLayoutInfo>::size_type i = 0; i < chunkInfo.size(); i++) {
 		ChunkLayoutInfo l;
 
 		l.offset = chunkInfo[i]->offset;
@@ -729,6 +824,7 @@ setup_handlers()
 	handler[META_REMOVE] = handle_remove;
 	handler[META_RMDIR] = handle_rmdir;
 	handler[META_READDIR] = handle_readdir;
+	handler[META_READDIRPLUS] = handle_readdirplus;
 	handler[META_GETALLOC] = handle_getalloc;
 	handler[META_GETLAYOUT] = handle_getlayout;
 	handler[META_ALLOCATE] = handle_allocate;
@@ -765,6 +861,7 @@ setup_handlers()
 	gParseHandlers["REMOVE"] = parseHandlerRemove;
 	gParseHandlers["RMDIR"] = parseHandlerRmdir;
 	gParseHandlers["READDIR"] = parseHandlerReaddir;
+	gParseHandlers["READDIRPLUS"] = parseHandlerReaddirPlus;
 	gParseHandlers["GETALLOC"] = parseHandlerGetalloc;
 	gParseHandlers["GETLAYOUT"] = parseHandlerGetlayout;
 	gParseHandlers["ALLOCATE"] = parseHandlerAllocate;
@@ -899,6 +996,15 @@ MetaRmdir::log(ofstream &file) const
  */
 int
 MetaReaddir::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief log directory read (nop)
+ */
+int
+MetaReaddirPlus::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1363,6 +1469,20 @@ parseHandlerReaddir(Properties &prop, MetaRequest **r)
 }
 
 static int
+parseHandlerReaddirPlus(Properties &prop, MetaRequest **r)
+{
+	fid_t dir;
+	seq_t seq;
+
+	seq = prop.getValue("Cseq", (seq_t) -1);
+	dir = prop.getValue("Directory File-handle", (fid_t) -1);
+	if (dir < 0)
+		return -1;
+	*r = new MetaReaddirPlus(seq, dir);
+	return 0;
+}
+
+static int
 parseHandlerGetalloc(Properties &prop, MetaRequest **r)
 {
 	fid_t fid;
@@ -1741,23 +1861,27 @@ MetaReaddir::response(ostringstream &os)
 }
 
 void
+MetaReaddirPlus::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n";
+	if (status < 0) {
+		os << "\r\n";
+		return;
+	}
+	os << "Num-Entries: " << numEntries << "\r\n";
+	os << "Content-length: " << v.str().length() << "\r\n\r\n";
+	os << v.str();
+}
+
+void
 MetaRename::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
 	os << "Status: " << status << "\r\n\r\n";
 }
-
-class ListServerLocations {
-	ostringstream &os;
-public:
-	ListServerLocations(ostringstream &out): os(out) { }
-	void operator () (const ServerLocation &s)
-	{
-		os << " " <<  s.ToString();
-	}
-};
-
 
 void
 MetaGetalloc::response(ostringstream &os)

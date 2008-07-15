@@ -37,6 +37,7 @@ namespace KFS {
 extern std::string strip_dots(std::string path);
 extern std::string build_path(std::string &cwd, const char *input);
 
+extern void GetTimeval(std::string &s, struct timeval &tv);
 // Introduce a delay for nsecs...i.e., sleep
 extern void Sleep(int nsecs);
 

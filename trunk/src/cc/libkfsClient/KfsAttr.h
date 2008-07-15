@@ -177,6 +177,27 @@ struct KfsFileAttr {
 
 };
 
+struct FileChunkInfo {
+    FileChunkInfo() { }
+    FileChunkInfo(const string &f, kfsFileId_t t) : 
+        filename(f), fileId(t), chunkCount(0) { }
+    string filename;
+    /// the id of this file
+    kfsFileId_t fileId;
+    
+    /// how many chunks does it have
+    long long	chunkCount;
+
+    /// degree of replication for the file
+    int16_t numReplicas;
+
+    /// file-offset corresponding to the last chunk
+    off_t lastChunkOffset;
+
+    /// info about a single chunk: typically the last chunk of the file
+    ChunkAttr cattr;
+};
+
 }
 
 #endif // LIBKFSCLIENT_KFSATTR_H

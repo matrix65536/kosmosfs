@@ -33,6 +33,7 @@ extern "C" {
 #include <fcntl.h>
 }
 #include "libkfsIO/Checksum.h"
+#include "Utils.h"
 
 using std::istringstream;
 using std::ostringstream;
@@ -43,8 +44,6 @@ using std::cout;
 using std::endl;
 
 static const char *KFS_VERSION_STR = "KFS/1.0";
-
-static void GetTimeval(string &s, struct timeval &tv);
 
 using namespace KFS;
 
@@ -105,6 +104,15 @@ void
 ReaddirOp::Request(ostringstream &os)
 {
     os << "READDIR " << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Directory File-handle: " << fid << "\r\n\r\n";
+}
+
+void
+ReaddirPlusOp::Request(ostringstream &os)
+{
+    os << "READDIRPLUS " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Directory File-handle: " << fid << "\r\n\r\n";
@@ -391,6 +399,16 @@ ReaddirOp::ParseResponseHeader(char *buf, int len)
 }
 
 void
+ReaddirPlusOp::ParseResponseHeader(char *buf, int len)
+{
+    string resp(buf, len);
+    Properties prop;
+
+    ParseResponseHeaderCommon(resp, prop);
+    numEntries = prop.getValue("Num-Entries", 0);
+}
+
+void
 MkdirOp::ParseResponseHeader(char *buf, int len)
 {
     string resp(buf, len);
@@ -595,15 +613,3 @@ ChangeFileReplicationOp::ParseResponseHeader(char *buf, int len)
     numReplicas = prop.getValue("Num-replicas", 1);
 }
 
-static void
-GetTimeval(string &s, struct timeval &tv)
-{
-    if (s != "") {
-	istringstream ist(s);
-
-	ist >> tv.tv_sec;
-	ist >> tv.tv_usec;
-    } else {
-	tv.tv_sec = tv.tv_usec = 0;
-    }
-}

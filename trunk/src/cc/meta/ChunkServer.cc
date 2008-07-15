@@ -474,8 +474,8 @@ ChunkServer::ResumeOp(MetaRequest *op)
 		// the layout manager of this op's completion.  So, send
 		// it there.
 		MetaChunkReplicate *mcr = static_cast<MetaChunkReplicate *>(submittedOp);
-		KFS_LOG_VA_DEBUG("Meta chunk replicate for chunk %lld finished with status: %d",
-				mcr->chunkId, submittedOp->status);
+		KFS_LOG_VA_DEBUG("Meta chunk replicate for chunk %lld finished with version %lld, status: %d",
+				mcr->chunkId, mcr->chunkVersion, submittedOp->status);
 		submit_request(submittedOp);
 		// the op will get nuked after it is processed
 	}
@@ -805,15 +805,20 @@ void
 ChunkServer::Ping(string &result)
 {
 	ostringstream ost;
+	char marker = ' ';
+
+	// for retiring nodes, add a '*' so that we can differentiate in the UI
+	if (mIsRetiring)
+		marker = '*';
 
 	if (mTotalSpace < (1L << 30)) {
-		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
+		ost << "s=" << mLocation.hostname << marker << ", p=" << mLocation.port 
 	    		<< ", total=" << convertToMB(mTotalSpace) 
 			<< "(MB), used=" << convertToMB(mUsedSpace)
 			<< "(MB), util=" << GetSpaceUtilization() * 100.0 
 			<< "%, nblocks=" << mNumChunks << " \t";
 	} else {
-		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
+		ost << "s=" << mLocation.hostname << marker << ", p=" << mLocation.port 
 	    		<< ", total=" << convertToGB(mTotalSpace) 
 			<< "(GB), used=" << convertToGB(mUsedSpace)
 			<< "(GB), util=" << GetSpaceUtilization() * 100.0 

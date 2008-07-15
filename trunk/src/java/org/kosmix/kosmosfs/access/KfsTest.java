@@ -68,8 +68,14 @@ public class KfsTest
             Date d = new Date(mTime);
             System.out.println("Modification time for: " + path + " is: " + d.toString());
             
+            // test readdir and readdirplus
             String [] entries;
             if ((entries = kfsAccess.kfs_readdir(basedir)) == null) {
+                System.out.println("Readdir failed");
+                System.exit(1);
+            }
+
+            if ((entries = kfsAccess.kfs_readdir(basedir, true)) == null) {
                 System.out.println("Readdir failed");
                 System.exit(1);
             }

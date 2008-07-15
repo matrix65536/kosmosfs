@@ -452,6 +452,11 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 				continue;
 			}
 		}
+		// XXX: temporary measure: take only under-utilized servers
+		// we need to move a model where we give preference to
+		// under-utilized servers
+		if (c->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD)
+			continue;
 		candidates.push_back(c);
 	}
 	if (candidates.size() == 0)
@@ -1165,14 +1170,15 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 	fid_t fid = clli.fid;
 	int numDone = 0;
 
+	/*
 	metatree.getalloc(fid, v);
 	chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(chunkId));
 	if (chunk == v.end()) {
-		// Need to nuke the copy
 		panic("missing chunk", true);
 	}
 
 	MetaChunkInfo *mci = *chunk;
+	*/
 
 	for (uint32_t i = 0; i < candidates.size() && i < extraReplicas; i++) {
 		vector<ChunkServerPtr>::const_iterator iter;
@@ -1214,7 +1220,12 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 					srcLocation.ToString().c_str(),
 					dstLocation.ToString().c_str());
 			dataServer->UpdateReplicationReadLoad(1);
+			/*
 			c->ReplicateChunk(fid, chunkId, mci->chunkVersion,
+				dataServer->GetServerLocation());
+			*/
+			// have the chunkserver get the version
+			c->ReplicateChunk(fid, chunkId, -1,
 				dataServer->GetServerLocation());
 			numDone++;
 		}
@@ -1583,7 +1594,6 @@ public:
 		return s->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD;
 	}
 };
-
 
 //
 // We are trying to move a chunk between two servers on the same rack.  For a
