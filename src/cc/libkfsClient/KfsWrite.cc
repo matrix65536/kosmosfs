@@ -272,8 +272,12 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
 	if ((res == -EHOSTUNREACH) ||
 	    (res == -KFS::EBADVERS) ||
 	    (res == -KFS::ELEASEEXPIRED)) {
-	    if ((res = DoAllocation(fd, true)) < 0)
-		return res;
+            // save the value of res; in case we tried too many times
+            // and are giving up, we need the error to propogate
+            int r;
+	    if ((r = DoAllocation(fd, true)) < 0)
+		return r;
+            
 	    continue;
 	}
 
@@ -617,7 +621,10 @@ KfsClientImpl::AllocateWriteId(int fd, off_t offset, size_t numBytes,
         return res;
     if (op.status < 0)
         return op.status;
-    
+
+    // get rid of any old stuff
+    writeId.clear();
+
     writeId.reserve(op.chunkServerLoc.size());
     istringstream ist(op.writeIdStr);
     for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++) {
