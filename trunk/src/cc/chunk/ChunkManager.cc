@@ -521,7 +521,7 @@ ChunkManager::CloseChunk(kfsChunkId_t chunkId)
     // from mChunkTable and a reference from cih->chunkHandle, then
     // we can safely close the fileid.
     if (cih->dataFH.use_count() <= 2) {
-        if (cih->dataFH->mFd < 0)
+        if ((!cih->dataFH) || (cih->dataFH->mFd < 0))
             return;
         cih->Release();
     }
