@@ -768,6 +768,8 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
 
             if (fte >= 0) {
                 result[i].fileSize = mFileTable[fte]->fattr.fileSize;
+            } else {
+                result[i].fileSize = -1;
             }
         }
         ComputeFilesizes(result, fileChunkInfo);
