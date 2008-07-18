@@ -362,7 +362,7 @@ KfsClientImpl::KfsClientImpl()
     mHostname = hostname;
 
     // store the entry for "/"
-    int UNUSED_ATTR rootfte = ClaimFileTableEntry(KFS::ROOTFID, "/");
+    int UNUSED_ATTR rootfte = ClaimFileTableEntry(KFS::ROOTFID, "/", "/");
     assert(rootfte == 0);
     mFileTable[0]->fattr.fileId = KFS::ROOTFID;
     mFileTable[0]->fattr.isDirectory = true;
@@ -530,7 +530,7 @@ KfsClientImpl::Mkdir(const char *pathname)
     }
 
     // Everything is good now...
-    int fte = ClaimFileTableEntry(parentFid, dirname.c_str());
+    int fte = ClaimFileTableEntry(parentFid, dirname.c_str(), pathname);
     if (fte < 0)	// Too many open files
 	return -EMFILE;
 
@@ -758,6 +758,7 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
     }
 
     if (computeFilesize) {
+
         for (uint32_t i = 0; i < result.size(); i++) {
             if ((fileChunkInfo[i].chunkCount == 0) || (result[i].isDirectory)) {
                 result[i].fileSize = 0;
@@ -774,6 +775,11 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
         }
         ComputeFilesizes(result, fileChunkInfo);
     }
+
+    string dirname = build_path(mCwd, pathname);
+    string::size_type len = dirname.size();
+    if ((len > 0) && (dirname[len - 1] == '/'))
+        dirname.erase(len - 1);
     
     for (uint32_t i = 0; i < result.size(); i++) {
         int fte = LookupFileTableEntry(dirFid, result[i].filename.c_str());
@@ -786,10 +792,17 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
         }
 
         if (fte < 0) {
-            fte = AllocFileTableEntry(dirFid, result[i].filename.c_str());
+            string fullpath;
+            if ((result[i].filename == ".") || (result[i].filename == ".."))
+                fullpath = "";
+            else
+                fullpath = dirname + "/" + result[i].filename;
+
+            fte = AllocFileTableEntry(dirFid, result[i].filename.c_str(), fullpath);
             if (fte < 0)
                 continue;
         }
+
         mFileTable[fte]->fattr.fileId = result[i].fileId;
         mFileTable[fte]->fattr.mtime = result[i].mtime;
         mFileTable[fte]->fattr.ctime = result[i].ctime;
@@ -915,7 +928,7 @@ KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
     }
 
     // cache the entry if possible
-    fte = AllocFileTableEntry(parentFid, filename);
+    fte = AllocFileTableEntry(parentFid, filename, "");
     if (fte < 0)		
 	return op.status;
     
@@ -952,7 +965,7 @@ KfsClientImpl::Create(const char *pathname, int numReplicas, bool exclusive)
     }
 
     // Everything is good now...
-    int fte = ClaimFileTableEntry(parentFid, filename.c_str());
+    int fte = ClaimFileTableEntry(parentFid, filename.c_str(), pathname);
     if (fte < 0) {	// XXX Too many open files
 	KFS_LOG_VA_DEBUG("status %d from ClaimFileTableEntry", fte);
 	return fte;
@@ -1006,6 +1019,21 @@ KfsClientImpl::Rename(const char *oldpath, const char *newpath, bool overwrite)
     KFS_LOG_VA_DEBUG("Status of renaming %s -> %s is: %ld", 
                      oldpath, newpath, op.status);
 
+    // update the path cache
+    if (op.status == 0) {
+        int fte = LookupFileTableEntry(parentFid, oldfilename.c_str());
+        if (fte > 0) {
+            string oldn = string(oldpath);
+            NameToFdMapIter iter = mPathCache.find(oldn);
+        
+            if (iter != mPathCache.end())
+                mPathCache.erase(iter);
+
+            mPathCache[absNewpath] = fte;
+            mFileTable[fte]->pathname = absNewpath;
+        }
+    }
+
     return op.status;
 }
 
@@ -1050,7 +1078,7 @@ KfsClientImpl::Open(const char *pathname, int openMode, int numReplicas)
             return -EEXIST;
     }
 
-    int fte = AllocFileTableEntry(parentFid, filename.c_str());
+    int fte = AllocFileTableEntry(parentFid, filename.c_str(), pathname);
     if (fte < 0)		// Too many open files
 	return fte;
 
@@ -2034,6 +2062,26 @@ public:
     }
 };
 
+bool
+KfsClientImpl::IsFileTableEntryValid(int fte)
+{
+    // The entries for files open for read/write are valid.  This is a
+    // handle that is given to the application. The entries for
+    // directories need to be revalidated every N secs.  The one
+    // exception for directory entries is that for "/"; that is always
+    // 2 and is valid.  That entry will never be deleted from the fs.
+    // Any other directory can be deleted and we don't want to hold on
+    // to stale entries.
+    time_t now = time(NULL);
+
+    if (((!FdAttr(fte)->isDirectory) && (FdInfo(fte)->openMode != 0)) ||
+        (FdAttr(fte)->fileId == KFS::ROOTFID) ||
+        (now - FdInfo(fte)->validatedTime < FILE_CACHE_ENTRY_VALID_TIME))
+        return true;
+
+    return false;
+}
+
 int
 KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
 {
@@ -2042,19 +2090,9 @@ KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
     i = find_if(mFileTable.begin(), mFileTable.end(), match);
     if (i == mFileTable.end())
         return -1;
-    time_t now = time(NULL);
     int fte = i - mFileTable.begin();
-    
-    // The entries for files open for read/write are valid.  This is a
-    // handle that is given to the application. The entries for
-    // directories need to be revalidated every N secs.  The one
-    // exception for directory entries is that for "/"; that is always
-    // 2 and is valid.  That entry will never be deleted from the fs.
-    // Any other directory can be deleted and we don't want to hold on
-    // to stale entries.
-    if (((!FdAttr(fte)->isDirectory) && (FdInfo(fte)->openMode != 0)) ||
-        (FdAttr(fte)->fileId == KFS::ROOTFID) ||
-        (now - FdInfo(fte)->validatedTime < FILE_CACHE_ENTRY_VALID_TIME))
+
+    if (IsFileTableEntryValid(fte))
         return fte;
 
     KFS_LOG_VA_DEBUG("Entry for <%ld, %s> is likely stale; forcing revalidation", 
@@ -2069,6 +2107,20 @@ KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
 int
 KfsClientImpl::LookupFileTableEntry(const char *pathname)
 {
+    string p(pathname);
+    NameToFdMapIter iter = mPathCache.find(p);
+
+    if (iter != mPathCache.end()) {
+        int fte = iter->second;
+
+        if (IsFileTableEntryValid(fte)) {
+            assert(mFileTable[fte]->pathname == pathname);
+            return fte;
+        }
+        ReleaseFileTableEntry(fte);
+        return -1;
+    }
+
     kfsFileId_t parentFid;
     string name;
     int res = GetPathComponents(pathname, &parentFid, name);
@@ -2079,17 +2131,19 @@ KfsClientImpl::LookupFileTableEntry(const char *pathname)
 }
 
 int
-KfsClientImpl::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name)
+KfsClientImpl::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name,
+                                   string pathname)
 {
     int fte = LookupFileTableEntry(parentFid, name);
     if (fte >= 0)
 	return fte;
 
-    return AllocFileTableEntry(parentFid, name);
+    return AllocFileTableEntry(parentFid, name, pathname);
 }
 
 int
-KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name)
+KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name,
+                                   string pathname)
 {
     int fte = FindFreeFileTableEntry();
 
@@ -2103,6 +2157,13 @@ KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name)
 	mFileTable[fte] = new FileTableEntry(parentFid, name);
         mFileTable[fte]->validatedTime = mFileTable[fte]->lastAccessTime = 
             time(NULL);
+        if (pathname != "") {
+            string fullpath = build_path(mCwd, pathname.c_str());
+            mPathCache[pathname] = fte;
+            // mFileTable[fte]->pathCacheIter = mPathCache.find(pathname);
+        }
+        mFileTable[fte]->pathname = pathname;
+
     }
     return fte;
 }
@@ -2110,6 +2171,12 @@ KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name)
 void
 KfsClientImpl::ReleaseFileTableEntry(int fte)
 {
+    if (mFileTable[fte]->pathname != "")
+        mPathCache.erase(mFileTable[fte]->pathname);
+    /*
+    if (mFileTable[fte]->pathCacheIter != mPathCache.end())
+        mPathCache.erase(mFileTable[fte]->pathCacheIter);
+    */
     delete mFileTable[fte];
     mFileTable[fte] = NULL;
 }
@@ -2133,7 +2200,7 @@ KfsClientImpl::Lookup(kfsFileId_t parentFid, const char *name)
 	return op.status;
     }
     // Everything is good now...
-    fte = ClaimFileTableEntry(parentFid, name);
+    fte = ClaimFileTableEntry(parentFid, name, "");
     if (fte < 0) // too many open files
 	return -EMFILE;
 

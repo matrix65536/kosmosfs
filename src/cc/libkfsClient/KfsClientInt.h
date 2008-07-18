@@ -29,8 +29,10 @@
 
 #include <string>
 #include <vector>
+#include <tr1/unordered_map>
 #include <sys/select.h>
 #include "common/log.h"
+#include "common/hsieh_hash.h"
 #include "common/kfstypes.h"
 #include "libkfsIO/TcpSocket.h"
 #include "libkfsIO/Checksum.h"
@@ -233,6 +235,9 @@ struct FilePosition {
     }
 };
 
+typedef std::tr1::unordered_map<std::string, int, Hsieh_hash_fcn> NameToFdMap;
+    typedef std::tr1::unordered_map<std::string, int, Hsieh_hash_fcn>::iterator NameToFdMapIter;
+
 ///
 /// \brief A table of entries that describe each open KFS file.
 ///
@@ -241,6 +246,13 @@ struct FileTableEntry {
     kfsFileId_t parentFid;
     // stores the name of the file/directory.
     std::string	name;
+
+    // store a pointer to the associated name-cache entry
+    // NameToFdMapIter pathCacheIter;
+
+    // the full pathname
+    std::string pathname;
+
     // one of O_RDONLY, O_WRONLY, O_RDWR; when it is 0 for a file,
     // this entry is used for attribute caching
     int		openMode;
@@ -529,6 +541,7 @@ private:
 
     /// keep a table of open files/directory handles.
     std::vector <FileTableEntry *> mFileTable;
+    NameToFdMap mPathCache;
 
     /// Check that fd is in range
     bool valid_fd(int fd) { return (fd >= 0 && fd < MAX_FILES); }
@@ -752,6 +765,8 @@ private:
     /// as free.
     int FindFreeFileTableEntry();
 
+    bool IsFileTableEntryValid(int fte);
+
     /// Wrapper function that calls LookupFileTableEntry with the parentFid
     int LookupFileTableEntry(const char *pathname);
 
@@ -765,8 +780,9 @@ private:
     /// downloaded from the server.
     int Lookup(kfsFileId_t parentFid, const char *name);
 
-    int ClaimFileTableEntry(kfsFileId_t parentFid, const char *name);
-    int AllocFileTableEntry(kfsFileId_t parentFid, const char *name);
+    // name -- is the last component of the pathname
+    int ClaimFileTableEntry(kfsFileId_t parentFid, const char *name, std::string pathname);
+    int AllocFileTableEntry(kfsFileId_t parentFid, const char *name, std::string pathname);
     void ReleaseFileTableEntry(int fte);
 
     /// Helper functions that interact with the leaseClerk to
