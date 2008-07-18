@@ -28,6 +28,7 @@
 #include "Utils.h"
 
 #include <cassert>
+#include <cerrno>
 #include <vector>
 #include <sstream>
 using std::vector;
@@ -94,14 +95,20 @@ KFS::build_path(string &cwd, const char *input)
 void
 KFS::Sleep(int nsecs)
 {
-	fd_set rfds;
 	struct timeval timeout;
+        int res;
 
-	FD_ZERO(&rfds);
-	FD_SET(0, &rfds);
-	timeout.tv_sec = nsecs;
-	timeout.tv_usec = 0;
-	select(1, &rfds, NULL, NULL, &timeout);
+        while (1) {
+            timeout.tv_sec = nsecs;
+            timeout.tv_usec = 0;
+
+            res = select(0, NULL, NULL, NULL, &timeout);
+            if (res == 0)
+                break;
+
+            if ((res < 0) && (errno == EINTR))
+                continue;
+        }
 }
 
 void
