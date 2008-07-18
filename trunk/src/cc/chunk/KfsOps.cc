@@ -1848,7 +1848,10 @@ GetChunkMetadataOp::HandleDone(int code, void *data)
 int
 ReplicateChunkOp::HandleDone(int code, void *data)
 {
-    chunkVersion = * (kfsSeq_t *) data;
+    if (data != NULL)
+        chunkVersion = * (kfsSeq_t *) data;
+    else
+        chunkVersion = -1;
     gLogger.Submit(this);
     return 0;
 }
