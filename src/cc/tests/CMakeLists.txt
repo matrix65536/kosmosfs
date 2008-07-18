@@ -31,6 +31,7 @@ KfsReader
 KfsSeekWrite
 KfsTrunc
 KfsWriter
+KfsDirScanTest
 mkfstree
 KfsRW
 )
