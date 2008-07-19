@@ -1385,6 +1385,9 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 	int extraReplicas = 0, numOngoing;
 	vector<ChunkServerPtr> c;
 
+	if (server->IsRetiring())
+		return;
+
 	c.push_back(server);
 
 	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin(); 
