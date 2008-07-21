@@ -24,8 +24,9 @@
 // 
 //----------------------------------------------------------------------------
 
-#include <sys/select.h>
+#include <sys/poll.h>
 #include <cerrno>
+#include <boost/scoped_array.hpp>
 
 #include "NetManager.h"
 #include "TcpSocket.h"
@@ -100,28 +101,32 @@ NetManager::UnRegisterTimeoutHandler(ITimeout *handler)
 void
 NetManager::MainLoop()
 {
-    fd_set readSet, writeSet, errSet;
-    int maxFd, fd, res;
+    boost::scoped_array<struct pollfd> pollfds;
+    uint32_t pollFdSize = 1024;
+    int numPollFds, fd, res;
     NetConnectionPtr conn;
     NetConnectionListIter_t iter, eltToRemove;
-    struct timeval selectTimeout;
+    int pollTimeoutMs;
 
     // if we have too many bytes to send, throttle incoming
     int64_t totalNumBytesToSend = 0;
     bool overloaded = false;
 
+    pollfds.reset(new struct pollfd[pollFdSize]);
     while (1) {
 
-        maxFd = 0;
-        FD_ZERO(&readSet);
-        FD_ZERO(&writeSet);
-        FD_ZERO(&errSet);
+        if (mConnections.size() > pollFdSize) {
+            pollFdSize = mConnections.size();
+            pollfds.reset(new struct pollfd[pollFdSize]);
+        }
         // build poll vector: 
 
         // make sure we are listening to the net kicker
         fd = globals().netKicker.GetFd();
-        FD_SET(fd, &readSet);
-        maxFd = fd;
+        pollfds[0].fd = fd;
+        pollfds[0].events = POLLIN;
+
+        numPollFds = 1;
 
         overloaded = IsOverloaded(totalNumBytesToSend);
         int numBytesToSend;
@@ -136,16 +141,21 @@ NetManager::MainLoop()
             if (fd < 0)
                 continue;
 
-            if (fd > maxFd)
-                maxFd = fd;
+            if (fd == globals().netKicker.GetFd()) {
+                conn->mPollVectorIndex = -1;
+                continue;
+            }
 
+            conn->mPollVectorIndex = numPollFds;
+            pollfds[numPollFds].fd = fd;
+            pollfds[numPollFds].events = 0;
             if (conn->IsReadReady(overloaded)) {
                 // By default, each connection is read ready.  We
                 // expect there to be 2-way data transmission, and so
                 // we are read ready.  In overloaded state, we only
                 // add the fd to the poll vector if the fd is given a
                 // special pass
-                FD_SET(fd, &readSet);
+                pollfds[numPollFds].events |= POLLIN;
             }
 
             numBytesToSend = conn->GetNumBytesToWrite();
@@ -154,9 +164,9 @@ NetManager::MainLoop()
                 // An optimization: if we are not sending any data for
                 // this fd in this round of poll, don't bother adding
                 // it to the poll vector.
-                FD_SET(fd, &writeSet);
+                pollfds[numPollFds].events |= POLLOUT;
             }
-            FD_SET(fd, &errSet);
+            numPollFds++;
         }
 
         if (!overloaded) {
@@ -169,12 +179,11 @@ NetManager::MainLoop()
 
         gettimeofday(&startTime, NULL);
 
-        selectTimeout = mSelectTimeout;
-        res = select(maxFd + 1, &readSet, &writeSet, &errSet, 
-                     &selectTimeout);
+        pollTimeoutMs = mSelectTimeout.tv_sec * 1000;
+        res = poll(pollfds.get(), numPollFds, pollTimeoutMs);
 
         if ((res < 0) && (errno != EINTR)) {
-            perror("select(): ");
+            perror("poll(): ");
             continue;
         }
 
@@ -191,8 +200,7 @@ NetManager::MainLoop()
         // list of timeout handlers...call them back
 
         fd = globals().netKicker.GetFd();
-        if (FD_ISSET(fd, &readSet)) {
-            FD_CLR(fd, &readSet);
+        if (pollfds[0].revents & POLLIN) {
             globals().netKicker.Drain();
             globals().diskManager.ReapCompletedIOs();
         }
@@ -202,23 +210,34 @@ NetManager::MainLoop()
         iter = mConnections.begin();
         while (iter != mConnections.end()) {
             conn = *iter;
-            fd = conn->GetFd();
-            if ((fd > 0) && (FD_ISSET(fd, &readSet))) {
-                conn->HandleReadEvent(overloaded);
-                FD_CLR(fd, &readSet);
+            if ((conn->GetFd() == globals().netKicker.GetFd()) ||
+                (conn->mPollVectorIndex < 0)) {
+                ++iter;
+                continue;
+            }
+
+            if (pollfds[conn->mPollVectorIndex].revents & POLLIN) {
+                fd = conn->GetFd();
+                if (fd > 0) {
+                    conn->HandleReadEvent(overloaded);
+                }
             }
             // conn could have closed due to errors during read.  so,
             // need to re-get the fd and check that all is good
-            fd = conn->GetFd();
-            if ((fd > 0) && (FD_ISSET(fd, &writeSet))) {
-                conn->HandleWriteEvent();
-                FD_CLR(fd, &writeSet);
+            if (pollfds[conn->mPollVectorIndex].revents & POLLOUT) {
+                fd = conn->GetFd();
+                if (fd > 0) {
+                    conn->HandleWriteEvent();
+                }
             }
-            fd = conn->GetFd();
-            if ((fd > 0) && (FD_ISSET(fd, &errSet))) {
-                conn->HandleErrorEvent();
-                FD_CLR(fd, &errSet);
+
+            if (pollfds[conn->mPollVectorIndex].revents & POLLERR) {
+                fd = conn->GetFd();
+                if (fd > 0) {
+                    conn->HandleErrorEvent();
+                }
             }
+
             // Something happened and the connection has closed.  So,
             // remove the connection from our list.
             if (conn->GetFd() < 0) {

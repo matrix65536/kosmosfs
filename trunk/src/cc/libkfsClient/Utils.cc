@@ -95,19 +95,26 @@ KFS::build_path(string &cwd, const char *input)
 void
 KFS::Sleep(int nsecs)
 {
-	struct timeval timeout;
         int res;
+        struct timeval start;
 
+        gettimeofday(&start, NULL);
         while (1) {
-            timeout.tv_sec = nsecs;
+            struct timeval timeout, now;
+
+            gettimeofday(&now, NULL);
+            if (now.tv_sec - start.tv_sec >= nsecs)
+                break;
+            
+            timeout.tv_sec = nsecs - (now.tv_sec - start.tv_sec);
             timeout.tv_usec = 0;
+
+            if (timeout.tv_sec < 0)
+                break;
 
             res = select(0, NULL, NULL, NULL, &timeout);
             if (res == 0)
                 break;
-
-            if ((res < 0) && (errno == EINTR))
-                continue;
         }
 }
 

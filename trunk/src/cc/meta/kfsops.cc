@@ -559,6 +559,9 @@ Tree::assignChunkId(fid_t file, chunkOff_t offset,
 
 	// insert succeeded; so, bump the chunkcount.
 	fa->chunkcount++;
+	// we will know the size of the file only when the write to this chunk
+	// is finished.  so, until then....
+	fa->filesize = -1;
 
 	gettimeofday(&fa->mtime, NULL);
 	return 0;
@@ -585,6 +588,8 @@ Tree::truncate(fid_t file, chunkOff_t offset, chunkOff_t *allocOffset)
 
 	getalloc(fa->id(), chunkInfo);
 	assert(fa->chunkcount == (long long)chunkInfo.size());
+
+	fa->filesize = -1;
 
 	// compute the starting offset for what will be the
 	// "last" chunk for the file

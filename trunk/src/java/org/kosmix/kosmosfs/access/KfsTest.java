@@ -75,11 +75,6 @@ public class KfsTest
                 System.exit(1);
             }
 
-            if ((entries = kfsAccess.kfs_readdir(basedir, true)) == null) {
-                System.out.println("Readdir failed");
-                System.exit(1);
-            }
-
             System.out.println("Readdir returned: ");
             for (int i = 0; i < entries.length; i++) {
                 System.out.println(entries[i]);
@@ -104,6 +99,17 @@ public class KfsTest
             outputChannel.sync();
 
             outputChannel.close();
+
+            KfsFileAttr[] fattr;
+            if ((fattr = kfsAccess.kfs_readdirplus(basedir)) == null) {
+                System.out.println("Readdirplus failed");
+                System.exit(1);
+            }
+
+            System.out.println("Readdirplus returned: ");
+            for (int i = 0; i < fattr.length; i++) {
+                System.out.println("name: " + fattr[i].filename + " sz: " + fattr[i].filesize);
+            }
 
             System.out.println("Trying to lookup blocks for file: " + path);
 

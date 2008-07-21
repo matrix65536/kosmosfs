@@ -66,7 +66,9 @@ public:
         mDoingNonblockingConnect(false),
         mCallbackObj(c), 
         mSock(sock), mInBuffer(NULL), mOutBuffer(NULL), 
-        mNumBytesOut(0), mLastFlushResult(0) { } 
+        mNumBytesOut(0), mLastFlushResult(0) { 
+        mPollVectorIndex = -1;
+    } 
 
     /// @param[in] sock TcpSocket on which I/O can be done
     /// @param[in] c KfsCallbackObj associated with this connection
@@ -79,6 +81,7 @@ public:
         mInBuffer(NULL), mOutBuffer(NULL), 
         mNumBytesOut(0), mLastFlushResult(0) 
     {
+        mPollVectorIndex = -1;
         if (listenOnly)
             mEnableReadIfOverloaded = true;
     }
@@ -160,7 +163,8 @@ public:
         // KFS_LOG_DEBUG("Closing socket: %d", mSock->GetFd());
         mSock->Close();
     }
-    
+    /// index into the poll fd's vector
+    int			mPollVectorIndex;
 private:
     bool		mListenOnly;
     /// should we add this connection to the poll vector for reads

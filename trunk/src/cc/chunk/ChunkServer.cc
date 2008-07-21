@@ -132,12 +132,10 @@ ChunkServer::RemoveServer(RemoteSyncSM *target)
 
     i = find_if(mRemoteSyncers.begin(), mRemoteSyncers.end(),
                 RemoteSyncSMMatcher(target->GetLocation()));
-    if (i == mRemoteSyncers.end()) {
-        return;
-    }
-    mRemoteSyncers.erase(i);
+    if (i != mRemoteSyncers.end()) {
+        mRemoteSyncers.erase(i);
+    }                                      
 }
-
 
 void
 KFS::verifyExecutingOnNetProcessor()

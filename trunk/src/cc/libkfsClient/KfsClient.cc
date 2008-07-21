@@ -730,7 +730,14 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
         GetTimeval(s, fattr.crtime);
 
         entryInfo = "";
-        
+
+        fattr.numReplicas = prop.getValue("Replication", 1);
+        fattr.fileSize = prop.getValue("File-size", (off_t) -1);
+        if (fattr.fileSize != -1) {
+            KFS_LOG_VA_DEBUG("Got file size from server for %s: %ld", 
+                             fattr.filename.c_str(), fattr.fileSize);
+        }
+
         // get the location info for the last chunk
         FileChunkInfo lastChunkInfo(fattr.filename, fattr.fileId);
 
@@ -769,11 +776,16 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
 
             if (fte >= 0) {
                 result[i].fileSize = mFileTable[fte]->fattr.fileSize;
-            } else {
-                result[i].fileSize = -1;
-            }
+            } 
         }
         ComputeFilesizes(result, fileChunkInfo);
+    }
+
+    // if there are too many entries in the dir, then the caller is
+    // probably scanning the directory.  don't put it in the cache
+    if (result.size() > 128) {
+        sort(result.begin(), result.end());
+        return res;
     }
 
     string dirname = build_path(mCwd, pathname);
@@ -915,10 +927,14 @@ KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
 
         result = op.fattr;
     }
-    if ((!result.isDirectory) && computeFilesize)
-	result.fileSize = ComputeFilesize(result.fileId);
-    else
+    if ((!result.isDirectory) && computeFilesize) {
+        if (result.fileSize < 0) {
+            result.fileSize = ComputeFilesize(result.fileId);
+        }
+    }
+    else {
         result.fileSize = -1;
+    }
 
     if (fte >= 0) {
         // if we computed the filesize, then we stash it; otherwise, we'll

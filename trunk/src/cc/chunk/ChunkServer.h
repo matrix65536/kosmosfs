@@ -88,7 +88,6 @@ private:
     bool mKickNetThread;
     ServerLocation mLocation;
     std::list<RemoteSyncSMPtr> mRemoteSyncers;
-
 };
 
 extern void verifyExecutingOnNetProcessor();

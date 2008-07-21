@@ -47,7 +47,7 @@
 namespace KFS {
 
 /// Set this to 1MB: 64K * 16
-const size_t MIN_BYTES_PIPELINE_IO = CHECKSUM_BLOCKSIZE * 16;
+const size_t MIN_BYTES_PIPELINE_IO = CHECKSUM_BLOCKSIZE * 16 * 4;
 
 /// Per write, push out at most one checksum block size worth of data
 const size_t MAX_BYTES_PER_WRITE_IO = CHECKSUM_BLOCKSIZE;

@@ -69,6 +69,7 @@ typedef map<KfsOp_t, Counter *>::iterator OpCounterMapIter;
 
 OpCounterMap gCounters;
 Counter gCtrWriteMaster("Write Master");
+Counter gCtrWriteDuration("Write Duration");
 
 const char *KFS_VERSION_STR = "KFS/1.0";
 
@@ -171,6 +172,7 @@ KFS::RegisterCounters()
     AddCounter("Change Chunk Vers", CMD_CHANGE_CHUNK_VERS);
 
     globals().counterManager.AddCounter(&gCtrWriteMaster);
+    globals().counterManager.AddCounter(&gCtrWriteDuration);
 }
 
 static void
@@ -1310,6 +1312,8 @@ WritePrepareOp::Execute()
     writeOp->checksums.push_back(checksum);
     dataBuf = NULL;
 
+    writeOp->enqueueTime = time(NULL);
+
     status = gChunkManager.WriteChunk(writeOp);
     
     if (status < 0)
@@ -1383,6 +1387,8 @@ WriteSyncOp::Execute()
         return;
     }
     
+    writeOp->enqueueTime = time(NULL);
+
     if (writeOp->status < 0) {
         // due to failures with data fwd'ing/checksum errors and such
         status = writeOp->status;
@@ -1901,6 +1907,21 @@ ReadChunkMetaOp::HandleDone(int code, void *data)
 
 WriteOp::~WriteOp()
 {
+    if (isWriteIdHolder) {
+        // track how long it took for the write to finish up:
+        // enqueueTime tracks when the last write was done to this
+        // writeid
+        struct timeval lastWriteTime;
+
+        lastWriteTime.tv_sec = enqueueTime;
+        lastWriteTime.tv_usec = 0;
+        float timeSpent = ComputeTimeDiff(startTime, lastWriteTime);
+        // we don't want write id's to pollute stats
+        gettimeofday(&startTime, NULL);
+        gCtrWriteDuration.Update(1);
+        gCtrWriteDuration.Update(timeSpent);
+    }
+
     if (dataBuf != NULL)
         delete dataBuf;
     if (rop != NULL) {

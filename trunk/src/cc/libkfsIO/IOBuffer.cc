@@ -383,6 +383,12 @@ int IOBuffer::Read(int fd)
         if (res <= 0)
             break;
         numRead += res;
+#if 0
+        // XXX: experimental; we want to read minimal amoutn and see
+        // if we can process it.
+        if (numRead >= (int) (2 * IOBUFSIZE))
+            break;
+#endif
     }
 
     if ((numRead == 0) && (res < 0))

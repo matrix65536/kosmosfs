@@ -179,6 +179,16 @@ LayoutManager::AddNewServer(MetaHello *r)
 								s.get());
 				assert(res >= 0);
 
+				// get the chunksize for the last chunk of fid
+				// stored on this server
+				MetaFattr *fa = metatree.getFattr(r->chunks[i].fileId);
+				if (fa->filesize < 0) {
+					MetaChunkInfo *lastChunk = v.back();
+					if (lastChunk->chunkId == r->chunks[i].chunkId)
+						s->GetChunkSize(r->chunks[i].fileId,
+								r->chunks[i].chunkId);
+				}
+
 				if (mci->chunkVersion < r->chunks[i].chunkVersion) {
 					// version #'s differ.  have the chunkserver reset
 					// to what the metaserver has.
@@ -1028,15 +1038,19 @@ public:
 /// If the write lease on a chunk is expired, then decrement the # of writes
 /// on the servers that are involved in the write.
 class DecChunkWriteCount {
+	fid_t f;
 	chunkId_t c;
 public:
-	DecChunkWriteCount(chunkId_t id) : c(id) { }
+	DecChunkWriteCount(fid_t fid, chunkId_t id) : f(fid), c(id) { }
 	void operator() (const LeaseInfo &l) {
 		if (l.leaseType != WRITE_LEASE)
 			return;
 		vector<ChunkServerPtr> servers;
 		gLayoutManager.GetChunkToServerMapping(c, servers);
 		for_each(servers.begin(), servers.end(), ChunkWriteDecrementor());
+		// get the chunk's size from one of the servers
+		if (servers.size() > 0) 
+			servers[0]->GetChunkSize(f, c);
 	}
 
 };
@@ -1056,7 +1070,7 @@ public:
 		i = remove_if(c.chunkLeases.begin(), c.chunkLeases.end(), 
 			LeaseExpired(now));
 
-		for_each(i, c.chunkLeases.end(), DecChunkWriteCount(chunkId));
+		for_each(i, c.chunkLeases.end(), DecChunkWriteCount(c.fid, chunkId));
 		// trim the list
 		c.chunkLeases.erase(i, c.chunkLeases.end());
 		cmap[p.first] = c;
@@ -1078,7 +1092,7 @@ void
 LayoutManager::LeaseCleanup(chunkId_t chunkId, ChunkPlacementInfo &v)
 {
 	for_each(v.chunkLeases.begin(), v.chunkLeases.end(), 
-		DecChunkWriteCount(chunkId));
+		DecChunkWriteCount(v.fid, chunkId));
 	v.chunkLeases.clear();
 }
 

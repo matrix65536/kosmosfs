@@ -407,14 +407,12 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
 	    MetaChunkReplicate *mcr = static_cast <MetaChunkReplicate *> (op);
 	    mcr->fid = prop.getValue("File-handle", (long long) 0);
 	    mcr->chunkVersion = prop.getValue("Chunk-version", (long long) 0);
-	} 
+	} else if (submittedOp->op == META_CHUNK_SIZE) {
+	    MetaChunkSize *mcs = static_cast <MetaChunkSize *> (op);
+	    mcs->chunkSize = prop.getValue("Size", (off_t) -1);
+	}
         ResumeOp(op);
     
-	/*
-        if (iobuf->BytesConsumable() > 0) {
-                KFS_LOG_VA_DEBUG("More command data likely available for chunk: ");
-        }
-	*/
         return 0;
 }
 
@@ -478,6 +476,11 @@ ChunkServer::ResumeOp(MetaRequest *op)
 				mcr->chunkId, mcr->chunkVersion, submittedOp->status);
 		submit_request(submittedOp);
 		// the op will get nuked after it is processed
+	}
+	else if (submittedOp->op == META_CHUNK_SIZE) {
+		// chunkserver has responded with the chunk's size.  So, update
+		// the meta-tree
+		submit_request(submittedOp);
 	}
         else {
                 assert(!"Unknown op!");
@@ -598,6 +601,20 @@ ChunkServer::TruncateChunk(chunkId_t chunkId, off_t s)
 	mAllocSpace -= (CHUNKSIZE - s);
 
 	r = new MetaChunkTruncate(NextSeq(), this, chunkId, s);
+
+	// save a pointer to the request so that we can match up the
+	// response whenever we get it.
+	Enqueue(r);
+
+	return 0;
+}
+
+int
+ChunkServer::GetChunkSize(fid_t fid, chunkId_t chunkId)
+{
+	MetaChunkSize *r;
+
+	r = new MetaChunkSize(NextSeq(), this, fid, chunkId);
 
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.

@@ -83,6 +83,7 @@ enum MetaOp {
 	META_CHUNK_STALENOTIFY, //!< Stale chunk notification RPC from meta->chunk
 	META_CHUNK_VERSCHANGE, //!< Notify chunkserver of version # change from meta->chunk
 	META_CHUNK_REPLICATE, //!< Ask chunkserver to replicate a chunk
+	META_CHUNK_SIZE, //!< Ask chunkserver for the size of a chunk
 	META_CHUNK_REPLICATION_CHECK, //!< Internally generated
 	META_CHUNK_CORRUPT, //!< Chunkserver is notifying us that a chunk is corrupt
 	//!< All the blocks on the retiring server have been evacuated and the
@@ -539,7 +540,6 @@ struct ChunkInfo {
 	fid_t fileId;
 	chunkId_t chunkId;
 	seq_t chunkVersion;
-
 };
 
 /*!
@@ -710,6 +710,33 @@ struct MetaChunkReplicate: public MetaChunkRequest {
 		os << " fileId = " << fid;
 		os << " chunkId = " << chunkId;
 		os << " chunkVersion = " << chunkVersion;
+		return os.str();
+	}
+};
+
+/*!
+ * \brief As a chunkserver for the size of a particular chunk.  We use this RPC
+ * to compute the filesize: whenever the lease on the last chunk of the file
+ * expires, we get the chunk's size and then determine the filesize.
+ */
+struct MetaChunkSize: public MetaChunkRequest {
+	fid_t fid;  //!< input: we use the tuple <fileid, chunkid> to
+			//!< find the entry we need.
+	chunkId_t chunkId; //!< input: the chunk whose size we need
+	off_t chunkSize; //!< output: the chunk size
+	MetaChunkSize(seq_t n, ChunkServer *s, fid_t f, chunkId_t c) : 
+		MetaChunkRequest(META_CHUNK_SIZE, n, false, NULL, s),
+		fid(f), chunkId(c), chunkSize(-1) { }
+	//!< generate the request string that should be sent out
+	void request(ostringstream &os);
+	int log(ofstream &file) const;
+	string Show()
+	{
+		ostringstream os;
+
+		os <<  "meta->chunk size: ";
+		os << " fileId = " << fid;
+		os << " chunkId = " << chunkId;
 		return os.str();
 	}
 };

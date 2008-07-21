@@ -31,11 +31,13 @@
 #include <iostream>
 #include <vector>
 #include <netinet/in.h>
+#include <sstream>
 
 using std::vector;
 using std::string;
 using std::cout;
 using std::endl;
+using std::ostringstream;
 
 #include <fcntl.h>
 #include "libkfsClient/KfsClient.h"
@@ -55,6 +57,9 @@ extern "C" {
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
+
+    jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdirplus(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
     jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
@@ -192,6 +197,47 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
     string path;
     setStr(path, jenv, jpath);
     return clnt->Rmdir(path.c_str());
+}
+
+jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdirplus(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    string path;
+    int res;
+    jobjectArray jentries;
+
+    setStr(path, jenv, jpath);
+
+    std::vector<KFS::KfsFileAttr> fattr;
+    res = clnt->ReaddirPlus(path.c_str(), fattr);
+    if ((res < 0) || (fattr.size() == 0))
+        return NULL;
+
+    jclass jstrClass = jenv->FindClass("Ljava/lang/String;");
+
+    // construct a key value pair of strings for each attribute and
+    // then unpack in java side.
+    jentries = jenv->NewObjectArray(fattr.size(), jstrClass, NULL);
+    for (vector<string>::size_type i = 0; i < fattr.size(); i++) {
+        ostringstream os;
+        jstring s;
+
+        os << "Filename: " << fattr[i].filename << "\n";
+        if (fattr[i].isDirectory)
+            os << "IsDirectory: true" << "\n";
+        else
+            os << "IsDirectory: false" << "\n";
+        os << "Filesize: " << fattr[i].fileSize << "\n";
+        os << "M-Time: " << fattr[i].mtime.tv_sec * 1000 << "\n";
+        os << "Replicas: " << fattr[i].numReplicas << "\n";
+
+        s = jenv->NewStringUTF(os.str().c_str());
+
+        jenv->SetObjectArrayElement(jentries, i, s);
+        jenv->DeleteLocalRef(s);
+    }
+    return jentries;
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(

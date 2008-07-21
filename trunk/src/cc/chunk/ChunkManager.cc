@@ -1392,6 +1392,7 @@ ChunkManager::AllocateWriteId(WriteIdAllocOp *wi)
                      wi->offset, wi->numBytes, NULL, mWriteId);
     op->enqueueTime = time(NULL);
     wi->writeId = mWriteId;
+    op->isWriteIdHolder = true;
     mPendingWrites.push_back(op);
     return 0;
 }
@@ -1492,7 +1493,9 @@ ChunkManager::CloneWriteOp(int64_t writeId)
     if (other->status < 0)
         // if the write is "bad" already, don't add more data to it
         return NULL;
-        
+
+    // Since we are cloning, "touch" the time
+    other->enqueueTime = time(NULL);
     // offset/size/buffer are to be filled in
     op = new WriteOp(other->seq, other->chunkId, other->chunkVersion, 
                      0, 0, NULL, other->writeId);
