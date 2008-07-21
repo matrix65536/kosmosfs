@@ -74,6 +74,8 @@ struct KfsServerAttr {
     struct timeval crtime; /// creation time
     /// how many chunks does it have
     long long	chunkCount;
+    /// server keeps a hint and will tell us....
+    off_t	fileSize; 
     /// is this a directory?
     bool	isDirectory;
     /// what is the deg. of replication for this file
@@ -150,6 +152,8 @@ struct KfsFileAttr {
     bool	isDirectory;
     /// the size of this file in bytes
     off_t	fileSize;
+    /// what is the deg. of replication for this file
+    int16_t numReplicas;
 
     KfsFileAttr& operator= (const KfsServerAttr &other) {
         fileId = other.fileId;
@@ -158,6 +162,7 @@ struct KfsFileAttr {
         mtime = other.mtime;
         ctime = other.ctime;
         crtime = other.crtime;
+        numReplicas = other.numReplicas;
         return *this;
     }
 
@@ -168,6 +173,7 @@ struct KfsFileAttr {
         mtime = other.mtime;
         ctime = other.ctime;
         crtime = other.crtime;
+        numReplicas = other.numReplicas;
         return *this;
     }
 

@@ -266,7 +266,7 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
 	}
 
 	if (res == -KFS::ELEASEEXPIRED) {
-	    KFS_LOG_DEBUG("Server says lease expired...re-doing allocation");
+	    KFS_LOG_INFO("Server says lease expired...re-doing allocation");
 	    Sleep(KFS::LEASE_INTERVAL_SECS / 2);
 	}
 	if ((res == -EHOSTUNREACH) ||
@@ -281,9 +281,12 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
 	    continue;
 	}
 
-	if (res < 0)
+	if (res < 0) {
 	    // any other error
+            string errstr = ErrorCodeToStr(res);
+            KFS_LOG_VA_INFO("Write failed because of error: %s", errstr.c_str());
 	    break;
+        }
     }
 
     return res;

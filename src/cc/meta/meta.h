@@ -139,21 +139,30 @@ public:
 	struct timeval ctime;	//!< attribute change time
 	struct timeval crtime;	//!< creation time
 	long long chunkcount;	//!< number of constituent chunks
+	//!< size of file: is only a hint; if we don't the size, the client will
+	//!< compute the size whenever needed.  this is not saved to disk
+	off_t filesize;		
 
 	MetaFattr(FileType t, fid_t id, int16_t n):
 		Meta(KFS_FATTR, id), type(t), 
-		numReplicas(n), chunkcount(0)
+		numReplicas(n), chunkcount(0), filesize(-1)
 	{
 		int UNUSED_ATTR s = gettimeofday(&crtime, NULL);
 		assert(s == 0);
 		mtime = ctime = crtime;
+		if (type == KFS_DIR)
+			filesize = 0;
 	}
 
 	MetaFattr(FileType t, fid_t id, struct timeval mt,
 		struct timeval ct, struct timeval crt,
 		long long c, int16_t n): Meta(KFS_FATTR, id),
 				 type(t), numReplicas(n), mtime(mt), ctime(ct),
-				 crtime(crt), chunkcount(c) { }
+				 crtime(crt), chunkcount(c), filesize(-1) 
+	{ 
+		if (type == KFS_DIR)
+			filesize = 0;
+	}
 
 	MetaFattr(): Meta(KFS_FATTR, 0), type(KFS_NONE) { }
 

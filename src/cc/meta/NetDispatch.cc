@@ -124,8 +124,9 @@ NetDispatch::Dispatch()
 			}
 			delete ccvi;
 		}
-		else if (r->op == META_CHUNK_REPLICATE) {
-			// For replicating a chunk, we sent a request to
+		else if ((r->op == META_CHUNK_REPLICATE) || 
+			(r->op == META_CHUNK_SIZE)) {
+			// For replicating a chunk/computing a chunk's size, we sent a request to
 			// a chunkserver; it did the work and sent back a reply.
 			// We have processed the reply and that message is now here.
 			// Nothing more to do.  So, get rid of it

@@ -495,10 +495,13 @@ struct WriteOp : public KfsOp {
     // time at which the write was enqueued at the ChunkManager
     time_t	 enqueueTime;
 
+    // for statistics purposes, have a "holder" op that tracks how long it took a write to finish. 
+    bool isWriteIdHolder;
+
     WriteOp(kfsChunkId_t c, int64_t v) :
         KfsOp(CMD_WRITE, 0), chunkId(c), chunkVersion(v),
         dataBuf(NULL), rop(NULL), wpop(NULL), waitForSyncDone(false),
-        isFromReReplication(false)
+        isFromReReplication(false), isWriteIdHolder(false)
     {
         SET_HANDLER(this, &WriteOp::HandleWriteDone);
     }
@@ -509,7 +512,7 @@ struct WriteOp : public KfsOp {
         offset(o), numBytes(n), numBytesIO(0),
         dataBuf(b), chunkSize(0), rop(NULL), wpop(NULL), 
         waitForSyncDone(false), isFromReReplication(false),
-        writeId(id)
+        writeId(id), isWriteIdHolder(false)
     {
         SET_HANDLER(this, &WriteOp::HandleWriteDone);
     }

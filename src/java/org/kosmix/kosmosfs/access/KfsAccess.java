@@ -28,6 +28,8 @@ package org.kosmix.kosmosfs.access;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Properties;
+import java.io.ByteArrayInputStream;
 
 public class KfsAccess
 {
@@ -52,6 +54,10 @@ public class KfsAccess
 
     private final static native
     String[] readdir(long ptr, String path, boolean prefetchAttr);
+
+    // for each dir. entry, we get back a key/value pair of KfsFileAttr
+    private final static native
+    String[] readdirplus(long ptr, String path);
 
     private final static native
     String[][] getDataLocation(long ptr, String path, long start, long len);
@@ -143,6 +149,51 @@ public class KfsAccess
     public String[] kfs_readdir(String path, boolean prefetchAttr)
     {
         return readdir(cPtr, path, prefetchAttr);
+    }
+
+    public KfsFileAttr[] kfs_readdirplus(String path)
+    {
+        String[] entries = readdirplus(cPtr, path);
+        if (entries == null)
+            return null;
+
+        KfsFileAttr[] fattr = new KfsFileAttr[entries.length];
+        
+        for (int i = 0; i < entries.length; i++) {
+            // put everything into a properties object and pick up
+            // values.  StringInputStream is deprecated; so, we are
+            // using byte-array-inputstream.
+            byte[] arr = entries[i].getBytes();
+            ByteArrayInputStream bis = new ByteArrayInputStream(arr);
+            Properties prop = new Properties();
+            String s;
+
+            try {
+                prop.load(bis);
+                fattr[i] = new KfsFileAttr();
+
+                fattr[i].filename = prop.getProperty("Filename", "");
+                s = prop.getProperty("IsDirectory", "false");
+                if (s.startsWith("true"))
+                    fattr[i].isDirectory = true;
+                else
+                    fattr[i].isDirectory = false;
+
+                s = prop.getProperty("Filesize", "0");
+                fattr[i].filesize = Long.parseLong(s);
+
+                s = prop.getProperty("M-Time", "0");
+                fattr[i].modificationTime = Long.parseLong(s);
+
+                s = prop.getProperty("Replicas", "1");
+                fattr[i].replication = Integer.parseInt(s);
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                fattr[i] = null;
+            }
+        }
+        return fattr;
     }
 
     public KfsOutputChannel kfs_append(String path)

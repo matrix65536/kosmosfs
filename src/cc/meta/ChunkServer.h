@@ -125,6 +125,9 @@ namespace KFS
                 ///
 		int TruncateChunk(chunkId_t chunkId, off_t s);
 
+		/// Method to get the size of a chunk from a chunkserver.
+		int GetChunkSize(fid_t fid, chunkId_t chunkId);
+
 		/// Methods to handle (re) replication of a chunk.  If there are
 		/// insufficient copies of a chunk, we replicate it.
 		int ReplicateChunk(fid_t fid, chunkId_t chunkId, seq_t chunkVersion,

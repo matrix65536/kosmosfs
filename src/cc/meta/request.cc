@@ -368,6 +368,7 @@ public:
 
 		if ((status != 0) || (chunkInfo.size() == 0)) {
 			os << "Chunk-count: 0\r\n";
+			os << "File-size: 0\r\n";
 			os << "Replication: " << toString(fa->numReplicas) << "\r\n";
 			return;
 		}
@@ -381,11 +382,19 @@ public:
 			// if all the servers hosting the chunk are
 			// down...sigh...
 			os << "Chunk-count: 0\r\n";
+			os << "File-size: 0\r\n";
 			os << "Replication: " << toString(fa->numReplicas) << "\r\n";
 			return;
 		}
+		//
+		// we give the client all the info about the last block of the
+		// file; we also tell the client what we know about the
+		// filesize.  if the value we send is -1, the client will figure
+		// out the size.
+		//
 		for_each(c.begin(), c.end(), EnumerateLocations(l.locations));
 		os << "Chunk-count: " << toString(fa->chunkcount) << "\r\n";
+		os << "File-size: " << toString(fa->filesize) << "\r\n";
 		os << "Replication: " << toString(fa->numReplicas) << "\r\n";
 		os << "Chunk-offset: " << l.offset << "\r\n";
 		os << "Chunk-handle: " << l.chunkId << "\r\n";
@@ -764,6 +773,35 @@ handle_chunk_replication_check(MetaRequest *r)
 }
 
 static void
+handle_chunk_size_done(MetaRequest *r)
+{
+	MetaChunkSize *req = static_cast <MetaChunkSize *>(r);
+
+	if (req->chunkSize < 0) {
+		req->status = -1;
+		return;
+	}
+
+	MetaFattr *fa = metatree.getFattr(req->fid);
+	if ((fa != NULL) && (fa->type == KFS_FILE)) {
+		vector<MetaChunkInfo*> chunkInfo;
+                int status = metatree.getalloc(fa->id(), chunkInfo);
+
+                if ((status != 0) || (chunkInfo.size() == 0)) {
+                        return;
+                }
+		// only if we are looking at the last chunk of the file can we
+		// set the size.
+                MetaChunkInfo* lastChunk = chunkInfo.back();
+		if (req->chunkId == lastChunk->chunkId) {
+			fa->filesize = (fa->chunkcount - 1) * CHUNKSIZE +
+					req->chunkSize;
+		}
+	}
+	req->status = 0;
+}
+
+static void
 handle_chunk_replication_done(MetaRequest *r)
 {
 	MetaChunkReplicate *req = static_cast <MetaChunkReplicate *>(r);
@@ -832,6 +870,7 @@ setup_handlers()
 	handler[META_RENAME] = handle_rename;
 	handler[META_CHANGE_FILE_REPLICATION] = handle_change_file_replication;
 	handler[META_LOG_ROLLOVER] = handle_log_rollover;
+	handler[META_CHUNK_SIZE] = handle_chunk_size_done;
 	handler[META_CHUNK_REPLICATE] = handle_chunk_replication_done;
 	handler[META_CHUNK_REPLICATION_CHECK] = handle_chunk_replication_check;
 	handler[META_RETIRE_CHUNKSERVER] = handle_retire_chunkserver;
@@ -1203,6 +1242,16 @@ MetaChunkVersChange::log(ofstream &file) const
  */
 int
 MetaChunkReplicate::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief When asking a chunkserver for a chunk's size, there is
+ * nothing to log.
+ */
+int
+MetaChunkSize::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1757,6 +1806,7 @@ MetaLookup::response(ostringstream &os)
 	os << "File-handle: " << toString(result.id()) << "\r\n";
 	os << "Type: " << fname[result.type] << "\r\n";
 	os << "Chunk-count: " << toString(result.chunkcount) << "\r\n";
+	os << "File-size: " << toString(result.filesize) << "\r\n";
 	os << "Replication: " << toString(result.numReplicas) << "\r\n";
 	sendtime(os, "M-Time:", result.mtime, "\r\n");
 	sendtime(os, "C-Time:", result.ctime, "\r\n");
@@ -1778,6 +1828,7 @@ MetaLookupPath::response(ostringstream &os)
 	os << "File-handle: " << toString(result.id()) << "\r\n";
 	os << "Type: " << fname[result.type] << "\r\n";
 	os << "Chunk-count: " << toString(result.chunkcount) << "\r\n";
+	os << "File-size: " << toString(result.filesize) << "\r\n";
 	os << "Replication: " << toString(result.numReplicas) << "\r\n";
 	sendtime(os, "M-Time:", result.mtime, "\r\n");
 	sendtime(os, "C-Time:", result.ctime, "\r\n");
@@ -2164,4 +2215,14 @@ MetaChunkReplicate::request(ostringstream &os)
 	os << "Chunk-handle: " << chunkId << "\r\n";
 	os << "Chunk-version: " << chunkVersion << "\r\n";
 	os << "Chunk-location: " << srcLocation.ToString() << "\r\n\r\n";
+}
+
+void
+MetaChunkSize::request(ostringstream &os)
+{
+	os << "SIZE \r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Version: KFS/1.0\r\n";
+	os << "File-handle: " << fid << "\r\n";
+	os << "Chunk-handle: " << chunkId << "\r\n\r\n";
 }
