@@ -139,6 +139,7 @@ for i in $*
 	  echo " -i: install";
 	  echo " -u: upgrade";
 	  echo " -U: uninstall";
+	  echo " [-r: <tar|gtar> ]";
 	  exit;;
       --) break ;;
   esac
