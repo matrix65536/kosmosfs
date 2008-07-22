@@ -21,6 +21,8 @@
 # Script to install/upgrade a server package on a machine
 #
 
+tarProg="gtar"
+
 installServer()
 {
     # if everything exists, return
@@ -40,23 +42,26 @@ installServer()
 	exit -1
     fi
 
-    cd $serverDir; tar -zxf /tmp/kfspkg.tgz 
+    cd $serverDir; $tarProg -zxf /tmp/kfspkg.tgz 
 
     # Make a logs dir for the startup script
     mkdir -p $serverDir/logs
 
     case $serverType in
 	-m|--meta) 
+	    mv tmp/fn.* $serverDir/bin/MetaServer.prp 
 	    mkdir -p $serverDir/bin/kfscp
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	-c|--chunk)
+	    mv /tmp/ChunkServer.prp $serverDir/bin/ChunkServer.prp
 	    mkdir -p $serverDir/bin/kfslog
 	    ;;
 	*)
 	    echo "Unknown server"
 	    ;;
     esac
+    rm -rf tmp
     RETVAL=0
     return $RETVAL
 }
@@ -70,8 +75,20 @@ upgradeServer()
     fi
 
     sh $serverDir/scripts/kfsrun.sh --stop $serverType 
+    cd $serverDir; $tarProg -zxf /tmp/kfspkg.tgz 
+    case $serverType in
+	-m|--meta) 
+	    mv tmp/fn.* $serverDir/bin/MetaServer.prp 
+	    ;;
+	-c|--chunk)
+	    mv /tmp/ChunkServer.prp $serverDir/bin/ChunkServer.prp 
+	    ;;
+	*)
+	    echo "Unknown server"
+	    ;;
+    esac
 
-    cd $serverDir; tar -zxf /tmp/kfspkg.tgz 
+    rm -rf tmp
     RETVAL=0
     return $RETVAL
 }
@@ -96,7 +113,7 @@ uninstallServer()
 }
 
 # Process any command line arguments
-TEMP=`getopt -o d:mc:hiuU -l dir:,meta,chunk:,help,install,upgrade,uninstall \
+TEMP=`getopt -o d:mc:r:hiuU -l dir:,meta,chunk:,tar:help,install,upgrade,uninstall \
 	-n kfsinstall.sh -- "$@"`
 eval set -- "$TEMP"
 
@@ -111,11 +128,13 @@ while true
 	  serverBinary="chunkserver";
 	  shift;;
       -i|--install) mode="install";;
+      -r|--tar) tarProg="$2"; shift;;
       -u|--upgrade) mode="upgrade";;
       -U|--uninstall) mode="uninstall";;
       -h|--help) 
 	  echo -n "usage: $0 [--serverDir <dir>] [--meta | --chunk <chunk dir>]";
 	  echo " [--install | --upgrade | --uninstall ]";
+	  echo " [--tar <tar|gtar> ] ";
 	  exit;;
       --) break ;;
   esac

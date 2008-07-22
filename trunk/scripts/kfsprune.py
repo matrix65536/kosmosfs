@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# $Id$
+# $Id: kfsprune.py 12 2007-09-16 22:35:15Z sriramsrao $
 #
 # Copyright 2006 Kosmix Corp.
 #
@@ -39,8 +39,7 @@
 # KFS controls the numbers whereas time is controlled externally
 # and can go backwards.
 #
-# Eventually, we can add logic here to ship some of the files off
-# to a remote host
+# Old files can either be deleted or compressed via gzip.
 #
 import os
 import sys
@@ -48,12 +47,17 @@ import glob
 import stat
 import time
 import getopt
+import gzip
 
 def age(file):
 	"""return age of file (last mtime) in seconds"""
 
 	now = time.time()
 	return now - os.stat(file)[stat.ST_MTIME]
+
+def isNonCompressedFile (filename):
+	extn = os.path.splitext(filename)[1][1:]
+	return extn != "gz"
 
 def oldfiles(prefix, minsave, maxsave, mintime):
 	"""return a list of the oldest files of a given type
@@ -74,7 +78,7 @@ def oldfiles(prefix, minsave, maxsave, mintime):
 	
 	"""
 	# get all candidates and rearrange by sequence number
-	files = glob.glob(prefix + ".*")
+	files = filter(isNonCompressedFile, glob.glob(prefix + ".*"))
 	tails = [int(os.path.splitext(f)[1][1:]) for f in files]
 	tails.sort()
 	files = ["%s.%d" % (prefix, t) for t in tails]
@@ -90,24 +94,41 @@ def oldfiles(prefix, minsave, maxsave, mintime):
 
 	return files
 
-def prunefiles(dir, prefix, minsave, maxsave, mintime):
-	"""remove all sufficiently old files from directory "dir"
+def compressFiles(oldones):
+	""" Compress a list of files using gzip """
+	for fn in oldones:
+		f = open(fn, 'rb')
+		cf = gzip.open(fn + '.gz', 'wb')
+		while 1:
+			data = f.read(4096)
+			if data == "":
+				break
+			cf.write(data)
+		f.close()
+		cf.close()
+	
+def prunefiles(dir, prefix, minsave, maxsave, mintime, compress):
+	"""remove/compress all sufficiently old files from directory "dir"
 
-	Change directory to "dir", find old files, and delete them;
+	Change directory to "dir", find old files, and delete/compress them;
 	see oldfiles above for an explanation of the parameters
 
 	"""
 	os.chdir(dir);
 	oldones = oldfiles(prefix, minsave, maxsave, mintime)
+	if compress > 0:
+		compressFiles(oldones)
+
 	for f in oldones:
 		os.remove(f)
 
 if (__name__ == "__main__"):
 	minsave, maxsave, mintime = 10, 1000, 3600
 
-	(opts, args) = getopt.getopt(sys.argv[1:], "m:M:t:",
-					["min=", "max=", "time="])
+	(opts, args) = getopt.getopt(sys.argv[1:], "m:M:t:z",
+					["min=", "max=", "time=", "compress"])
 
+	compress = 0
 	for (o, a) in opts:
 		if o in ("-m", "--min"):
 			minsave = int(a)
@@ -115,6 +136,8 @@ if (__name__ == "__main__"):
 			maxsave = int(a)
 		elif o in ("-t", "--time"):
 			mintime = int(a)
+		elif o in ("-z", "--compress"):
+			compress = 1
 
 	if maxsave < 0 or minsave < 0 or mintime < 0 or maxsave < minsave:
 		raise getopt.GetoptError, "invalid options"
@@ -122,4 +145,4 @@ if (__name__ == "__main__"):
 	if len(args) != 2:
 		raise getopt.GetoptError, "missing arguments"
 
-	prunefiles(args[0], args[1], minsave, maxsave, mintime)
+	prunefiles(args[0], args[1], minsave, maxsave, mintime, compress)
