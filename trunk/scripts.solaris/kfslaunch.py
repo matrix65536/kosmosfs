@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
 # $Id: kfslaunch.py 36 2007-11-12 02:43:36Z sriramsrao $
 #

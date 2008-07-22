@@ -29,6 +29,7 @@
 set -- `getopt d:b:p:R:h $*`
 
 recover=0
+backup_node=
 backup_path=
 # while true
 for i in $*
@@ -38,7 +39,7 @@ do
 	-b|--backup_node) backup_node=$2;;
 	-p|--backup_path) backup_path=$2;;
 	-R|--recover) recover=1;;
-	-h|--help) echo "usage: $0 [-d kfsdir] [-b backup_node] [-b backup_path] {-recover}"; exit ;;
+	-h|--help) echo "usage: $0 [-d kfsdir] [-b backup_node] [-p backup_path] {-recover}"; exit ;;
 	--) break ;;
 	esac
 	shift

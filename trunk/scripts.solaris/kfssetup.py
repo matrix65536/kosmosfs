@@ -159,7 +159,7 @@ def setupChunk(section, config, outputFn, packageFn):
 
 def usage():
     """ Print out the usage for this program. """
-    print "%s [-f, --file <machines.cfg>] [-t, --tar <tar|gtar>] [ [-b, --bin <dir with binaries>] {-u, --upgrade} | [-U, --uninstall] ]\n" \
+    print "%s [-f, --file <machines.cfg>] [-r, --tar <tar|gtar>] [ [-b, --bin <dir with binaries>] {-u, --upgrade} | [-U, --uninstall] ]\n" \
           % sys.argv[0]
     return
 
