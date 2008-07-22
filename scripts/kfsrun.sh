@@ -41,20 +41,19 @@ startServer()
 	echo "No config file...Not starting $server"
 	exit -1
     fi
-    echo "Starting $server..."
-#   bin/$server $config > $SERVER_LOG_FILE < /dev/null 2>&1 &
+    echo "`hostname`: Starting $server..."
     bin/$server $config $SERVER_LOG_FILE > /dev/null 2>&1 &
     echo $! > $SERVER_PID_FILE
 
     if [ ! -e $CLEANER_PID_FILE ];
 	then
-	echo "Starting cleaner..."
-	if [ $backup_dir ];
+	echo "`hostname`: Starting cleaner..."
+	if [ -n "$backup_node" ];
 	    then
-	    # Once in 10 mins, clean/backup stuff
-	    cleaner_args="-b $backup_dir -s 600"
+	    # Once an hour, clean/backup stuff
+	    cleaner_args="-b $backup_node -p $backup_path -s 3600"
 	else
-	    cleaner_args=
+	    cleaner_args="-s 3600"
 	fi
 	    
 	sh scripts/kfsclean.sh $cleaner_args > $CLEANER_LOG_FILE < /dev/null 2>&1 &
@@ -70,7 +69,7 @@ startServer()
 
 stopServer()
 {
-    echo -n $"Stopping $PROG: "
+    echo -n $"`hostname`: Stopping $PROG: "
 
     if [ ! -e $PID_FILE ]; 
 	then
@@ -88,7 +87,7 @@ stopServer()
     PROC_COUNT=`ps -ef | awk '{print $2}'  | grep -c $PROCID`
     if [[ $PROC_COUNT -gt  0 ]]; 
 	then
-	echo -n $"Stopping $prog ( $PROCID )"
+	echo -n $"`hostname`: Stopping $prog ( $PROCID )"
 	kill -TERM $PROCID
     fi;
 
@@ -100,11 +99,12 @@ stopServer()
 }
 
 # Process any command line arguments
-TEMP=`getopt -o f:b:sSmch -l file:,backup:,start,stop,meta,chunk,help \
+TEMP=`getopt -o f:b:p:sSmch -l file:,backup_node:,backup_path:,start,stop,meta,chunk,help \
 	-n kfsrun.sh -- "$@"`
 eval set -- "$TEMP"
 
-backup_dir=
+backup_node=
+backup_path=
 
 while true
 do
@@ -114,7 +114,8 @@ do
 	-m|--meta) server="metaserver";;
 	-c|--chunk) server="chunkserver";;
 	-f|--file) config=$2; shift;;
-	-b|--backup) backup_dir=$2; shift;;
+	-b|--backup_node) backup_node=$2; shift;;
+	-p|--backup_path) backup_path=$2; shift;;
 	-h|--help) echo "usage: $0 [--start | --stop] [--meta | --chunk] [--file <config>]"; exit;;
 	--) break ;;
 	esac
