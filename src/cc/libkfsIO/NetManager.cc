@@ -150,6 +150,7 @@ NetManager::MainLoop()
             conn->mPollVectorIndex = numPollFds;
             pollfds[numPollFds].fd = fd;
             pollfds[numPollFds].events = 0;
+            pollfds[numPollFds].revents = 0;
             if (conn->IsReadReady(overloaded)) {
                 // By default, each connection is read ready.  We
                 // expect there to be 2-way data transmission, and so
