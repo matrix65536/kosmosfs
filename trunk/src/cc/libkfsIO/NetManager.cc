@@ -125,6 +125,7 @@ NetManager::MainLoop()
         fd = globals().netKicker.GetFd();
         pollfds[0].fd = fd;
         pollfds[0].events = POLLIN;
+        pollfds[0].revents = 0;
 
         numPollFds = 1;
 
