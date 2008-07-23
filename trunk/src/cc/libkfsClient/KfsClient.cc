@@ -772,6 +772,11 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
                 continue;
             }
 
+            if (result[i].fileSize < 0) {
+                result[i].fileSize = 0;
+                continue;
+            }
+
             int fte = LookupFileTableEntry(dirFid, result[i].filename.c_str());
 
             if (fte >= 0) {

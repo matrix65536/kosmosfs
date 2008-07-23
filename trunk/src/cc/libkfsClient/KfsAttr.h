@@ -155,6 +155,11 @@ struct KfsFileAttr {
     /// what is the deg. of replication for this file
     int16_t numReplicas;
 
+    void Clear() {
+        filename = "";
+        fileId = 0;
+    }
+
     KfsFileAttr& operator= (const KfsServerAttr &other) {
         fileId = other.fileId;
         fileSize = 0; // compute this from other.chunkCount
