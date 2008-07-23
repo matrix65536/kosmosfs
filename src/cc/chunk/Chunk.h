@@ -73,7 +73,9 @@ struct DiskChunkInfo_t {
     DiskChunkInfo_t() : metaMagic (CHUNK_META_MAGIC), metaVersion(CHUNK_META_VERSION) { }
     DiskChunkInfo_t(kfsFileId_t f, kfsChunkId_t c, off_t s, kfsSeq_t v) :
         metaMagic (CHUNK_META_MAGIC), metaVersion(CHUNK_META_VERSION),
-        fileId(f), chunkId(c), chunkVersion(v), chunkSize(s) { }
+        fileId(f), chunkId(c), chunkVersion(v), chunkSize(s), numReads(0) { 
+        memset(filename, 0, MAX_FILENAME_LEN);
+    }
     void SetChecksums(const uint32_t *checksums) {
         memcpy(chunkBlockChecksum, checksums, MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
     }
