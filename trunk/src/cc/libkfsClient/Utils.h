@@ -29,6 +29,9 @@
 #define LIBKFSCLIENT_UTILS_H
 
 #include <string>
+extern "C" {
+#include <sys/time.h>
+}
 
 namespace KFS {
 
