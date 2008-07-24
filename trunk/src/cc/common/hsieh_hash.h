@@ -27,6 +27,8 @@
 #ifndef COMMON_HSIEH_HASH_H
 #define COMMON_HSIEH_HASH_H
 
+#include <stdint.h>
+#include <cstddef>
 #include <string>
 namespace KFS
 {

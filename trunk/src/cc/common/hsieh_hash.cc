@@ -26,7 +26,7 @@
 // 
 //----------------------------------------------------------------------------
 
-#include <stdint.h>
+#include "hsieh_hash.h"
 
 #undef get16bits
 #if (defined(__GNUC__) && defined(__i386__)) || defined(__WATCOMC__) \
@@ -35,11 +35,9 @@
 #endif
 
 #if !defined (get16bits)
-#define get16bits(d) ((((const uint8_t *)(d))[1] << UINT32_C(8))\
-                      +((const uint8_t *)(d))[0])
+#define get16bits(d) ((((uint32_t)(((const uint8_t *)(d))[1])) << 8)\
+                       +(uint32_t)(((const uint8_t *)(d))[0]) )
 #endif
-
-#include "hsieh_hash.h"
 
 using std::string;
 
