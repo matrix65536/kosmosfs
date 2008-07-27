@@ -383,6 +383,13 @@ namespace KFS
 		/// this counter tracks the last chunk we checked
 		kfsChunkId_t mLastChunkRebalanced;
 
+		/// When a server goes down or needs retiring, we start
+		/// replicating blocks.  Whenever a replication finishes, we
+		/// find the next candidate.  We need to track "where" we left off
+		/// on a previous iteration, so that we can start from there and
+		/// run with it.
+		kfsChunkId_t mLastChunkReplicated;
+
 		/// After a crash, track the recovery start time.  For a timer
 		/// period that equals the length of lease interval, we only grant
 		/// lease renews and new leases to new chunks.  We however,
