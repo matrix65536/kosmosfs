@@ -95,6 +95,7 @@ public:
 LayoutManager::LayoutManager() :
 	mLeaseId(1), mNumOngoingReplications(0), 
 	mIsRebalancingEnabled(false), mLastChunkRebalanced(1),
+	mLastChunkReplicated(1),
 	mRecoveryStartTime(0), mMinChunkserversToExitRecovery(1)
 {
 	mOngoingReplicationStats = new Counter("Num Ongoing Replications");
@@ -1293,11 +1294,22 @@ LayoutManager::CanReplicateChunkNow(chunkId_t chunkId,
 	}
 
 	// if any of the chunkservers are retiring, we need to make copies
-	extraReplicas = count_if(c.chunkServers.begin(), c.chunkServers.end(), 
-				RetiringServerPred());
-	if (extraReplicas > 0) {
-		if (fa->numReplicas - c.chunkServers.size() > 0)
-			extraReplicas += (fa->numReplicas - c.chunkServers.size());
+	// so, first determine how many copies we need because one of the
+	// servers hosting the chunk is going down
+	int numRetiringServers = count_if(c.chunkServers.begin(), c.chunkServers.end(), 
+					RetiringServerPred());
+	// now, determine if we have sufficient copies
+	if (numRetiringServers > 0) {
+		if (c.chunkServers.size() < (uint32_t) fa->numReplicas) {
+			// we need to make this many copies: # of servers that are
+			// retiring plus the # this chunk is under-replicated
+			extraReplicas = numRetiringServers +  (fa->numReplicas - c.chunkServers.size());
+		} else {
+			// we got sufficient copies even after accounting for
+			// the retiring server.  so, take out this chunk from
+			// replication candidates set.
+			extraReplicas = 0;
+		}
 		return true;
 	}
 
@@ -1363,8 +1375,10 @@ LayoutManager::ChunkReplicationChecker()
 		if (extraReplicas > 0) {
 			numOngoing = ReplicateChunk(iter->first, iter->second, extraReplicas);
 			iter->second.ongoingReplications += numOngoing;
-			if (numOngoing > 0)
+			if (numOngoing > 0) {
 				mNumOngoingReplications++;
+				mLastChunkReplicated = chunkId;
+			}
 		} else if (extraReplicas == 0) {
 			delset.insert(chunkId);
 		} else {
@@ -1404,8 +1418,18 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 
 	c.push_back(server);
 
-	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin(); 
-		citer != mChunkReplicationCandidates.end(); ++citer) {
+	// try to start where we left off last time; if that chunk has
+	// disappeared, find something "closeby"
+	CRCandidateSetIter citer = mChunkReplicationCandidates.find(mLastChunkReplicated);
+	if (citer == mChunkReplicationCandidates.end())
+		citer = mChunkReplicationCandidates.upper_bound(mLastChunkReplicated);
+
+	if (citer == mChunkReplicationCandidates.end()) {
+		mLastChunkReplicated = 1;
+		citer = mChunkReplicationCandidates.begin();
+	}
+
+	for (; citer != mChunkReplicationCandidates.end(); ++citer) {
 		chunkId = *citer;
 
         	iter = mChunkToServerMap.find(chunkId);
@@ -1435,8 +1459,10 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 
 			numOngoing = ReplicateChunk(iter->first, iter->second, 1, c);
 			iter->second.ongoingReplications += numOngoing;
-			if (numOngoing > 0)
+			if (numOngoing > 0) {
 				mNumOngoingReplications++;
+				mLastChunkReplicated = chunkId;
+			}
 		}
 
 		if (server->GetNumChunkReplications() > MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)

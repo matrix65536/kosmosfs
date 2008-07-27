@@ -85,13 +85,7 @@ float KFS::ComputeTimeDiff(const struct timeval &startTime, const struct timeval
 {
     float timeSpent;
 
-    if (endTime.tv_usec >= startTime.tv_usec) {
-        timeSpent = (endTime.tv_sec - startTime.tv_sec) +
-            (endTime.tv_usec - startTime.tv_usec) * 1e-6;
-    }
-    else {
-        timeSpent = (endTime.tv_sec - 1 - startTime.tv_sec) +
-            ((1000000 + endTime.tv_usec) - startTime.tv_usec) * 1e-6;
-    }
-    return timeSpent;
+    timeSpent = (endTime.tv_sec * 1e6 + endTime.tv_usec) - 
+        (startTime.tv_sec * 1e6 + startTime.tv_usec);
+    return timeSpent / 1e6;
 }

@@ -38,9 +38,12 @@
 #include <algorithm>
 
 #if defined (__sun__)
-#include <signal.h>
+#include <csignal>
 #include <port.h>
 #include "meta/thread.h"
+#elif defined (__APPLE__)
+#include "meta/thread.h"
+#include "meta/queue.h"
 #endif
 
 #include "common/log.h"
@@ -55,6 +58,7 @@ using namespace KFS::libkfsio;
 /// \brief Implements methods defined in DiskManager.h
 ///
 
+#if !defined(__APPLE__)
 static void
 handleAIOCompletion(DiskEvent_t *event)
 {
@@ -74,18 +78,9 @@ handleAIOCompletion(DiskEvent_t *event)
     globals().diskManager.IOCompleted(event);
     globals().netKicker.Kick();
 }
-
-#if !defined (__sun__)
-static void
-aioCompletionHandler(sigval val)
-{
-    DiskEvent_t *event = (DiskEvent_t *) val.sival_ptr;
-
-    handleAIOCompletion(event);
-}
 #endif
 
-#if defined (__sun__)
+#if defined (__sun__) || defined (__APPLE__)
 
 static void* aioWorker(void *dummy);
 
@@ -102,13 +97,23 @@ public:
         return eventPort;
     }
     void Init() {
+#if defined (__sun__)
         eventPort = port_create();
         if (eventPort < 0) {
             perror("port_create");
             return;
         }
+#endif
         completionProcessor.start(aioWorker, NULL);
     }
+
+#if defined (__APPLE__)
+    void submit(DiskEvent_t *e) {
+        reqQ.enqueue(e);
+    }
+#endif
+
+#if defined(__sun__)
     void MainLoop() {
         port_event_t pe;
         DiskEvent_t *event;
@@ -124,12 +129,38 @@ public:
             handleAIOCompletion(event);
         }
     }
+#elif defined(__APPLE__)
+    void MainLoop() {
+        // Mac doesn't support SIGEV_THREAD; so, for now, we emulate
+        // all the aio's with the aioCompletion processor.
+        while (1) {
+            DiskEvent_t *e = reqQ.dequeue();
+            e->aioStatus = EINPROGRESS;
+            if (e->aio_cb.aio_lio_opcode == LIO_READ) {
+                e->retval = pread(e->aio_cb.aio_fildes, (void *) e->aio_cb.aio_buf, 
+                                  e->aio_cb.aio_nbytes, e->aio_cb.aio_offset);
+            } else if (e->aio_cb.aio_lio_opcode == LIO_WRITE) {
+                e->retval = pwrite(e->aio_cb.aio_fildes, (void *) e->aio_cb.aio_buf, 
+                                   e->aio_cb.aio_nbytes, e->aio_cb.aio_offset);
+            } else {
+                e->retval = -EINVAL;
+            }
+            e->aioStatus = 0;
+            globals().diskManager.IOCompleted(e);
+            globals().netKicker.Kick();
+        }
+    }
+
+#endif
     
 private:
     // the event port at which we get notified
     int eventPort;
     // the thread responsible for completion handling
     MetaThread completionProcessor;
+#if defined (__APPLE__)
+    MetaQueue<DiskEvent_t> reqQ;
+#endif
 };
 
 AIOCompletion_t aioCompletionHandler;
@@ -141,6 +172,14 @@ aioWorker(void *dummy)
     return NULL;
 }
 
+#else
+static void
+aioCompletionHandler(sigval val)
+{
+    DiskEvent_t *event = (DiskEvent_t *) val.sival_ptr;
+
+    handleAIOCompletion(event);
+}
 #endif
 
 
@@ -166,7 +205,7 @@ DiskManager::Init()
 void
 DiskManager::InitForAIO()
 {
-#if defined (__sun__)
+#if defined (__sun__) || defined (__APPLE__)
     // create a thread to handle AIO completions
     aioCompletionHandler.Init();
 #endif
@@ -222,6 +261,8 @@ aioSetup(DiskEventPtr &event, int fd, off_t offset, int numBytes, char *buf)
 {
     struct aiocb *aio_cb = &(event->aio_cb);
 
+    memset(aio_cb, 0, sizeof(struct aiocb));
+
     aio_cb->aio_fildes = fd;
     aio_cb->aio_offset = offset;
     aio_cb->aio_nbytes = numBytes;
@@ -234,7 +275,7 @@ aioSetup(DiskEventPtr &event, int fd, off_t offset, int numBytes, char *buf)
     event->port_notify.portnfy_port = aioCompletionHandler.GetCompletionPort();
     event->port_notify.portnfy_user = (void *) (event.get());
     aio_cb->aio_sigevent.sigev_value.sival_ptr = (void *) (&event->port_notify);
-#else
+#elif !defined(__APPLE__)
     aio_cb->aio_sigevent.sigev_notify = SIGEV_THREAD;
     aio_cb->aio_sigevent.sigev_notify_function = aioCompletionHandler;
     aio_cb->aio_sigevent.sigev_value.sival_ptr = (void *) (event.get());
@@ -256,22 +297,15 @@ DiskManager::Read(DiskConnection *conn, int fd,
     aioSetup(event, fd, offset, numBytes, data->Producer());
     struct aiocb *aio_cb = &(event->aio_cb);
 
-#if 0
-    aio_cb->aio_fildes = fd;
-    aio_cb->aio_offset = offset;
-    aio_cb->aio_nbytes = numBytes;
-    aio_cb->aio_buf = data->Producer();
-    // get notified when the I/O finishes
-    aio_cb->aio_sigevent.sigev_notify = SIGEV_THREAD;
-    aio_cb->aio_sigevent.sigev_notify_function = aioCompletionHandler;
-    aio_cb->aio_sigevent.sigev_value.sival_ptr = (void *) (event.get());
-#endif
-
-    // if (aio_read(&event->aio_cb) < 0) {
+#if defined (__APPLE__)
+    aio_cb->aio_lio_opcode = LIO_READ;
+    aioCompletionHandler.submit(event.get());
+#else
     if (aio_read(aio_cb) < 0) {
         perror("aio_read: ");
         return -1;
     }
+#endif
     mDiskEvents.push_back(event);
     resultEvent = event;
 
@@ -299,22 +333,15 @@ DiskManager::Write(DiskConnection *conn, int fd,
 
     struct aiocb *aio_cb = &(event->aio_cb);
 
-#if 0
-    aio_cb->aio_fildes = fd;
-    aio_cb->aio_offset = offset;
-    aio_cb->aio_nbytes = numBytes;
-    aio_cb->aio_buf = data->Consumer();
-    // get notified when the I/O finishes
-    aio_cb->aio_sigevent.sigev_notify = SIGEV_THREAD;
-    aio_cb->aio_sigevent.sigev_notify_function = aioCompletionHandler;
-    aio_cb->aio_sigevent.sigev_value.sival_ptr = (void *) (event.get());
-#endif
-
-    // if (aio_write(&event->aio_cb) < 0) {
+#if defined (__APPLE__)
+    aio_cb->aio_lio_opcode = LIO_WRITE;
+    aioCompletionHandler.submit(event.get());
+#else
     if (aio_write(aio_cb) < 0) {
         perror("aio_write: ");
         return -1;
     }
+#endif
     mDiskEvents.push_back(event);
     resultEvent = event;
 

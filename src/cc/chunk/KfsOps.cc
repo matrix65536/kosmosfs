@@ -1916,6 +1916,8 @@ WriteOp::~WriteOp()
         lastWriteTime.tv_sec = enqueueTime;
         lastWriteTime.tv_usec = 0;
         float timeSpent = ComputeTimeDiff(startTime, lastWriteTime);
+        if (timeSpent < 1e-6)
+            timeSpent = 0.0;
         // we don't want write id's to pollute stats
         gettimeofday(&startTime, NULL);
         gCtrWriteDuration.Update(1);
