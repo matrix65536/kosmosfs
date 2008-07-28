@@ -49,14 +49,18 @@ main(int argc, char **argv)
     string serverHost = "";
     int port = -1;
     bool help = false;
+    bool verboseLogging = false;
     char optchar;
 
     KFS::MsgLogger::Init(NULL);
 
-    while ((optchar = getopt(argc, argv, "hs:p:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hs:p:v")) != -1) {
         switch (optchar) {
             case 'h':
                 help = true;
+                break;
+            case 'v':
+                verboseLogging = true;
                 break;
             case 's':
                 serverHost = optarg;
@@ -76,6 +80,12 @@ main(int argc, char **argv)
              << " [filename1...n]" << endl;
         exit(0);
     }
+
+    if (verboseLogging) {
+	KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+	KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
 
     gKfsClient = KfsClient::Instance();
     gKfsClient->Init(serverHost, port);

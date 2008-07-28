@@ -78,10 +78,11 @@ int main(int argc, char **argv)
     bool help = false;
     const char *metaserver = NULL, *chunkserver = NULL;
     int metaport = -1, chunkport = -1;
+    bool verboseLogging = false;
 
     KFS::MsgLogger::Init(NULL);
 
-    while ((optchar = getopt(argc, argv, "hm:p:c:d:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hm:p:c:d:v")) != -1) {
         switch (optchar) {
             case 'm': 
                 metaserver = optarg;
@@ -98,6 +99,9 @@ int main(int argc, char **argv)
             case 'h':
                 help = true;
                 break;
+            case 'v':
+                verboseLogging = true;
+                break;
             default:
                 KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
@@ -108,10 +112,16 @@ int main(int argc, char **argv)
     help = help || !metaserver || !chunkserver;
 
     if (help) {
-        cout << "Usage: " << argv[0] << " [-m <metaserver> -p <port>] [-c <chunkserver> -d <port>]"
+        cout << "Usage: " << argv[0] << " [-m <metaserver> -p <port>] [-c <chunkserver> -d <port>] {-v}"
              << endl;
         exit(-1);
     }
+
+    if (verboseLogging) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
 
     ServerLocation metaLoc(metaserver, metaport);
     ServerLocation chunkLoc(chunkserver, chunkport);

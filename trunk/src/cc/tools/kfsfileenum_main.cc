@@ -48,10 +48,11 @@ main(int argc, char **argv)
     const char *filename = NULL;
     int port = -1, retval;
     char optchar;
+    bool verboseLogging = false;
 
     KFS::MsgLogger::Init(NULL);
 
-    while ((optchar = getopt(argc, argv, "hs:p:f:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hs:p:f:v")) != -1) {
         switch (optchar) {
             case 's':
                 server = optarg;
@@ -65,6 +66,9 @@ main(int argc, char **argv)
             case 'h':
                 help = true;
                 break;
+            case 'v':
+                verboseLogging = true;
+                break;
             default:
                 KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
@@ -73,10 +77,17 @@ main(int argc, char **argv)
     }
 
     if (help || (server == NULL) || (port < 0) || (filename == NULL)) {
-        cout << "Usage: " << argv[0] << " -s <server name> -p <port> -f <path>" 
+        cout << "Usage: " << argv[0] << " -s <server name> -p <port> -f <path> {-v}" 
              << endl;
         exit(-1);
     }
+
+    if (verboseLogging) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
+
 
     gKfsClient = getKfsClientFactory()->GetClient(server, port);
     if (!gKfsClient) {

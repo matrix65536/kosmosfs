@@ -62,10 +62,11 @@ int main(int argc, char **argv)
     bool help = false, meta = false, chunk = false;
     const char *server = NULL;
     int port = -1;
+    bool verboseLogging = false;
 
     KFS::MsgLogger::Init(NULL);
 
-    while ((optchar = getopt(argc, argv, "hmcs:p:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hmcs:p:v")) != -1) {
         switch (optchar) {
             case 'm': 
                 meta = true;
@@ -82,6 +83,9 @@ int main(int argc, char **argv)
             case 'h':
                 help = true;
                 break;
+            case 'v':
+                verboseLogging = true;
+                break;
             default:
                 KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
@@ -89,10 +93,16 @@ int main(int argc, char **argv)
         }
     }
 
+    if (verboseLogging) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
+
     help = help || (!meta && !chunk);
 
     if (help || (server == NULL) || (port < 0)) {
-        cout << "Usage: " << argv[0] << " [-m|-c] -s <server name> -p <port>" 
+        cout << "Usage: " << argv[0] << " [-m|-c] -s <server name> -p <port> {-v}" 
              << endl;
         exit(-1);
     }
