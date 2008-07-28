@@ -53,6 +53,9 @@ public class KfsAccess
     int rmdir(long ptr, String  path);
 
     private final static native
+    int rmdirs(long ptr, String  path);
+
+    private final static native
     String[] readdir(long ptr, String path, boolean prefetchAttr);
 
     // for each dir. entry, we get back a key/value pair of KfsFileAttr
@@ -139,6 +142,12 @@ public class KfsAccess
     public int kfs_rmdir(String path)
     {
         return rmdir(cPtr, path);
+    }
+
+    // remove the directory tree specified by path; remove will succeed only if path is empty.
+    public int kfs_rmdirs(String path)
+    {
+        return rmdirs(cPtr, path);
     }
 
     public String[] kfs_readdir(String path)

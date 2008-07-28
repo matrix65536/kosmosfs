@@ -59,6 +59,9 @@ extern "C" {
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
+    jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdirs(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
+
     jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdirplus(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
@@ -197,6 +200,16 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
     string path;
     setStr(path, jenv, jpath);
     return clnt->Rmdir(path.c_str());
+}
+
+jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdirs(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+
+    string path;
+    setStr(path, jenv, jpath);
+    return clnt->Rmdirs(path.c_str());
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdirplus(

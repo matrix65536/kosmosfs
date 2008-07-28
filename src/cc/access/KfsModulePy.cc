@@ -565,7 +565,7 @@ Client_dealloc(PyObject *pself)
 	kfs_Client *self = (kfs_Client *)pself;
 	Py_XDECREF(self->propfile);
 	Py_XDECREF(self->cwd);
-	self->client = NULL;
+	self->client.reset();
 	self->ob_type->tp_free(pself);
 }
 
