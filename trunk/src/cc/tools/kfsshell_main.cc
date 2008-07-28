@@ -64,8 +64,9 @@ main(int argc, char **argv)
     bool help = false;
     bool quietMode = false;
     char optchar;
+    bool verboseMsgOutput = false;
 
-    while ((optchar = getopt(argc, argv, "hqs:p:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hqs:p:v")) != -1) {
         switch (optchar) {
             case 's':
                 serverHost = optarg;
@@ -75,6 +76,9 @@ main(int argc, char **argv)
                 break;
             case 'h':
                 help = true;
+                break;
+            case 'v':
+                verboseMsgOutput = true;
                 break;
             case 'q':
                 quietMode = true;
@@ -97,6 +101,12 @@ main(int argc, char **argv)
     if (!kfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(-1);
+    }
+
+    if (verboseMsgOutput) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
     }
     
     factory->SetDefaultClient(kfsClient);
