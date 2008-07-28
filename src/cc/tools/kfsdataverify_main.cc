@@ -72,11 +72,11 @@ int main(int argc, char **argv)
     int port = -1, retval = -1;
     const char *metaserver = NULL, *srcFn = NULL, *kfsFn = NULL;
     const char *cksumFn = NULL;
+    bool verboseLogging = false;
 
     KFS::MsgLogger::Init(NULL);
-    KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
 
-    while ((optchar = getopt(argc, argv, "s:p:f:k:c:h")) != -1) {
+    while ((optchar = getopt(argc, argv, "s:p:f:k:c:hv")) != -1) {
         switch (optchar) {
             case 's':
                 metaserver = optarg;
@@ -93,6 +93,9 @@ int main(int argc, char **argv)
             case 'c':
                 cksumFn = optarg;
                 break;
+            case 'v':
+                verboseLogging = true;
+                break;
             case 'h':
             default:
                 help = true;
@@ -105,10 +108,16 @@ int main(int argc, char **argv)
     if (help) {
         cout << "Usage: " << argv[0] << " -s <metaserver> -p <port> "
              << " [-f <srcFn> -k <KFS file> {-c <cksum save file>}] | "
-             << " [-c <cksum file>]"
+             << " [-c <cksum file>] {-v}"
              << endl;
         exit(-1);
     }
+
+    if (verboseLogging) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
 
     gKfsClient = getKfsClientFactory()->GetClient(metaserver, port);
     if (!gKfsClient) {

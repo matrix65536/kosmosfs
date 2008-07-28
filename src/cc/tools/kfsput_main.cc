@@ -51,10 +51,10 @@ main(int argc, char **argv)
     string kfspathname = "";
     string serverHost = "";
     int port = -1;
-    bool help = false;
+    bool help = false, verboseLogging = false;
     ssize_t numBytes;
 
-    while ((optchar = getopt(argc, argv, "hs:p:d:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hs:p:d:v")) != -1) {
         switch (optchar) {
             case 'f':
                 kfspathname = optarg;
@@ -68,6 +68,9 @@ main(int argc, char **argv)
             case 'h':
                 help = true;
                 break;
+            case 'v':
+                verboseLogging = true;
+                break;
             default:
                 cout << "Unrecognized flag : " << optchar << endl;
                 help = true;
@@ -77,15 +80,21 @@ main(int argc, char **argv)
 
     if (help || (kfspathname == "") || (serverHost == "") || (port < 0)) {
         cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> "
-             << " -f <Kfs file> " << endl;
+             << " -f <Kfs file> {-v}" << endl;
         exit(0);
     }
 
     gKfsClient = getKfsClientFactory()->GetClient(serverHost, port);
     if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
+        exit(-1);
     }
+
+    if (verboseLogging) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
 
     numBytes = doPut(kfspathname);
     cout << "Wrote " << numBytes << " to " << kfspathname << endl;

@@ -64,7 +64,7 @@ main(int argc, char **argv)
     bool help = false;
     bool quietMode = false;
     char optchar;
-    bool verboseMsgOutput = false;
+    bool verboseLogging = false;
 
     while ((optchar = getopt(argc, argv, "hqs:p:v")) != -1) {
         switch (optchar) {
@@ -78,7 +78,7 @@ main(int argc, char **argv)
                 help = true;
                 break;
             case 'v':
-                verboseMsgOutput = true;
+                verboseLogging = true;
                 break;
             case 'q':
                 quietMode = true;
@@ -103,7 +103,7 @@ main(int argc, char **argv)
         exit(-1);
     }
 
-    if (verboseMsgOutput) {
+    if (verboseLogging) {
         KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
     } else {
         KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);

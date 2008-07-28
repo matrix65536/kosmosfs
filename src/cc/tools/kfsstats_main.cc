@@ -74,13 +74,14 @@ int main(int argc, char **argv)
 {
     char optchar;
     bool help = false, meta = false, chunk = false;
-    bool rpcStats = false;
+    bool rpcStats = false, verboseLogging = false;
     const char *server = NULL;
     int port = -1, numSecs = 10;
 
+
     KFS::MsgLogger::Init(NULL);
 
-    while ((optchar = getopt(argc, argv, "hcmn:p:s:t")) != -1) {
+    while ((optchar = getopt(argc, argv, "hcmn:p:s:tv")) != -1) {
         switch (optchar) {
             case 'm': 
                 meta = true;
@@ -103,6 +104,9 @@ int main(int argc, char **argv)
             case 'h':
                 help = true;
                 break;
+            case 'v':
+                verboseLogging = true;
+                break;
             default:
                 KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
@@ -114,11 +118,17 @@ int main(int argc, char **argv)
 
     if (help || (server == NULL) || (port < 0)) {
         cout << "Usage: " << argv[0] << " [-m|-c] -s <server name> -p <port>" 
-             << " [-n <secs>] [-t]"  << endl;
+             << " [-n <secs>] [-t] {-v}"  << endl;
         cout << "Use -m for metaserver and -c for chunk server" << endl;
         cout << "Use -t for RPC stats" << endl;
         exit(-1);
     }
+
+    if (verboseLogging) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
 
     ServerLocation location(server, port);
 
