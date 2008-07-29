@@ -71,6 +71,8 @@ public:
 
     virtual void Update(float timeSpent) { mTimeSpent += timeSpent; }
 
+    virtual void Set(int c) { mCount = c; }
+
     /// Reset the state of this counter
     virtual void Reset() { mCount = 0; mTimeSpent = 0.0; }
 

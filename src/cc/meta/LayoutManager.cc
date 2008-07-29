@@ -98,10 +98,14 @@ LayoutManager::LayoutManager() :
 	mLastChunkReplicated(1),
 	mRecoveryStartTime(0), mMinChunkserversToExitRecovery(1)
 {
+	mReplicationTodoStats = new Counter("Num Replications Todo");
 	mOngoingReplicationStats = new Counter("Num Ongoing Replications");
 	mTotalReplicationStats = new Counter("Total Num Replications");
 	mFailedReplicationStats = new Counter("Num Failed Replications");
 	mStaleChunkCount = new Counter("Num Stale Chunks");
+	// how much to be done before we are done
+	globals().counterManager.AddCounter(mReplicationTodoStats);
+	// how much are we doing right now
 	globals().counterManager.AddCounter(mOngoingReplicationStats);
 	globals().counterManager.AddCounter(mTotalReplicationStats);
 	globals().counterManager.AddCounter(mFailedReplicationStats);
@@ -1403,6 +1407,8 @@ LayoutManager::ChunkReplicationChecker()
 	}
 
 	RebalanceServers();
+
+	mReplicationTodoStats->Set(mChunkReplicationCandidates.size());
 }
 
 void

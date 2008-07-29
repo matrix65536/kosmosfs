@@ -99,6 +99,13 @@ file_exists(fid_t fid)
 }
 
 static bool
+path_exists(const string &pathname)
+{
+	MetaFattr *fa = metatree.lookupPath(KFS::ROOTFID, pathname);
+	return fa != NULL;
+}
+
+static bool
 is_dir(fid_t fid)
 {
 	MetaFattr *fa = metatree.getFattr(fid);
@@ -661,7 +668,8 @@ static void
 handle_rename(MetaRequest *r)
 {
 	MetaRename *req = static_cast <MetaRename *>(r);
-	if (gWormMode && (!isWormMutationAllowed(req->oldname))) {
+	if (gWormMode && ((!isWormMutationAllowed(req->oldname)) ||
+                          path_exists(req->newname))) {
 		// renames are disabled in WORM mode: otherwise, we could
 		// overwrite an existing file
 		req->status = -EPERM;

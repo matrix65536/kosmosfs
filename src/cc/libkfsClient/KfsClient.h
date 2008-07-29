@@ -273,6 +273,9 @@ public:
     int GetDataLocation(const char *pathname, off_t start, size_t len,
                         std::vector< std::vector <std::string> > &locations);
 
+    int GetDataLocation(int fd, off_t start, size_t len,
+                        std::vector< std::vector <std::string> > &locations);
+
     ///
     /// Get the degree of replication for the pathname.
     /// @param[in] pathname	The full pathname of the file such as /../foo

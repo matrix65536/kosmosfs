@@ -325,6 +325,13 @@ KfsClient::GetDataLocation(const char *pathname, off_t start, size_t len,
     return mImpl->GetDataLocation(pathname, start, len, locations);
 }
 
+int 
+KfsClient::GetDataLocation(int fd, off_t start, size_t len,
+                           std::vector< std::vector <std::string> > &locations)
+{
+    return mImpl->GetDataLocation(fd, start, len, locations);
+}
+
 int16_t 
 KfsClient::GetReplicationFactor(const char *pathname)
 {
@@ -1212,7 +1219,7 @@ KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
 {
     MutexLock l(&mMutex);
 
-    int res, fd;
+    int fd;
 
     // Non-existent
     if (!IsFile(pathname)) 
@@ -1228,6 +1235,16 @@ KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
             return fd;
     }
 
+    return GetDataLocation(fd, start, len, locations);
+}
+
+int
+KfsClientImpl::GetDataLocation(int fd, off_t start, size_t len,
+                               vector< vector <string> > &locations)
+{
+    MutexLock l(&mMutex);
+
+    int res;
     // locate each chunk and get the hosts that are storing the chunk.
     for (size_t pos = start; pos < start + len; pos += KFS::CHUNKSIZE) {
         ChunkAttr *chunkAttr;

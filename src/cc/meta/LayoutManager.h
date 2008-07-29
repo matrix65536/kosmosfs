@@ -422,6 +422,9 @@ namespace KFS
 		/// Counters to track chunk replications
 		Counter *mOngoingReplicationStats;
 		Counter *mTotalReplicationStats;
+		/// how much todo before we are all done (estimate of the size
+		/// of the chunk-replication candidates set).
+		Counter *mReplicationTodoStats;
 		/// Track the # of replication ops that failed
 		Counter *mFailedReplicationStats;
 		/// Track the # of stale chunks we have seen so far
