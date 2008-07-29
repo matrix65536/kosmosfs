@@ -198,6 +198,7 @@ RpcStatsMetaServer(TcpSocket &metaServerSock, int numSecs)
         PrintRpcStat("Chunkserver Hello", op.stats);
         PrintRpcStat("Chunkserver Bye", op.stats);
         PrintRpcStat("Replication Checker", op.stats);
+        PrintRpcStat("Num Replications Todo", op.stats);
         PrintRpcStat("Num Ongoing Replications", op.stats);
         PrintRpcStat("Num Failed Replications", op.stats);
         PrintRpcStat("Total Num Replications", op.stats);

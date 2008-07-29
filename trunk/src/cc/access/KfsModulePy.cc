@@ -66,7 +66,9 @@ static PyObject *Client_new(
 static int Client_print(PyObject *pself, FILE *fp, int flags);
 static PyObject *Client_repr(PyObject *pself);
 static PyObject *kfs_mkdir(PyObject *pself, PyObject *args);
+static PyObject *kfs_mkdirs(PyObject *pself, PyObject *args);
 static PyObject *kfs_rmdir(PyObject *pself, PyObject *args);
+static PyObject *kfs_rmdirs(PyObject *pself, PyObject *args);
 static PyObject *kfs_readdir(PyObject *pself, PyObject *args);
 static PyObject *kfs_readdirplus(PyObject *pself, PyObject *args);
 static PyObject *kfs_create(PyObject *pself, PyObject *args);
@@ -86,7 +88,9 @@ static PyMemberDef Client_members[] = {
 
 static PyMethodDef Client_methods[] = {
 	{ "mkdir", kfs_mkdir, METH_VARARGS, "Create directory."},
+	{ "mkdirs", kfs_mkdirs, METH_VARARGS, "Create directory tree."},
 	{ "rmdir", kfs_rmdir, METH_VARARGS, "Remove directory."},
+	{ "rmdirs", kfs_rmdirs, METH_VARARGS, "Remove directory tree."},
 	{ "readdir", kfs_readdir, METH_VARARGS, "Read directory." },
 	{ "readdirplus", kfs_readdirplus, METH_VARARGS,
 		"Read directory with attributes." },
@@ -109,7 +113,9 @@ PyDoc_STRVAR(Client_doc,
 "\tmy_client = kfs.client('KfsTester.properties')\n\n"
 "Methods:\n"
 "\tmkdir(path) -- create a directory\n"
-"\trmdir(path) -- remove a directory\n"
+"\tmkdirs(path) -- create a directory tree\n"
+"\trmdir(path) -- remove a directory (path should be an empty dir)\n"
+"\trmdirs(path) -- remove a directory tree\n"
 "\treaddir(path) -- return a tuple of directory contents\n"
 "\treaddirplus(path) -- directory entries plus attributes\n"
 "\tstat(path)   --  file attributes, compatible with os.stat\n"
@@ -400,6 +406,42 @@ kfs_write(PyObject *pself, PyObject *args)
 }
 
 static PyObject *
+kfs_chunk_locations(PyObject *pself, PyObject *args)
+{
+	kfs_File *self = (kfs_File *)pself;
+	kfs_Client *cl = (kfs_Client *)self->pclient;
+	int off, len;
+
+	if (!PyArg_ParseTuple(args, "i|i", &off, &len))
+		return NULL;
+
+	if (self->fd == -1) {
+		PyErr_SetString(PyExc_IOError, strerror(EBADF));
+		return NULL;
+	}
+
+	vector<vector <string> > results;
+
+	int s = cl->client->GetDataLocation(self->fd, (off_t)off, len, results);
+	if (s < 0) {
+		PyErr_SetString(PyExc_IOError, strerror(-s));
+		return NULL;
+	}
+	int n = results.size();
+	PyObject *outer = PyTuple_New(n);
+	for (int i = 0; i != n; i++) {
+		int nlocs = results[i].size();
+		vector<string> locs = results[i];
+		PyObject *inner = PyTuple_New(nlocs);
+		for (int j = 0; j != nlocs; j++) {
+			PyTuple_SetItem(inner, j, PyString_FromString(locs[i].c_str()));
+		}
+		PyTuple_SetItem(outer, i, inner);
+	}
+	return outer;
+}
+
+static PyObject *
 kfs_truncate(PyObject *pself, PyObject *args)
 {
 	kfs_File *self = (kfs_File *)pself;
@@ -484,6 +526,7 @@ static PyMethodDef File_methods[] = {
 	{ "read", kfs_read, METH_VARARGS, "Read from file." },
 	{ "write", kfs_write, METH_VARARGS, "Write to file." },
 	{ "truncate", kfs_truncate, METH_VARARGS, "Truncate a file." },
+	{ "chunk_locations", kfs_chunk_locations, METH_VARARGS, "Get location(s) of a chunk." },
 	{ "seek", kfs_seek, METH_VARARGS, "Seek to file offset." },
 	{ "tell", kfs_tell, METH_NOARGS, "Return current offset." },
 	{ "sync", kfs_sync, METH_NOARGS, "Flush file data." },
@@ -512,6 +555,7 @@ PyDoc_STRVAR(File_doc,
 "\tseek(off)   -- seek to specified offset\n"
 "\ttell()      -- return current offest\n"
 "\tsync()      -- flush file data to server\n"
+"\tchunk_locations(path, offset) -- location(s) of the chunk corresponding to offset\n"
 "\nData:\n\n"
 "\tname        -- the name of the file\n"
 "\tmode        -- access mode ('r', 'w', 'r+', or 'w+')\n"
@@ -727,6 +771,24 @@ kfs_mkdir(PyObject *pself, PyObject *args)
 }
 
 static PyObject *
+kfs_mkdirs(PyObject *pself, PyObject *args)
+{
+	kfs_Client *self = (kfs_Client *)pself;
+	char *patharg;
+
+	if (PyArg_ParseTuple(args, "s", &patharg) == -1)
+		return NULL;
+
+	string path = build_path(self->cwd, patharg);
+	int status  = self->client->Mkdirs(path.c_str());
+	if (status < 0) {
+		PyErr_SetString(PyExc_IOError, strerror(-status));
+		return NULL;
+	}
+	Py_RETURN_NONE;
+}
+
+static PyObject *
 kfs_rmdir(PyObject *pself, PyObject *args)
 {
 	kfs_Client *self = (kfs_Client *)pself;
@@ -737,6 +799,24 @@ kfs_rmdir(PyObject *pself, PyObject *args)
 
 	string path = build_path(self->cwd, patharg);
 	int status = self->client->Rmdir(path.c_str());
+	if (status < 0) {
+		PyErr_SetString(PyExc_IOError, strerror(-status));
+		return NULL;
+	}
+	Py_RETURN_NONE;
+}
+
+static PyObject *
+kfs_rmdirs(PyObject *pself, PyObject *args)
+{
+	kfs_Client *self = (kfs_Client *)pself;
+	char *patharg;
+
+	if (PyArg_ParseTuple(args, "s", &patharg) == -1)
+		return NULL;
+
+	string path = build_path(self->cwd, patharg);
+	int status = self->client->Rmdirs(path.c_str());
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
