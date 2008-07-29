@@ -81,6 +81,10 @@ def setupMeta(section, config, outputFn, packageFn):
     if config.has_option(section, 'loglevel'):
         s = "metaServer.loglevel = %s\n" % config.get(section, 'loglevel')
         fh.write(s)
+
+    if config.has_option(section, 'worm'):
+        s = "metaServer.wormMode = 1\n"
+        fh.write(s)
     
     if config.has_option(section, 'numservers'):
         n = config.get(section, 'numservers')
