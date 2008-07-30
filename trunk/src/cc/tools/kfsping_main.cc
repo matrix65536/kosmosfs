@@ -135,12 +135,22 @@ PingMetaServer(const ServerLocation &location)
                          location.ToString().c_str());
         exit(0);
     }
-    if (op->servers.size() == 0) {
+    if (op->upServers.size() == 0) {
         cout << "No chunkservers are connected" << endl;
+    } else {
+        cout << "Up servers: " << op->upServers.size() << endl;
+        for (i = 0; i < op->upServers.size(); ++i) {
+            cout << op->upServers[i] << endl;
+        }
     }
-    for (i = 0; i < op->servers.size(); ++i) {
-        cout << op->servers[i] << endl;
+
+    if (op->downServers.size() > 0) {
+        cout << "Down servers: " << op->downServers.size() << endl;
+        for (i = 0; i < op->downServers.size(); ++i) {
+            cout << op->downServers[i] << endl;
+        }
     }
+
     delete op;
     metaServerSock.Close();
 }

@@ -369,6 +369,9 @@ namespace KFS
 
 		/// is the server being retired
                 bool mIsRetiring;
+		
+		/// when did we get the last heartbeat reply
+		time_t mLastHeard;
 
 		/// Set of chunks on this server that need to be evacuated
 		/// whenever this node is to be retired; when evacuation set is

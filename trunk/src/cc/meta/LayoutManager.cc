@@ -301,6 +301,17 @@ LayoutManager::ServerDown(ChunkServer *server)
 
 	MapPurger purge(mChunkToServerMap, mChunkReplicationCandidates, server);
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+
+	// for reporting purposes, record when it went down
+	time_t now = time(NULL);
+	char timebuf[64];
+	ctime_r(&now, timebuf);
+	if (timebuf[24] == '\n')
+		timebuf[24] = '\0';
+	ServerLocation loc = server->GetServerLocation();
+	mDownServers << "s=" << loc.hostname << ", p=" << loc.port << ", down="  
+			<< timebuf << "\t";
+
 	mChunkServers.erase(i);
 }
 
@@ -1020,10 +1031,11 @@ public:
 };
 
 void
-LayoutManager::Ping(string &result)
+LayoutManager::Ping(string &upServers, string &downServers)
 {
-	Pinger doPing(result);
+	Pinger doPing(upServers);
 	for_each(mChunkServers.begin(), mChunkServers.end(), doPing);
+	downServers = mDownServers.str();
 }
 
 /// functor to tell if a lease has expired

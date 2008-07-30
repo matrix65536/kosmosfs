@@ -114,6 +114,7 @@ ChunkServer::HandleHello(int code, void *data)
 
 			}
 			mHelloDone = true;
+			mLastHeard = time(NULL);
 			// Hello message successfully
 			// processed.  Setup to handle RPCs
 			SET_HANDLER(this, &ChunkServer::HandleRequest);
@@ -403,6 +404,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
             mNumChunks = prop.getValue("Num-chunks", 0);
 	    mAllocSpace = mUsedSpace + mNumChunkWrites * CHUNKSIZE;
 	    mHeartbeatSent = false;
+	    mLastHeard = time(NULL);
 	} else if (submittedOp->op == META_CHUNK_REPLICATE) {
 	    MetaChunkReplicate *mcr = static_cast <MetaChunkReplicate *> (op);
 	    mcr->fid = prop.getValue("File-handle", (long long) 0);
@@ -823,6 +825,7 @@ ChunkServer::Ping(string &result)
 {
 	ostringstream ost;
 	char marker = ' ';
+	time_t now = time(NULL);
 
 	// for retiring nodes, add a '*' so that we can differentiate in the UI
 	if (mIsRetiring)
@@ -833,13 +836,15 @@ ChunkServer::Ping(string &result)
 	    		<< ", total=" << convertToMB(mTotalSpace) 
 			<< "(MB), used=" << convertToMB(mUsedSpace)
 			<< "(MB), util=" << GetSpaceUtilization() * 100.0 
-			<< "%, nblocks=" << mNumChunks << " \t";
+			<< "%, nblocks=" << mNumChunks 
+			<< ", lastheard=" << now - mLastHeard << " (sec)\t";
 	} else {
 		ost << "s=" << mLocation.hostname << marker << ", p=" << mLocation.port 
 	    		<< ", total=" << convertToGB(mTotalSpace) 
 			<< "(GB), used=" << convertToGB(mUsedSpace)
 			<< "(GB), util=" << GetSpaceUtilization() * 100.0 
-			<< "%, nblocks=" << mNumChunks << " \t";
+			<< "%, nblocks=" << mNumChunks 
+			<< ", lastheard=" << now - mLastHeard <<" (sec)\t";
 	}
 	result += ost.str();
 }
