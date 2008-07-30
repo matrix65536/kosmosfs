@@ -800,6 +800,7 @@ struct MetaChunkRetire: public MetaChunkRequest {
  */
 struct MetaPing: public MetaRequest {
 	string servers; //!< result that contains info about chunk servers
+	string downServers; //!< info about servers that have gone down
 	MetaPing(seq_t s):
 		MetaRequest(META_PING, s, false) { }
 	int log(ofstream &file) const;

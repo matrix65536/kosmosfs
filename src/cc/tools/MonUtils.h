@@ -57,7 +57,8 @@ namespace KFS_MON
     };
 
     struct MetaPingOp : public KfsMonOp {
-        std::vector<std::string> servers; /// result
+        std::vector<std::string> upServers; /// result
+        std::vector<std::string> downServers; /// result
         MetaPingOp(int32_t s) :
             KfsMonOp(CMD_METAPING, s) { };
         void Request(std::ostringstream &os);

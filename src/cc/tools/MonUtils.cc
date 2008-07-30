@@ -89,7 +89,25 @@ MetaPingOp::ParseResponse(const char *resp, int len)
         else
             serverInfo.assign(serv, start, serv.size() - start);
 
-        this->servers.push_back(serverInfo);
+        this->upServers.push_back(serverInfo);
+        start = serv.find_first_of("s=", end);
+    }
+
+    serv = prop.getValue("Down Servers", "");
+    start = serv.find_first_of("s=");
+    if (start == string::npos) {
+        return;
+    }
+
+    while (start != string::npos) {
+        end = serv.find_first_of(delim, start);
+
+        if (end != string::npos)
+            serverInfo.assign(serv, start, end - start);
+        else
+            serverInfo.assign(serv, start, serv.size() - start);
+
+        this->downServers.push_back(serverInfo);
         start = serv.find_first_of("s=", end);
     }
     

@@ -830,7 +830,7 @@ handle_ping(MetaRequest *r)
 
 	req->status = 0;
 
-	gLayoutManager.Ping(req->servers);
+	gLayoutManager.Ping(req->servers, req->downServers);
 
 }
 
@@ -2096,7 +2096,8 @@ MetaPing::response(ostringstream &os)
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
 	os << "Status: " << status << "\r\n";
-	os << "Servers: " << servers << "\r\n\r\n";
+	os << "Servers: " << servers << "\r\n";
+	os << "Down Servers: " << downServers << "\r\n\r\n";
 }
 
 void

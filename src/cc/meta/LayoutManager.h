@@ -35,6 +35,7 @@
 #include <map>
 #include <vector>
 #include <set>
+#include <sstream>
 
 #include "kfstypes.h"
 #include "meta.h"
@@ -315,9 +316,11 @@ namespace KFS
 
 		/// For monitoring purposes, dump out state of all the
 		/// connected chunk servers.
-		/// @param[out] result  The string containing the
-		/// state of the chunk servers.
-		void Ping(string &result);
+		/// @param[out] upServers  The string containing the
+		/// state of the up chunk servers.
+		/// @param[out] downServers  The string containing the
+		/// state of the down chunk servers.
+		void Ping(string &upServers, string &downServers);
 
 		/// Periodically, walk the table of chunk -> [location, lease]
 		/// and remove out dead leases.
@@ -409,6 +412,9 @@ namespace KFS
 
                 /// List of connected chunk servers.
                 std::vector <ChunkServerPtr> mChunkServers;
+
+		/// Track when servers went down so we can report it
+		std::ostringstream mDownServers;
 
 		/// State about how each rack (such as, servers/space etc)
 		std::vector<RackInfo> mRacks;
