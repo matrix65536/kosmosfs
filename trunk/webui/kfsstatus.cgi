@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# $Id:$
+# $Id$
 #
 # Copyright 2008 Quantcast Corp.
 #
@@ -89,14 +89,14 @@ class DownServer:
 def processUpNodes(nodes):
     global upServers
     servers = nodes.split('\t')
-    upServers = [UpServer(c) for c in servers]
+    upServers = [UpServer(c) for c in servers if c != '']
     upServers.sort()
 
 def processDownNodes(nodes):
     global downServers    
     servers = nodes.split('\t')
     if servers != "":
-        downServers = [DownServer(c) for c in servers]
+        downServers = [DownServer(c) for c in servers if c != '']
         downServers.sort()
         
 def ping(metaserver):
@@ -155,8 +155,9 @@ def outputhtml(metaserver):
         for v in downServers:
             v.printHtml()
         print '''
-        </table>
+        </table>'''
 
+    print '''
     </body>
     </html>'''
     
