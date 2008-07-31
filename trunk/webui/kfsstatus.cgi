@@ -27,7 +27,7 @@
 #
 
 import os,sys,os.path,getopt
-import socket,threading,calendar
+import socket,threading,calendar,time
 from ConfigParser import ConfigParser
 
 upServers = {}
@@ -76,9 +76,7 @@ class DownServer:
 
     def __cmp__(self, other):
         """Order by down date"""
-        d1 = calendar.timegm(self.downdate)
-        d2 = calendar.timegm(other.downdate)
-        return cmp(d2, d1)
+        return cmp(time.strptime(other.downdate), time.strptime(self.downdate))
 
     def printHtml(self):
         print '''<tr><td align="center">''', self.host, '''</td>'''
