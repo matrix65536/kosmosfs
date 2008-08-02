@@ -45,7 +45,7 @@ class ChunkReplicatorTimeoutImpl;
 class ChunkReplicator : public KfsCallbackObj {
 public:
 	/// The interval with which we check if chunks are sufficiently replicated
-	static const int REPLICATION_CHECK_INTERVAL_SECS = 120;
+	static const int REPLICATION_CHECK_INTERVAL_SECS = 60;
 	static const int REPLICATION_CHECK_INTERVAL_MSECS = 
 				REPLICATION_CHECK_INTERVAL_SECS * 1000;
 

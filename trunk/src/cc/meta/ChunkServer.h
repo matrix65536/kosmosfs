@@ -45,6 +45,8 @@ using std::ostringstream;
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
 
+#include <time.h>
+
 #include "libkfsIO/KfsCallbackObj.h"
 #include "libkfsIO/ITimeout.h"
 #include "libkfsIO/NetConnection.h"
@@ -183,13 +185,18 @@ namespace KFS
 		/// During the stage where the server is being retired, we don't
 		/// want to send any new write traffic to the server. 
 		///
-		void SetRetiring() {
-			mIsRetiring = true;
-		}
+		void SetRetiring();
 
 		bool IsRetiring() const {
 			return mIsRetiring;
 		}
+
+		void IncCorruptChunks() {
+			mNumCorruptChunks++;
+		}
+
+		/// Provide some stats...useful for ops
+		void GetRetiringStatus(string &result);
 
 		/// Notify the server object that the chunk needs evacuation.
 		void EvacuateChunk(chunkId_t chunkId) {
@@ -369,6 +376,8 @@ namespace KFS
 
 		/// is the server being retired
                 bool mIsRetiring;
+		/// when we did we get the retire request
+		time_t mRetireStartTime;
 		
 		/// when did we get the last heartbeat reply
 		time_t mLastHeard;
@@ -386,6 +395,10 @@ namespace KFS
 		/// -1 signifies that we don't what rack the server is on and by
 		/// implication, all servers are on same rack
 		int mRackId;
+
+		/// Keep a count of how many corrupt chunks we are seeing on
+		/// this node; an indicator of the node in trouble?
+		int mNumCorruptChunks;
 
                 /// total space available on this server
                 uint64_t mTotalSpace;

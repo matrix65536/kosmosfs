@@ -48,7 +48,7 @@ ChunkServer::ChunkServer(NetConnectionPtr &conn) :
 	mSeqNo(1), mNetConnection(conn), 
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
 	mHeartbeatSkipped(false), mIsRetiring(false), mRackId(-1), 
-	mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
+	mNumCorruptChunks(0), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
 	mNumChunks(0), mNumChunkWrites(0), 
 	mNumChunkWriteReplications(0), mNumChunkReadReplications(0)
 {
@@ -713,6 +713,15 @@ ChunkServer::NotifyChunkVersChange(fid_t fid, chunkId_t chunkId, seq_t chunkVers
 }
 
 void
+ChunkServer::SetRetiring()
+{
+	mIsRetiring = true;
+	mRetireStartTime = time(NULL);
+	KFS_LOG_VA_INFO("Initiation of retire for chunks on %s : %d blocks to do",
+			ServerID().c_str(), mNumChunks);
+}
+
+void
 ChunkServer::EvacuateChunkDone(chunkId_t chunkId)
 {
 	if (!mIsRetiring)
@@ -821,6 +830,26 @@ inline float convertToGB(off_t bytes)
 }
 
 void
+ChunkServer::GetRetiringStatus(string &result)
+{
+	if (!mIsRetiring)
+		return;
+
+	ostringstream ost;
+	char timebuf[64];
+	ctime_r(&mRetireStartTime, timebuf);
+	if (timebuf[24] == '\n')
+		timebuf[24] = '\0';
+
+	ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
+		<< ", started=" << timebuf 
+		<< ", numLeft=" << mEvacuatingChunks.size() << ", numDone=" 
+		<< mNumChunks - mEvacuatingChunks.size() << '\t';
+
+	result += ost.str();
+}
+
+void
 ChunkServer::Ping(string &result)
 {
 	ostringstream ost;
@@ -837,14 +866,18 @@ ChunkServer::Ping(string &result)
 			<< "(MB), used=" << convertToMB(mUsedSpace)
 			<< "(MB), util=" << GetSpaceUtilization() * 100.0 
 			<< "%, nblocks=" << mNumChunks 
-			<< ", lastheard=" << now - mLastHeard << " (sec)\t";
+			<< ", lastheard=" << now - mLastHeard << " (sec)"
+			<< ", ncorrupt=" << mNumCorruptChunks
+			<< "\t";
 	} else {
 		ost << "s=" << mLocation.hostname << marker << ", p=" << mLocation.port 
 	    		<< ", total=" << convertToGB(mTotalSpace) 
 			<< "(GB), used=" << convertToGB(mUsedSpace)
 			<< "(GB), util=" << GetSpaceUtilization() * 100.0 
 			<< "%, nblocks=" << mNumChunks 
-			<< ", lastheard=" << now - mLastHeard <<" (sec)\t";
+			<< ", lastheard=" << now - mLastHeard << " (sec)"
+			<< ", ncorrupt=" << mNumCorruptChunks
+			<< "\t";
 	}
 	result += ost.str();
 }
