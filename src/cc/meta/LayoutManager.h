@@ -320,7 +320,10 @@ namespace KFS
 		/// state of the up chunk servers.
 		/// @param[out] downServers  The string containing the
 		/// state of the down chunk servers.
-		void Ping(string &upServers, string &downServers);
+		/// @param[out] retiringServers  The string containing the
+		/// state of the chunk servers that are being retired for
+		/// maintenance.
+		void Ping(string &upServers, string &downServers, string &retiringServers);
 
 		/// Periodically, walk the table of chunk -> [location, lease]
 		/// and remove out dead leases.

@@ -830,7 +830,7 @@ handle_ping(MetaRequest *r)
 
 	req->status = 0;
 
-	gLayoutManager.Ping(req->servers, req->downServers);
+	gLayoutManager.Ping(req->servers, req->downServers, req->retiringServers);
 
 }
 
@@ -1653,8 +1653,6 @@ parseHandlerRetireChunkserver(Properties &prop, MetaRequest **r)
 		return -1;
 	}
 	*r = new MetaRetireChunkserver(seq, location);
-	KFS_LOG_VA_INFO("initiating chunkserver retire for %s",
-			location.ToString().c_str());
 	return 0;
 }
 
@@ -2097,6 +2095,7 @@ MetaPing::response(ostringstream &os)
 	os << "Cseq: " << opSeqno << "\r\n";
 	os << "Status: " << status << "\r\n";
 	os << "Servers: " << servers << "\r\n";
+	os << "Retiring Servers: " << retiringServers << "\r\n";
 	os << "Down Servers: " << downServers << "\r\n\r\n";
 }
 
