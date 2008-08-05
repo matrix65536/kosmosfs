@@ -708,22 +708,43 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
     boost::scoped_array<char> line;
     int count = 0, linelen = 1 << 20, numchars;
     const string entryDelim = "Begin-entry";
+    string s(op.contentBuf, op.contentLength);
 
-    ist.str(op.contentBuf);
+    ist.str(s);
+
+    KFS_LOG_VA_DEBUG("# of entries: %d", op.numEntries);
+
     line.reset(new char[linelen]);
+
+    // the format is:
+    // Begin-entry <values> Begin-entry <values>
+    // the last entry doesn't have a end-marker
     while (count < op.numEntries) {
         ist.getline(line.get(), linelen);
+
         numchars = ist.gcount();
-        if (line[numchars - 2] == '\r')
-            line[numchars - 2] = '\0';
-        if (line.get() != entryDelim) {
-            entryInfo += line.get();
-            entryInfo += "\r\n";
-            continue;
+        if (numchars != 0) {
+            if (line[numchars - 2] == '\r')
+                line[numchars - 2] = '\0';
+
+            KFS_LOG_VA_DEBUG("entry: %s", line.get());
+
+            if (line.get() != entryDelim) {
+                entryInfo += line.get();
+                entryInfo += "\r\n";
+                continue;
+            }
+            // we hit a delimiter; if this is the first one, we
+            // continue so that we can build up the key/value pairs
+            // for the entry.
+            if (entryInfo == "")
+                continue;
         }
         count++;
+        // sanity
         if (entryInfo == "")
             continue;
+
         // previous entry is all done...process it
         Properties prop;
         KfsFileAttr fattr;
