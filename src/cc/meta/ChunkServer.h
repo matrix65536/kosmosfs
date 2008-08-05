@@ -203,6 +203,10 @@ namespace KFS
 			mEvacuatingChunks.insert(chunkId);
 		}
 
+		std::set<chunkId_t> GetEvacuatingChunks() {
+			return mEvacuatingChunks;
+		}
+
 		/// Evacuation of a chunk that maybe hosted on this server is
 		/// done; if this server is retiring and all chunks on this are
 		/// evacuated, we can tell the server to retire.

@@ -587,11 +587,18 @@ KfsClientImpl::Rmdirs(const char *pathname)
     if ((res = ReaddirPlus(pathname, entries, false)) < 0)
         return res;
 
+    string dirname = pathname;
+
+    int len = dirname.size();
+    if (dirname[len - 1] == '/')
+        dirname.erase(len - 1);
+
     for (size_t i = 0; i < entries.size(); i++) {
         if ((entries[i].filename == ".") || (entries[i].filename == ".."))
             continue;
 
-        string d = pathname;
+        string d = dirname;
+        
         d += "/" + entries[i].filename;
         if (entries[i].isDirectory) {
             res = Rmdirs(d.c_str());
@@ -601,6 +608,9 @@ KfsClientImpl::Rmdirs(const char *pathname)
         if (res < 0)
             break;
     }
+    if (res < 0)
+        return res;
+
     res = Rmdir(pathname);
 
     return res;
@@ -779,11 +789,6 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
                 continue;
             }
 
-            if (result[i].fileSize < 0) {
-                result[i].fileSize = 0;
-                continue;
-            }
-
             int fte = LookupFileTableEntry(dirFid, result[i].filename.c_str());
 
             if (fte >= 0) {
@@ -791,6 +796,11 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
             } 
         }
         ComputeFilesizes(result, fileChunkInfo);
+
+        for (uint32_t i = 0; i < result.size(); i++) 
+            if (result[i].fileSize < 0)
+                result[i].fileSize = 0;
+
     }
 
     // if there are too many entries in the dir, then the caller is
