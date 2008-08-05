@@ -1386,6 +1386,34 @@ LayoutManager::CanReplicateChunkNow(chunkId_t chunkId,
 	return true;
 }
 
+class EvacuateChunkChecker {
+	CRCandidateSet &candidates;
+	CSMap &chunkToServerMap;
+public:
+	EvacuateChunkChecker(CRCandidateSet &c, CSMap &m) : 
+		candidates(c), chunkToServerMap(m) {}
+	void operator()(ChunkServerPtr c) {
+		if (!c->IsRetiring())
+			return;
+		CRCandidateSet leftover = c->GetEvacuatingChunks();
+		for (CRCandidateSetIter citer = leftover.begin(); citer !=
+			leftover.end(); ++citer) {
+			chunkId_t chunkId = *citer;
+			CSMapIter iter = chunkToServerMap.find(chunkId);
+
+			if (iter == chunkToServerMap.end()) {
+				c->EvacuateChunkDone(chunkId);
+				KFS_LOG_VA_INFO("%s has bogus block %ld", 
+					c->GetServerLocation().ToString().c_str(), chunkId);
+			} else {
+				candidates.insert(chunkId);
+				KFS_LOG_VA_INFO("%s has block %ld that wasn't in replication candidates", 
+					c->GetServerLocation().ToString().c_str(), chunkId);
+			}
+		}
+	}
+};
+
 void
 LayoutManager::ChunkReplicationChecker()
 {
@@ -1446,6 +1474,15 @@ LayoutManager::ChunkReplicationChecker()
 					ReplicationDoneNotifier(chunkId));
 			mChunkReplicationCandidates.erase(*citer);
 		}
+	}
+
+	if (mChunkReplicationCandidates.size() == 0) {
+		// if there are any retiring servers, we need to make sure that
+		// the servers don't think there is a block to be replicated
+		// if there is any such, let us get them into the set of
+		// candidates...need to know why this happens
+		for_each(mChunkServers.begin(), mChunkServers.end(), 
+			EvacuateChunkChecker(mChunkReplicationCandidates, mChunkToServerMap));
 	}
 
 	RebalanceServers();
@@ -1554,6 +1591,9 @@ LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
 
 	if (req->status != 0) {
 		// Replication failed...we will try again later
+		KFS_LOG_VA_DEBUG("%s: re-replication for chunk %lld failed, code = %d", 
+			req->server->GetServerLocation().ToString().c_str(),
+			req->chunkId, req->status);
 		mFailedReplicationStats->Update(1);
 		return;
 	}
@@ -1592,7 +1632,7 @@ LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
 	}
 
 	// Yaeee...all good...
-	KFS_LOG_VA_INFO("%s reports that re-replication for chunk %lld is all done", 
+	KFS_LOG_VA_DEBUG("%s reports that re-replication for chunk %lld is all done", 
 			req->server->GetServerLocation().ToString().c_str(), req->chunkId);
 	UpdateChunkToServerMapping(req->chunkId, req->server.get());
 

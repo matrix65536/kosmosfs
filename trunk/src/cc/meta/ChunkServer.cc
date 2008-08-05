@@ -586,6 +586,10 @@ ChunkServer::DeleteChunk(chunkId_t chunkId)
 
         mAllocSpace -= CHUNKSIZE;
 
+	if (IsRetiring()) {
+		EvacuateChunkDone(chunkId);
+	}
+
 	r = new MetaChunkDelete(NextSeq(), this, chunkId);
 
 	// save a pointer to the request so that we can match up the
