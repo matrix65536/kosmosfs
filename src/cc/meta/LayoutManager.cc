@@ -1257,8 +1257,9 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 
 		if (iter != clli.chunkServers.end()) {
 			reason = " evacuating chunk ";
-			if ((*iter)->GetReplicationReadLoad() <
-				MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE)
+			if (((*iter)->GetReplicationReadLoad() <
+				MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE) &&
+				(*iter)->IsResponsiveServer())
 				dataServer = *iter;
 		} else {
 			reason = " re-replication ";
