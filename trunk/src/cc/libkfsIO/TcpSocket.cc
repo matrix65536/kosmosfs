@@ -153,7 +153,12 @@ int TcpSocket::Connect(const ServerLocation &location, bool nonblockingConnect)
     struct sockaddr_in remoteAddr;
 
     hostInfo = gethostbyname(location.hostname.c_str());
+
     if (hostInfo == NULL) {
+#if defined __APPLE__
+        KFS_LOG_VA_DEBUG("herrno: %d, errstr = %s", h_errno, hstrerror(h_errno));
+#endif
+        perror("gethostbyname: ");
         return -1;
     }
 
