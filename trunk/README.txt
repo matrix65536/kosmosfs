@@ -4,6 +4,7 @@
 #
 # Created on 2007/08/23
 #
+# Copyright 2008 Quantcast Corp.
 # Copyright 2007 Kosmix Corp.
 #
 # This file is part of Kosmos File System (KFS).
@@ -21,8 +22,8 @@
 # permissions and limitations under the License.
 #
 # Sriram Rao
-# Kosmix Corp.
-# (sriram at kosmix dot com)
+# Quantcast Corp.
+# (srao at quantcast dot com)
 
 =================
 
