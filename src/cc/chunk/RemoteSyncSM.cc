@@ -72,8 +72,8 @@ RemoteSyncSM::Connect()
     // do a non-blocking connect
     res = sock->Connect(mLocation, true);
     if ((res < 0) && (res != -EINPROGRESS)) {
-        KFS_LOG_VA_INFO("Connect to remote server (%s) failed...",
-                         mLocation.ToString().c_str());
+        KFS_LOG_VA_INFO("Connect to remote server (%s) failed: code = %d",
+                        mLocation.ToString().c_str(), res);
         delete sock;
         return false;
     }

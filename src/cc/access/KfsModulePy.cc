@@ -65,6 +65,8 @@ static PyObject *Client_new(
 		PyTypeObject *type, PyObject *args, PyObject *kwds);
 static int Client_print(PyObject *pself, FILE *fp, int flags);
 static PyObject *Client_repr(PyObject *pself);
+static PyObject *kfs_isdir(PyObject *pself, PyObject *args);
+static PyObject *kfs_isfile(PyObject *pself, PyObject *args);
 static PyObject *kfs_mkdir(PyObject *pself, PyObject *args);
 static PyObject *kfs_mkdirs(PyObject *pself, PyObject *args);
 static PyObject *kfs_rmdir(PyObject *pself, PyObject *args);
@@ -89,6 +91,7 @@ static PyMemberDef Client_members[] = {
 static PyMethodDef Client_methods[] = {
 	{ "mkdir", kfs_mkdir, METH_VARARGS, "Create directory."},
 	{ "mkdirs", kfs_mkdirs, METH_VARARGS, "Create directory tree."},
+        { "isdir", kfs_isdir, METH_VARARGS, "Check if a path is a directory."},
 	{ "rmdir", kfs_rmdir, METH_VARARGS, "Remove directory."},
 	{ "rmdirs", kfs_rmdirs, METH_VARARGS, "Remove directory tree."},
 	{ "readdir", kfs_readdir, METH_VARARGS, "Read directory." },
@@ -99,6 +102,7 @@ static PyMethodDef Client_methods[] = {
 	{ "remove", kfs_remove, METH_VARARGS, "Remove file." },
 	{ "rename", kfs_rename, METH_VARARGS, "Rename file or directory." },
 	{ "open", kfs_open, METH_VARARGS, "Open file." },
+        { "isfile", kfs_isfile, METH_VARARGS, "Check if a path is a file."},
 	{ "cd", kfs_cd, METH_VARARGS, "Change directory." },
 	{ NULL }
 };
@@ -118,6 +122,8 @@ PyDoc_STRVAR(Client_doc,
 "\trmdirs(path) -- remove a directory tree\n"
 "\treaddir(path) -- return a tuple of directory contents\n"
 "\treaddirplus(path) -- directory entries plus attributes\n"
+"\tisdir(path) -- return TRUE if path is a directory\n"
+"\tisfile(path) -- return TRUE if path is a file\n"
 "\tstat(path)   --  file attributes, compatible with os.stat\n"
 "\tcreate(path) -- create a file and return a kfs.file object for it\n"
 "\tremove(path) -- remove a file\n"
@@ -750,6 +756,34 @@ kfs_cd(PyObject *pself, PyObject *args)
 		self->cwd = newcwd;
 	}
 	Py_RETURN_NONE;
+}
+
+static PyObject *
+kfs_isdir(PyObject *pself, PyObject *args)
+{
+	kfs_Client *self = (kfs_Client *)pself;
+	char *patharg;
+
+	if (PyArg_ParseTuple(args, "s", &patharg) == -1)
+		return NULL;
+
+	string path = build_path(self->cwd, patharg);
+	bool res = self->client->IsDirectory(path.c_str());
+        return Py_BuildValue("b", res);
+}
+
+static PyObject *
+kfs_isfile(PyObject *pself, PyObject *args)
+{
+	kfs_Client *self = (kfs_Client *)pself;
+	char *patharg;
+
+	if (PyArg_ParseTuple(args, "s", &patharg) == -1)
+		return NULL;
+
+	string path = build_path(self->cwd, patharg);
+	bool res = self->client->IsFile(path.c_str());
+        return Py_BuildValue("b", res);
 }
 
 static PyObject *
