@@ -32,6 +32,7 @@ from ConfigParser import ConfigParser
 
 upServers = {}
 downServers = {}
+retiringServers = {}
 
 class ServerLocation():
     def __init__(self, **kwds):
@@ -64,15 +65,14 @@ class UpServer:
         print '''<td align="right">''', self.lastheard, '''</td>'''                        
         print '''</tr>'''
         
-
 class DownServer:
     """Keep track of a down server"""
     def __init__(self, info):
-        print "Downserver: ", info
         serverInfo = info.split(',')        
         self.host = serverInfo[0].split('=')[1].strip()
         self.port = serverInfo[1].split('=')[1].strip()        
         self.downdate = serverInfo[2].split('=')[1].strip()
+        self.reason = serverInfo[3].split('=')[1].strip()
 
     def __cmp__(self, other):
         """Order by down date"""
@@ -80,7 +80,29 @@ class DownServer:
 
     def printHtml(self):
         print '''<tr><td align="center">''', self.host, '''</td>'''
-        print '''<td>''', self.downdate, '''</td>'''        
+        print '''<td>''', self.downdate, '''</td>'''
+        print '''<td>''', self.reason, '''</td>'''                
+        print '''</tr>'''
+
+class RetiringServer:
+    """Keep track of a retiring server"""
+    def __init__(self, info):
+        serverInfo = info.split(',')        
+        self.host = serverInfo[0].split('=')[1].strip()
+        self.port = serverInfo[1].split('=')[1].strip()        
+        self.startdate = serverInfo[2].split('=')[1].strip()
+        self.nleft = serverInfo[3].split('=')[1].strip()
+        self.ndone = serverInfo[4].split('=')[1].strip()        
+
+    def __cmp__(self, other):
+        """Order by start date"""
+        return cmp(time.strptime(other.startdate), time.strptime(self.startdate))
+
+    def printHtml(self):
+        print '''<tr><td align="center">''', self.host, '''</td>'''
+        print '''<td>''', self.startdate, '''</td>'''
+        print '''<td align="right">''', self.ndone, '''</td>'''
+        print '''<td align="right">''', self.nleft, '''</td>'''        
         print '''</tr>'''
         
     
@@ -96,6 +118,13 @@ def processDownNodes(nodes):
     if servers != "":
         downServers = [DownServer(c) for c in servers if c != '']
         downServers.sort()
+
+def processRetiringNodes(nodes):
+    global retiringServers    
+    servers = nodes.split('\t')
+    if servers != "":
+        retiringServers = [RetiringServer(c) for c in servers if c != '']
+        retiringServers.sort()
         
 def ping(metaserver):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -111,6 +140,14 @@ def ping(metaserver):
             downNodes = line[pos+1:].strip()
             processDownNodes(downNodes)
             break
+        if line.find('Retiring Servers:') == 0:
+            if (len(line.split(':')) < 2):
+                continue
+            pos = line.find(':')
+            retiringNodes = line[pos+1:].strip()
+            processRetiringNodes(retiringNodes)
+            continue
+        
         if line.find('Servers:') != 0:
             continue
         nodes = line.split(':')[1].strip()
@@ -128,12 +165,19 @@ def outputhtml(metaserver):
     <body>
     <H1> System status </H1>
     <ul>
-    <li> Alive nodes:''', len(upServers), '''
+    <li> <a href="#AliveNodes"> Alive nodes </a>:''', len(upServers), '''
     </li>
-    <li> Dead nodes:''', len(downServers), '''
+    <li> <a href="#DeadNodes"> Dead nodes </a>:''', len(downServers), '''
+    </li>
+    </li>
+    <li> <a href="#Retiring"> Retiring nodes </a>:''', len(retiringServers), '''
     </li>
     </ul>
-    <H2> Alive Nodes </H2>
+    <H2> Meta Server </H2>
+    <ul>
+    <li> Location: localhost, port = 20000
+    </ul>
+    <H2> <a name="AliveNodes"> Alive Nodes </a> </H2>
     <table border=1>
     <tr><th> Chunkserver </th> <th> Space </th> <th> Used </th> <th> Util </th> <th> # of blocks </th> <th> Last heard </th></tr>
     '''
@@ -146,11 +190,22 @@ def outputhtml(metaserver):
 
     if len(downServers) > 0:
         print '''
-        <H2> Dead Nodes </H2>
+        <H2> <a name="DeadNodes">Dead Nodes </a></H2>
         <table border=1>
-        <tr><th> Chunkserver </th> <th> Down Since </th> </tr>
+        <tr><th> Chunkserver </th> <th> Down Since </th> <th> Reason </th> </tr>
         '''
         for v in downServers:
+            v.printHtml()
+        print '''
+        </table>'''
+
+    if len(retiringServers) > 0:
+        print '''
+        <H2> <a name="Retiring">Retiring Nodes </a></H2>
+        <table border=1>
+        <tr><th> Chunkserver </th> <th> Start </th> <th> # blks done </th> <th> # blks left </th> </tr>
+        '''
+        for v in retiringServers:
             v.printHtml()
         print '''
         </table>'''
