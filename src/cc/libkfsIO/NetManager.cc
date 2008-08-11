@@ -233,7 +233,8 @@ NetManager::MainLoop()
                 }
             }
 
-            if (pollfds[conn->mPollVectorIndex].revents & POLLERR) {
+            if ((pollfds[conn->mPollVectorIndex].revents & POLLERR) ||
+                (pollfds[conn->mPollVectorIndex].revents & POLLHUP)) {
                 fd = conn->GetFd();
                 if (fd > 0) {
                     conn->HandleErrorEvent();
