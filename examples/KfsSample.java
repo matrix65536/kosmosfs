@@ -171,7 +171,7 @@ public class KfsSample
             
             // seek to offset 40.  The KfsInputChannel allows seeking;
             // this is an extension to the basic readablebytechannel api.
-            inputChanel.seek(40);
+            inputChannel.seek(40);
 
             // Seek and verify that we are we think we are
             sz = inputChannel.tell();
