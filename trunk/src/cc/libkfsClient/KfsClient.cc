@@ -1512,12 +1512,6 @@ KfsClientImpl::LocateChunk(int fd, int chunkNum)
     chunk.chunkServerLoc = op.chunkServers;
     mFileTable[fd]->cattr[chunkNum] = chunk;
 
-    if (op.chunkServers.size() > 0) {
-	KFS_LOG_VA_DEBUG("Fileid: %ld, chunk: %ld, hosted on (%s)",
-	                 mFileTable[fd]->fattr.fileId,
-	                 chunk.chunkId,
-	                 op.chunkServers[0].ToString().c_str());
-    }
     return 0;
 }
 
