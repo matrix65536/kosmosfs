@@ -400,6 +400,8 @@ int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
     // Initialize the logger
     MsgLogger::Init(NULL);
 
+    MsgLogger::SetLevel(log4cpp::Priority::INFO);
+
     mRandSeed = time(NULL);
 
     mMetaServerLoc.hostname = metaServerHost;
@@ -410,11 +412,15 @@ int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
 
     if (!mMetaServerLoc.IsValid()) {
 	mIsInitialized = false;
+        KFS_LOG_VA_ERROR("Unable to connect to metaserver at: %s:%d",
+                         metaServerHost.c_str(), metaServerPort);
 	return -1;
     }
 
     if (!ConnectToMetaServer()) {
 	mIsInitialized = false;
+        KFS_LOG_VA_ERROR("Unable to connect to metaserver at: %s:%d",
+                         metaServerHost.c_str(), metaServerPort);
 	return -1;
     }
 
