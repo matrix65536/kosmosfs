@@ -44,10 +44,16 @@ endif (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 # link with dynamically linked libs
 
 IF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
-   # On solaris, use 64-bit mode
-   set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -m64")
-   set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -m64")
-   set(CMAKE_SHARED_LINKER_FLAGS  "${CMAKE_SHARED_LINKER_FLAGS} -m64")
+   IF (BUILD_CPU_MODE STREQUAL "32")
+      message (STATUS "Building 32-bit mode on Solaris")
+      # If we are asked to build 32 bit mode
+      add_definitions (-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGE_FILES)
+   ELSE (BUILD_CPU_MODE STREQUAL "32")
+      # On solaris, use 64-bit mode
+      set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -m64")
+      set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -m64")
+      set(CMAKE_SHARED_LINKER_FLAGS  "${CMAKE_SHARED_LINKER_FLAGS} -m64")
+   ENDIF (BUILD_CPU_MODE STREQUAL "32")
    # Statically linked binaries don't work on solaris
    set (USE_STATIC_LIB_LINKAGE OFF CACHE BOOL "Build binaries with statically linked libraries" FORCE)
    # Cmake does whacky relink on solaris and messes things up; avoid this
@@ -85,7 +91,6 @@ IF (CMAKE_BUILD_TYPE STREQUAL "Release")
 ENDIF(CMAKE_BUILD_TYPE STREQUAL "Release")
 
 set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wall")
-
 
 #
 # Find the path to libfuse.so
