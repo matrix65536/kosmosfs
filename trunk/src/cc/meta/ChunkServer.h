@@ -160,7 +160,6 @@ namespace KFS
 
 		void UpdateReplicationReadLoad(int count) {
 			mNumChunkReadReplications += count;
-			assert(mNumChunkReadReplications >= 0);
 			if (mNumChunkReadReplications < 0)
 				mNumChunkReadReplications = 0;
 		}
