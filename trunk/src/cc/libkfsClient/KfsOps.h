@@ -375,6 +375,7 @@ struct AllocateOp : public KfsOp {
     off_t fileOffset;
     kfsChunkId_t chunkId; // result
     int64_t chunkVersion; // result---version # for the chunk
+    std::string clientHost; // our hostname
     // where is the chunk hosted name/port
     ServerLocation masterServer; // master for running the write transaction
     std::vector<ServerLocation> chunkServers;

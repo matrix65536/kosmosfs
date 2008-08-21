@@ -2444,7 +2444,9 @@ KfsClientImpl::EnumerateBlocks(const char *pathname)
     
     fte = LookupFileTableEntry(pathname);
     assert(fte >= 0);
-    
+
+    KFS_LOG_VA_DEBUG("Fileid for %s is: %d", pathname, FdAttr(fte)->fileId);
+
     GetLayoutOp lop(nextSeq(), FdAttr(fte)->fileId);
     (void)DoMetaOpWithRetry(&lop);
     if (lop.status < 0) {
