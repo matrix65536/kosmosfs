@@ -181,9 +181,15 @@ GetChunkMetadataOp::Request(ostringstream &os)
 void
 AllocateOp::Request(ostringstream &os)
 {
+    static const int MAXHOSTNAMELEN = 256;
+    char hostname[MAXHOSTNAMELEN];
+
+    gethostname(hostname, MAXHOSTNAMELEN);
+
     os << "ALLOCATE \r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-host: " << hostname << "\r\n";
     os << "File-handle: " << fid << "\r\n";
     os << "Chunk-offset: " << fileOffset << "\r\n\r\n";
 }
