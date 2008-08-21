@@ -46,6 +46,7 @@ using std::set;
 using std::vector;
 using std::map;
 using std::min;
+using std::endl;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -118,6 +119,21 @@ public:
 	MatchingServer(const ServerLocation &l) : loc(l) { }
 	bool operator() (ChunkServerPtr &s) {
 		return s->MatchingServer(loc);
+	}
+};
+
+//
+// Try to match servers by hostname: for write allocation, we'd like to place
+// one copy of the block on the same host on which the client is running.
+//
+class MatchServerByHost {
+	string host;
+public:
+	MatchServerByHost(const string &s) : host(s) { }
+	bool operator() (ChunkServerPtr &s) {
+		ServerLocation l = s->GetServerLocation();
+
+		return l.hostname == host;
 	}
 };
 
@@ -277,6 +293,40 @@ public:
 		retiringServer->EvacuateChunk(p.first);
 	}
 };
+
+class MapDumper {
+	ofstream &ofs;
+public:
+	MapDumper(ofstream &o) : ofs(o) { }
+	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
+		chunkId_t cid = p.first;
+		ChunkPlacementInfo c = p.second;
+
+		ofs << cid << ' ' << c.fid << ' ' << c.chunkServers.size() << ' ';
+		for (uint32_t i = 0; i < c.chunkServers.size(); i++) {
+			ofs << c.chunkServers[i]->ServerID() << ' ' 
+				<< c.chunkServers[i]->GetRack() << ' ';
+		}
+		ofs << endl;
+	}
+};
+
+//
+// Dump out the chunk block map to a file.  The output can be used in emulation
+// modes where we setup the block map and experiment.
+//
+void
+LayoutManager::DumpChunkToServerMap()
+{
+	ofstream ofs;
+
+	ofs.open("chunkmap.txt");
+
+	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
+		MapDumper(ofs));
+	ofs.flush();
+	ofs.close();
+}
 
 void
 LayoutManager::ServerDown(ChunkServer *server)
@@ -454,6 +504,18 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 	FindCandidateServers(result, mChunkServers, excludes, rackId);
 }
 
+static bool
+IsCandidateServer(ChunkServerPtr &c)
+{
+	if ((c->GetAvailSpace() < ((uint64_t) CHUNKSIZE)) || (!c->IsResponsiveServer()) 
+		|| (c->IsRetiring())) {
+		// one of: no space, non-responsive, retiring...we leave
+		// the server alone
+		return false;
+	}
+	return true;
+}
+
 void
 LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 				const vector<ChunkServerPtr> &sources,
@@ -472,12 +534,9 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 
 		if ((rackId >= 0) && (c->GetRack() != rackId))
 			continue;
-		if ((c->GetAvailSpace() < ((uint64_t) CHUNKSIZE)) || (!c->IsResponsiveServer()) 
-			|| (c->IsRetiring())) {
-			// one of: no space, non-responsive, retiring...we leave
-			// the server alone
+
+		if (!IsCandidateServer(c))
 			continue;
-		}
 		if (excludes.size() > 0) {
 			iter = find(excludes.begin(), excludes.end(), c);
 			if (iter != excludes.end()) {
@@ -611,6 +670,19 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 	if (r->numReplicas % racks.size())
 		numServersPerRack++;
 
+	// take the server local to the machine on which the client is on
+	// make that the master; this avoids a network transfer
+	ChunkServerPtr localserver;
+	vector <ChunkServerPtr>::iterator j;
+
+	j = find_if(mChunkServers.begin(), mChunkServers.end(),
+			MatchServerByHost(r->clientHost));
+	if ((j !=  mChunkServers.end())  && (IsCandidateServer(*j)))
+		localserver = *j;
+
+	if (localserver)
+		r->servers.push_back(localserver);
+
 	for (uint32_t idx = 0; idx < racks.size(); idx++) {
 		vector<ChunkServerPtr> candidates, dummy;
 
@@ -620,10 +692,16 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 		if (candidates.size() == 0)
 			continue;
 		// take as many as we can from this rack
-		for (uint32_t i = 0; i < candidates.size() && i < numServersPerRack; i++) {
+		uint32_t n = 0;
+		if (localserver && (racks[idx] == localserver->GetRack()))
+			n = 1;
+		for (uint32_t i = 0; i < candidates.size() && n < numServersPerRack; i++) {
 			if (r->servers.size() >= (uint32_t) r->numReplicas)
 				break;
-			r->servers.push_back(candidates[i]);
+			if (candidates[i] != localserver) {
+				r->servers.push_back(candidates[i]);
+				n++;
+			}
 		}
 	}
 
@@ -657,7 +735,6 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 int
 LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 {
-        CSMapIter iter;
 	ChunkPlacementInfo v;
 	vector<ChunkServerPtr>::size_type i;
 	vector<LeaseInfo>::iterator l;
@@ -673,7 +750,7 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 	}
 
 	// if no allocation has been done, can't grab any lease
-        iter = mChunkToServerMap.find(r->chunkId);
+        CSMapIter iter = mChunkToServerMap.find(r->chunkId);
         if (iter == mChunkToServerMap.end())
                 return -EINVAL;
 
@@ -742,7 +819,6 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 int
 LayoutManager::GetChunkReadLease(MetaLeaseAcquire *req)
 {
-        CSMapIter iter;
 	ChunkPlacementInfo v;
 
 	if (InRecovery()) {
@@ -750,7 +826,7 @@ LayoutManager::GetChunkReadLease(MetaLeaseAcquire *req)
 		return -EBUSY;
 	}
 
-        iter = mChunkToServerMap.find(req->chunkId);
+        CSMapIter iter = mChunkToServerMap.find(req->chunkId);
         if (iter == mChunkToServerMap.end())
                 return -EINVAL;
 
@@ -771,11 +847,10 @@ class ValidLeaseIssued {
 public:
 	ValidLeaseIssued(CSMap &m) : chunkToServerMap(m) { }
 	bool operator() (MetaChunkInfo *c) {
-		CSMapIter iter;
 		ChunkPlacementInfo v;
 		vector<LeaseInfo>::iterator l;
 
-		iter = chunkToServerMap.find(c->chunkId);
+		CSMapIter iter = chunkToServerMap.find(c->chunkId);
 		if (iter == chunkToServerMap.end())
 			return false;
 		v = iter->second;
@@ -810,11 +885,10 @@ public:
 int
 LayoutManager::LeaseRenew(MetaLeaseRenew *req)
 {
-        CSMapIter iter;
 	ChunkPlacementInfo v;
 	vector<LeaseInfo>::iterator l;
 
-        iter = mChunkToServerMap.find(req->chunkId);
+        CSMapIter iter = mChunkToServerMap.find(req->chunkId);
         if (iter == mChunkToServerMap.end()) {
 		if (InRecovery()) {
 			// Allow lease renewals during recovery
@@ -851,12 +925,11 @@ LayoutManager::LeaseRenew(MetaLeaseRenew *req)
 void
 LayoutManager::ChunkCorrupt(MetaChunkCorrupt *r)
 {
-        CSMapIter iter;
 	ChunkPlacementInfo v;
 
 	r->server->IncCorruptChunks();
 
-        iter = mChunkToServerMap.find(r->chunkId);
+        CSMapIter iter = mChunkToServerMap.find(r->chunkId);
 	if (iter == mChunkToServerMap.end())
 		return;
 
@@ -963,9 +1036,7 @@ LayoutManager::AddChunkToServerMapping(chunkId_t chunkId, fid_t fid,
 void
 LayoutManager::RemoveChunkToServerMapping(chunkId_t chunkId)
 {
-        CSMapIter iter;
-
-        iter = mChunkToServerMap.find(chunkId);
+        CSMapIter iter = mChunkToServerMap.find(chunkId);
         if (iter == mChunkToServerMap.end())
                 return;
 
@@ -975,11 +1046,9 @@ LayoutManager::RemoveChunkToServerMapping(chunkId_t chunkId)
 int
 LayoutManager::UpdateChunkToServerMapping(chunkId_t chunkId, ChunkServer *c)
 {
-        CSMapIter iter;
-
         // If the chunkid isn't present in the mapping table, it could be a
         // stale chunk
-        iter = mChunkToServerMap.find(chunkId);
+        CSMapIter iter = mChunkToServerMap.find(chunkId);
         if (iter == mChunkToServerMap.end())
                 return -1;
 
@@ -995,9 +1064,7 @@ LayoutManager::UpdateChunkToServerMapping(chunkId_t chunkId, ChunkServer *c)
 int
 LayoutManager::GetChunkToServerMapping(chunkId_t chunkId, vector<ChunkServerPtr> &c)
 {
-        CSMapConstIter iter;
-
-        iter = mChunkToServerMap.find(chunkId);
+        CSMapConstIter iter = mChunkToServerMap.find(chunkId);
         if ((iter == mChunkToServerMap.end()) || 
 		(iter->second.chunkServers.size() == 0))
                 return -1;
@@ -1426,7 +1493,6 @@ LayoutManager::ChunkReplicationChecker()
 	// or there is a change in their degree of replication.  in either
 	// case, walk this set of chunkid's and work on their replication amount.
 	
-	CSMapIter iter;
 	chunkId_t chunkId;
 	CRCandidateSet delset;
 	int extraReplicas, numOngoing;
@@ -1435,7 +1501,7 @@ LayoutManager::ChunkReplicationChecker()
 		citer != mChunkReplicationCandidates.end(); ++citer) {
 		chunkId = *citer;
 
-        	iter = mChunkToServerMap.find(chunkId);
+        	CSMapIter iter = mChunkToServerMap.find(chunkId);
         	if (iter == mChunkToServerMap.end()) {
 			delset.insert(chunkId);
 			continue;
@@ -1469,7 +1535,7 @@ LayoutManager::ChunkReplicationChecker()
 			// been evacuated---such as, if there were too many copies of those
 			// chunks, we are done evacuating them
 			chunkId = *citer;
-        		iter = mChunkToServerMap.find(chunkId);
+        		CSMapIter iter = mChunkToServerMap.find(chunkId);
 			if (iter != mChunkToServerMap.end()) 
 				for_each(iter->second.chunkServers.begin(), iter->second.chunkServers.end(),
 					ReplicationDoneNotifier(chunkId));
@@ -1494,7 +1560,6 @@ LayoutManager::ChunkReplicationChecker()
 void
 LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 {
-	CSMapIter iter;
 	chunkId_t chunkId;
 	int extraReplicas = 0, numOngoing;
 	vector<ChunkServerPtr> c;
@@ -1518,7 +1583,7 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 	for (; citer != mChunkReplicationCandidates.end(); ++citer) {
 		chunkId = *citer;
 
-        	iter = mChunkToServerMap.find(chunkId);
+        	CSMapIter iter = mChunkToServerMap.find(chunkId);
         	if (iter == mChunkToServerMap.end()) {
 			continue;
 		}
@@ -1562,13 +1627,12 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 void
 LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
 {
-	CSMapIter iter;
 	vector<ChunkServerPtr>::iterator source;
 
 	mOngoingReplicationStats->Update(-1);
 
 	// Book-keeping....
-	iter = mChunkToServerMap.find(req->chunkId);
+	CSMapIter iter = mChunkToServerMap.find(req->chunkId);
 
 	if (iter != mChunkToServerMap.end()) {
 		iter->second.ongoingReplications--;

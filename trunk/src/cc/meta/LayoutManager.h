@@ -33,6 +33,7 @@
 #define META_LAYOUTMANAGER_H
 
 #include <map>
+#include <tr1/unordered_map>
 #include <vector>
 #include <set>
 #include <sstream>
@@ -185,6 +186,11 @@ namespace KFS
 	typedef std::map <chunkId_t, ChunkPlacementInfo > CSMap;
 	typedef std::map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
 	typedef std::map <chunkId_t, ChunkPlacementInfo >::iterator CSMapIter;
+#if 0
+	typedef std::tr1::unordered_map <chunkId_t, ChunkPlacementInfo > CSMap;
+	typedef std::tr1::unordered_map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
+	typedef std::tr1::unordered_map <chunkId_t, ChunkPlacementInfo >::iterator CSMapIter;
+#endif
 	
 	// candidate set of chunks whose replication needs checking
 	typedef std::set <chunkId_t> CRCandidateSet;
@@ -310,6 +316,10 @@ namespace KFS
                 /// @retval 0 if a mapping was found; -1 otherwise
                 ///
 		int GetChunkToServerMapping(chunkId_t chunkId, std::vector<ChunkServerPtr> &c);
+
+
+		/// Dump out the chunk location map to a file.
+		void DumpChunkToServerMap();
 
                 /// Ask each of the chunkserver's to dispatch pending RPCs
 		void Dispatch();

@@ -74,6 +74,7 @@ static int parseHandlerHello(Properties &prop, MetaRequest **r);
 
 static int parseHandlerPing(Properties &prop, MetaRequest **r);
 static int parseHandlerStats(Properties &prop, MetaRequest **r);
+static int parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r);
 static int parseHandlerOpenFiles(Properties &prop, MetaRequest **r);
 
 /// command -> parsehandler map
@@ -835,6 +836,16 @@ handle_ping(MetaRequest *r)
 }
 
 static void
+handle_dump_chunkToServerMap(MetaRequest *r)
+{
+	MetaDumpChunkToServerMap *req = static_cast <MetaDumpChunkToServerMap *>(r);
+
+	req->status = 0;
+
+	gLayoutManager.DumpChunkToServerMap();
+}
+
+static void
 handle_stats(MetaRequest *r)
 {
 	MetaStats *req = static_cast <MetaStats *>(r);
@@ -899,6 +910,7 @@ setup_handlers()
 	// Monitoring RPCs
 	handler[META_PING] = handle_ping;
 	handler[META_STATS] = handle_stats;
+	handler[META_DUMP_CHUNKTOSERVERMAP] = handle_dump_chunkToServerMap;
 	handler[META_OPEN_FILES] = handle_open_files;
 
 	gParseHandlers["LOOKUP"] = parseHandlerLookup;
@@ -928,6 +940,7 @@ setup_handlers()
 
 	gParseHandlers["PING"] = parseHandlerPing;
 	gParseHandlers["STATS"] = parseHandlerStats;
+	gParseHandlers["DUMP_CHUNKTOSERVERMAP"] = parseHandlerDumpChunkToServerMap;
 	gParseHandlers["OPEN_FILES"] = parseHandlerOpenFiles;
 }
 
@@ -1283,6 +1296,16 @@ MetaStats::log(ofstream &file) const
 }
 
 /*!
+ * \brief for a map dump request, there is nothing to log
+ */
+int
+MetaDumpChunkToServerMap::log(ofstream &file) const
+{
+	return 0;
+}
+
+
+/*!
  * \brief for an open files request, there is nothing to log
  */
 int
@@ -1581,7 +1604,9 @@ parseHandlerAllocate(Properties &prop, MetaRequest **r)
 	offset = prop.getValue("Chunk-offset", (chunkOff_t) -1);
 	if ((fid < 0) || (offset < 0))
 		return -1;
-	*r = new MetaAllocate(seq, fid, offset);
+	MetaAllocate *m = new MetaAllocate(seq, fid, offset);
+	m->clientHost = prop.getValue("Client-host", "");
+	*r = m;
 	return 0;
 }
 
@@ -1775,6 +1800,18 @@ parseHandlerStats(Properties &prop, MetaRequest **r)
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
 
 	*r = new MetaStats(seq);
+	return 0;
+}
+
+/*!
+ * \brief Parse out a dump server map request.
+ */
+int
+parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+
+	*r = new MetaDumpChunkToServerMap(seq);
 	return 0;
 }
 
@@ -2106,6 +2143,14 @@ MetaStats::response(ostringstream &os)
 	os << "Cseq: " << opSeqno << "\r\n";
 	os << "Status: " << status << "\r\n";
 	os << stats << "\r\n";
+}
+
+void
+MetaDumpChunkToServerMap::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
 }
 
 void
