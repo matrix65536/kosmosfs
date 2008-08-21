@@ -242,7 +242,7 @@ jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdirplus(
         else
             os << "IsDirectory: false" << "\n";
         os << "Filesize: " << fattr[i].fileSize << "\n";
-        os << "M-Time: " << fattr[i].mtime.tv_sec * 1000 << "\n";
+        os << "M-Time: " << ((jlong) fattr[i].mtime.tv_sec) * 1000 << "\n";
         os << "Replicas: " << fattr[i].numReplicas << "\n";
 
         s = jenv->NewStringUTF(os.str().c_str());
