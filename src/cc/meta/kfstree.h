@@ -53,6 +53,8 @@ class Tree;
  */
 class Node: public MetaNode {
 	static const int NKEY = 32;
+	// should size the node to near 4k; 120 gets us there...
+	// static const int NKEY = 120;
 	static const int NSPLIT = NKEY / 2;
 	static const int NFEWEST = NKEY - NSPLIT;
 

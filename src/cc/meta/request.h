@@ -100,6 +100,7 @@ enum MetaOp {
 	//!< Metadata server monitoring
 	META_PING, //!< Print out chunkserves and their configs
 	META_STATS, //!< Print out whatever statistics/counters we have
+	META_DUMP_CHUNKTOSERVERMAP, //! < Dump out the chunk -> location map
 	META_OPEN_FILES //!< Print out open files---for which there is a valid read/write lease 
 
 };
@@ -374,6 +375,7 @@ struct MetaAllocate: public MetaRequest {
 	chunkOff_t offset;	//!< offset of chunk within file
 	chunkId_t chunkId;	//!< Id of the chunk that was allocated
 	seq_t chunkVersion;	//!< version # assigned to this chunk
+	std::string clientHost; //!< the host from which request was received
 	int16_t  numReplicas;	//!< inherited from file's fattr
 	bool layoutDone;	//!< Has layout of chunk been done
 	//!< Server(s) on which this chunk has been placed
@@ -829,6 +831,20 @@ struct MetaStats: public MetaRequest {
 	}
 };
 
+/*!
+ * \brief For debugging purposes, dump out the chunk->location map
+ * to a file.
+ */
+struct MetaDumpChunkToServerMap: public MetaRequest {
+	MetaDumpChunkToServerMap(seq_t s):
+		MetaRequest(META_DUMP_CHUNKTOSERVERMAP, s, false) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		return "dump chunk2server map";
+	}
+};
 
 /*!
  * \brief For monitoring purposes, a client/tool can send a OPEN FILES
