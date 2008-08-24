@@ -35,21 +35,19 @@ using std::vector;
 using namespace KFS;
 
 static char *FUSE_KFS_PROPERTIES = "./kfs.prp";
-static KFS::KfsClient *client;
+static KFS::KfsClientPtr client;
 
 void *
 fuse_init()
 {
-	client = KFS::getKfsClient();
-	client->Init(FUSE_KFS_PROPERTIES);
-	return client->IsInitialized() ? client : NULL;
+	client = getKfsClientFactory()->GetClient(FUSE_KFS_PROPERTIES);
+	return client->IsInitialized() ? client.get() : NULL;
 }
 
 void
 fuse_destroy(void *cookie)
 {
-	// KfsClient handle is a singleton.  So, don't "delete" it
-	client = NULL;
+	client.reset();
 }
 
 static int
