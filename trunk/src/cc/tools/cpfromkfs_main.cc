@@ -110,17 +110,17 @@ main(int argc, char **argv)
         exit(0);
     }
 
-    if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
-    } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
-    } 
-
     gKfsClient = getKfsClientFactory()->GetClient(serverHost, port);
     if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(0);
     }
+
+    if (verboseLogging) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
 
     if (gKfsClient->Stat(kfsPath.c_str(), statInfo) < 0) {
 	cout << "KFS path: " << kfsPath << " is non-existent!" << endl;

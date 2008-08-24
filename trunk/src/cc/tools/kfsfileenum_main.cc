@@ -82,18 +82,17 @@ main(int argc, char **argv)
         exit(-1);
     }
 
-    if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
-    } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
-    } 
-
-
     gKfsClient = getKfsClientFactory()->GetClient(server, port);
     if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(-1);
     }
+
+    if (verboseLogging) {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    } else {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    } 
 
     retval = gKfsClient->EnumerateBlocks(filename);
     exit(retval);
