@@ -105,6 +105,7 @@ set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wall")
 
 # Fill in the path to fuse library
 SET(Fuse_LIBRARY_DIR "")
+SET(Fuse_INCLUDE_DIR "")
 
 # include dirs
 include_directories( ${Boost_INCLUDE_DIRS} ${Log4cpp_INCLUDE_DIR} src/cc)
@@ -126,5 +127,6 @@ ENDIF (NOT ${JAVA_INCLUDE_PATH} STREQUAL "")
 
 IF (NOT ${Fuse_LIBRARY_DIR} STREQUAL "")
    message(STATUS "Found fuse")
+   include_directories ( ${Fuse_INCLUDE_DIR} )
    add_subdirectory (src/cc/fuse)
 ENDIF (NOT ${Fuse_LIBRARY_DIR} STREQUAL "")
