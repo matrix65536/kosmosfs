@@ -29,6 +29,7 @@ extern "C" {
 #define _FILE_OFFSET_BITS	64
 #include <fuse.h>
 #include <sys/stat.h>
+#include <string.h>
 }
 
 using std::vector;
@@ -94,7 +95,19 @@ fuse_truncate(const char *path, off_t size)
 static int
 fuse_open(const char *path, struct fuse_file_info *finfo)
 {
-	return client->Open(path, finfo->flags);
+	int res = client->Open(path, finfo->flags);
+	if (res >= 0)
+		return 0;
+	return res;
+}
+
+static int
+fuse_create(const char *path, mode_t mode, struct fuse_file_info *finfo)
+{
+	int res = client->Create(path);
+	if (res >= 0)
+		return 0;
+	return res;
 }
 
 static int
@@ -155,7 +168,7 @@ fuse_readdir(const char *path, void *buf,
 	int n = contents.size();
 	for (int i = 0; i != n; i++) {
 		struct stat s;
-		bzero(&s, sizeof s);
+		memset(&s, 0, sizeof s);
 		s.st_ino = contents[i].fileId;
 		s.st_mode = contents[i].isDirectory ? S_IFDIR : S_IFREG;
 		if (filler(buf, contents[i].filename.c_str(), &s, 0) != 0)
@@ -197,7 +210,7 @@ struct fuse_operations ops = {
 	fuse_init,
 	fuse_destroy,
 	NULL,			/* access */
-	NULL,			/* create */
+	fuse_create,		/* create */
 	NULL,			/* ftruncate */
 	NULL			/* fgetattr */
 };
