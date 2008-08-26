@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id:$
+// $Id$
 //
 // Created 2008/06/11
 //
@@ -134,12 +134,19 @@ static void scrubFile(string &fn, bool verbose)
         return;
     }
     if ((size_t) res != KFS::CHUNKSIZE) {
-        memset(data.get() + res, 0, KFS::CHUNKSIZE - res);
+        long size = chunkInfo.chunkSize;
+        if (res != chunkInfo.chunkSize) {
+            cout << "Size mismatch: chunk header says: " << size 
+                 << " but file size is: " << res << endl;
+        }
+
+        memset(data.get() + size, 0, KFS::CHUNKSIZE - size);
     }
     // go thru block by block and verify checksum
     for (int i = 0; i < res; i += CHECKSUM_BLOCKSIZE) {
         char *startPt = data.get() + i;
         uint32_t cksum = ComputeBlockChecksum(startPt, CHECKSUM_BLOCKSIZE);
+        // uint32_t cksum = ComputeBlockChecksum(startPt, res);
         uint32_t blkno = OffsetToChecksumBlockNum(i);
 
         if (cksum != chunkInfo.chunkBlockChecksum[blkno]) {

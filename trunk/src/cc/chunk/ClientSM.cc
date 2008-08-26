@@ -150,13 +150,13 @@ ClientSM::HandleRequest(int code, void *data)
 	op->done = true;
         assert(!mOps.empty());
 	while (!mOps.empty()) {
-	    op = mOps.front();
-	    if (!op->done)
+	    KfsOp *qop = mOps.front();
+	    if (!qop->done)
 		break;
-	    SendResponse(op);
-	    // we are done with the op
+	    SendResponse(qop);
+            OpFinished(qop);
 	    mOps.pop_front();
-	    delete op;
+	    delete qop;
 	}
         mNetConnection->StartFlush();
 	break;
@@ -210,6 +210,7 @@ ClientSM::HandleTerminate(int code, void *data)
 	    op = mOps.front();
 	    if (!op->done)
 		break;
+            OpFinished(op);
 	    // we are done with the op
 	    mOps.pop_front();
 	    delete op;
@@ -221,6 +222,7 @@ ClientSM::HandleTerminate(int code, void *data)
     }
     if (mOps.empty()) {
         // all ops are done...so, now, we can nuke ourself.
+        assert(mPendingOps.empty());
         delete this;
     }
     return 0;
@@ -281,6 +283,17 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
         iobuf->Consume(cmdLen);
     }
 
+    if (op->op == CMD_WRITE_SYNC) {
+        if (!mOps.empty()) {
+            OpPair p;
+
+            op->clnt = this;
+            p.op = mOps.back();
+            p.dependentOp = op;
+            mPendingOps.push_back(p);
+            return true;
+        }
+    }
     mOps.push_back(op);
 
     op->clnt = this;
@@ -290,4 +303,20 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
     SubmitOp(op);
 
     return true;
+}
+
+void
+ClientSM::OpFinished(KfsOp *doneOp)
+{
+    if (mPendingOps.empty())
+        return;
+
+    OpPair p;
+    p = mPendingOps.front();
+    if (p.op == doneOp) {
+        gChunkServer.OpInserted();
+        SubmitOp(p.dependentOp);
+        mOps.push_back(p.dependentOp);
+        mPendingOps.pop_front();
+    }
 }

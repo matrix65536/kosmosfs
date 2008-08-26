@@ -33,6 +33,7 @@ class ClientSM; // forward declaration to get things to build...
 }
 
 #include <deque>
+#include <list>
 
 #include "libkfsIO/KfsCallbackObj.h"
 #include "libkfsIO/DiskConnection.h"
@@ -42,6 +43,15 @@ class ClientSM; // forward declaration to get things to build...
 
 namespace KFS
 {
+
+    // There is a dependency in waiting for a write-op to finish
+    // before we can execute a write-sync op. Use this struct to track
+    // such dependencies.
+    struct OpPair {
+        // once op is finished, we can then execute dependent op.
+        KfsOp *op;
+        KfsOp *dependentOp;
+    };
 
 class ClientSM : public KfsCallbackObj {
 public:
@@ -73,6 +83,9 @@ private:
     /// Queue of outstanding ops from the client.  We reply to ops in FIFO
     std::deque<KfsOp *>	mOps;
 
+    /// Queue of pending ops: ops that depend on other ops to finish before we can execute them.
+    std::list<OpPair> mPendingOps;
+
     /// Given a (possibly) complete op in a buffer, run it.
     /// @retval True if the command was handled (i.e., we have all the
     /// data and we could execute it); false otherwise.
@@ -80,6 +93,9 @@ private:
 
     /// Op has finished execution.  Send a response to the client.
     void		SendResponse(KfsOp *op);
+
+    /// Submit ops that have been held waiting for doneOp to finish.
+    void		OpFinished(KfsOp *doneOp);
 };
 
 }
