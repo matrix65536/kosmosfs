@@ -2,7 +2,7 @@
 // $Id$ 
 //
 // Created 2006/08/01
-// Author: Blake Lewis (Kosmix Corp.) 
+// Authors: Blake Lewis and Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -412,7 +412,7 @@ kfs_write(PyObject *pself, PyObject *args)
 }
 
 static PyObject *
-kfs_chunk_locations(PyObject *pself, PyObject *args)
+kfs_chunkLocations(PyObject *pself, PyObject *args)
 {
 	kfs_File *self = (kfs_File *)pself;
 	kfs_Client *cl = (kfs_Client *)self->pclient;
@@ -445,6 +445,26 @@ kfs_chunk_locations(PyObject *pself, PyObject *args)
 		PyTuple_SetItem(outer, i, inner);
 	}
 	return outer;
+}
+
+static PyObject *
+kfs_dataVerify(PyObject *pself, PyObject *args)
+{
+	kfs_File *self = (kfs_File *)pself;
+	kfs_Client *cl = (kfs_Client *)self->pclient;
+	int wsize = -1;
+	char *buf = NULL;
+
+	if (!PyArg_ParseTuple(args, "s#", &buf, &wsize))
+		return NULL;
+
+	if (self->fd == -1) {
+		PyErr_SetString(PyExc_IOError, strerror(EBADF));
+		return NULL;
+	}
+
+        bool res = cl->client->VerifyDataChecksums(self->fd, 0, buf, (ssize_t)wsize);
+        return Py_BuildValue("b", res);
 }
 
 static PyObject *
@@ -532,10 +552,11 @@ static PyMethodDef File_methods[] = {
 	{ "read", kfs_read, METH_VARARGS, "Read from file." },
 	{ "write", kfs_write, METH_VARARGS, "Write to file." },
 	{ "truncate", kfs_truncate, METH_VARARGS, "Truncate a file." },
-	{ "chunk_locations", kfs_chunk_locations, METH_VARARGS, "Get location(s) of a chunk." },
+	{ "chunk_locations", kfs_chunkLocations, METH_VARARGS, "Get location(s) of a chunk." },
 	{ "seek", kfs_seek, METH_VARARGS, "Seek to file offset." },
 	{ "tell", kfs_tell, METH_NOARGS, "Return current offset." },
 	{ "sync", kfs_sync, METH_NOARGS, "Flush file data." },
+        { "data_verify", kfs_dataVerify, METH_VARARGS, "Verify data matches what is in KFS."},
 	{ NULL }
 };
 
@@ -562,6 +583,7 @@ PyDoc_STRVAR(File_doc,
 "\ttell()      -- return current offest\n"
 "\tsync()      -- flush file data to server\n"
 "\tchunk_locations(path, offset) -- location(s) of the chunk corresponding to offset\n"
+"\tdata_verify(str) -- verify that the data in KFS matches what is passed in\n"
 "\nData:\n\n"
 "\tname        -- the name of the file\n"
 "\tmode        -- access mode ('r', 'w', 'r+', or 'w+')\n"
@@ -953,7 +975,7 @@ kfs_stat(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Stat(path.c_str(), s);
+	int status = self->client->Stat(path.c_str(), s, true);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -970,7 +992,7 @@ kfs_stat(PyObject *pself, PyObject *args)
 	PyTuple_SetItem(pstat, 3, PyInt_FromLong(s.st_nlink));
 	PyTuple_SetItem(pstat, 4, PyInt_FromLong(s.st_uid));
 	PyTuple_SetItem(pstat, 5, PyInt_FromLong(s.st_gid));
-	PyTuple_SetItem(pstat, 6, PyInt_FromLong(s.st_size));
+	PyTuple_SetItem(pstat, 6, PyLong_FromLong(s.st_size));
 	PyTuple_SetItem(pstat, 7, PyInt_FromLong(s.st_atime));
 	PyTuple_SetItem(pstat, 8, PyInt_FromLong(s.st_mtime));
 	PyTuple_SetItem(pstat, 9, PyInt_FromLong(s.st_ctime));
