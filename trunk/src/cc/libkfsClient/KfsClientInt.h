@@ -378,6 +378,8 @@ public:
     /// pulling KFS checksums from all the replicas for each chunk.
     /// @retval status code
     bool VerifyDataChecksums(const char *pathname, const std::vector<uint32_t> &checksums);
+    bool VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t numBytes);
+
     ///
     /// Create a file which is specified by a complete path.
     /// @param[in] pathname that has to be created
@@ -796,8 +798,8 @@ private:
     bool GetDataChecksums(const ServerLocation &loc, 
                           kfsChunkId_t chunkId, 
                           uint32_t *checksums);
-    
 
+    bool VerifyDataChecksums(int fte, const vector<uint32_t> &checksums);
 };
 
 

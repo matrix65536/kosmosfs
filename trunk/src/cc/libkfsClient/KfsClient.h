@@ -159,6 +159,11 @@ public:
     /// @retval status code
     bool VerifyDataChecksums(const char *pathname, const std::vector<uint32_t> &checksums);
 
+    /// Helper variety of verifying checksums: given a region of a
+    /// file, compute the checksums and verify them.  This is useful
+    /// for testing purposes.
+    bool VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t numBytes);
+
     ///
     /// Create a file which is specified by a complete path.
     /// @param[in] pathname that has to be created
