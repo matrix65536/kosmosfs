@@ -240,6 +240,12 @@ KfsClient::VerifyDataChecksums(const char *pathname, const vector<uint32_t> &che
     return mImpl->VerifyDataChecksums(pathname, checksums);
 }
 
+bool
+KfsClient::VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t numBytes)
+{
+    return mImpl->VerifyDataChecksums(fd, offset, buf, numBytes);
+}
+
 int 
 KfsClient::Create(const char *pathname, int numReplicas, bool exclusive)
 {
@@ -2511,7 +2517,6 @@ bool KfsClientImpl::GetDataChecksums(const ServerLocation &loc,
     return true;
 }
 
-
 bool
 KfsClientImpl::VerifyDataChecksums(const char *pathname, const vector<uint32_t> &checksums)
 {
@@ -2533,17 +2538,51 @@ KfsClientImpl::VerifyDataChecksums(const char *pathname, const vector<uint32_t> 
     
     fte = LookupFileTableEntry(pathname);
     assert(fte >= 0);
-    
+
+    return VerifyDataChecksums(fte, checksums);
+}    
+
+bool
+KfsClientImpl::VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t numBytes)
+{
+    MutexLock l(&mMutex);
+    vector<uint32_t> checksums;
+
+    if (FdAttr(fd)->isDirectory) {
+        cout << "Can't verify checksums on a directory" << endl;
+        return false;
+    }
+
+    boost::scoped_array<char> tempBuf;
+
+    tempBuf.reset(new char[CHECKSUM_BLOCKSIZE]);
+    for (off_t i = 0; i < numBytes; i += CHECKSUM_BLOCKSIZE) {
+        uint32_t bytesToCopy = min(CHECKSUM_BLOCKSIZE, (uint32_t) (numBytes - i));
+        if (bytesToCopy != CHECKSUM_BLOCKSIZE)
+            memset(tempBuf.get(), 0, CHECKSUM_BLOCKSIZE);
+        memcpy(tempBuf.get(), buf, bytesToCopy);
+        uint32_t cksum = ComputeBlockChecksum(tempBuf.get(), CHECKSUM_BLOCKSIZE);
+        
+        checksums.push_back(cksum);
+    }
+
+    return VerifyDataChecksums(fd, checksums);
+
+}
+
+bool
+KfsClientImpl::VerifyDataChecksums(int fte, const vector<uint32_t> &checksums)
+{
     GetLayoutOp lop(nextSeq(), FdAttr(fte)->fileId);
     (void)DoMetaOpWithRetry(&lop);
     if (lop.status < 0) {
-        cout << "Get layout failed on path: " << pathname << " "
+        cout << "Get layout failed with error: "
              << ErrorCodeToStr(lop.status) << endl;
 	return false;
     }
 
     if (lop.ParseLayoutInfo()) {
-        cout << "Unable to parse layout for path: " << pathname << endl;
+        cout << "Unable to parse layout info!" << endl;
 	return false;
     }
 
@@ -2563,14 +2602,19 @@ KfsClientImpl::VerifyDataChecksums(const char *pathname, const vector<uint32_t> 
                 return false;
             }
 
+            bool mismatch = false;
             for (uint32_t v = 0; v < numChecksums; v++) {
                 if (blkstart + v >= checksums.size())
                     break;
                 if (chunkChecksums[v] != checksums[blkstart + v])  {
-                    KFS_LOG_VA_INFO("Checksum mismatch for %s on server %s", i->chunkServers[k].ToString().c_str());
-                    return false;
+                    cout << "computed: " << chunkChecksums[v] << " got: " << checksums[blkstart + v] << endl;
+                    KFS_LOG_VA_INFO("Checksum mismatch for block %d on server %s", blkstart + v, 
+                                    i->chunkServers[k].ToString().c_str());
+                    mismatch = true;
                 }
             }
+            if (mismatch)
+                return false;
         }
         blkstart += numChecksums;
     }
