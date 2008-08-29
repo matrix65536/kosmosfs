@@ -266,7 +266,11 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
 	}
 
 	if (res == -KFS::ELEASEEXPIRED) {
-	    KFS_LOG_INFO("Server says lease expired...re-doing allocation");
+            ChunkAttr *chunk = GetCurrChunk(fd);
+            ServerLocation loc = chunk->chunkServerLoc[0];
+            
+	    KFS_LOG_VA_INFO("Server %s says lease expired for %lld.%lld ...re-doing allocation",
+                            loc.ToString().c_str(), chunk->chunkId, chunk->chunkVersion);
 	    Sleep(KFS::LEASE_INTERVAL_SECS / 2);
 	}
 	if ((res == -EHOSTUNREACH) ||
