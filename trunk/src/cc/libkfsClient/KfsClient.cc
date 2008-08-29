@@ -2556,7 +2556,7 @@ KfsClientImpl::VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t
     boost::scoped_array<char> tempBuf;
 
     tempBuf.reset(new char[CHECKSUM_BLOCKSIZE]);
-    for (off_t i = 0; i < numBytes; i += CHECKSUM_BLOCKSIZE) {
+    for (off_t i = 0; i < (off_t) numBytes; i += CHECKSUM_BLOCKSIZE) {
         uint32_t bytesToCopy = min(CHECKSUM_BLOCKSIZE, (uint32_t) (numBytes - i));
         if (bytesToCopy != CHECKSUM_BLOCKSIZE)
             memset(tempBuf.get(), 0, CHECKSUM_BLOCKSIZE);
