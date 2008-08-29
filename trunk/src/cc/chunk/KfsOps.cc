@@ -1368,6 +1368,7 @@ WriteSyncOp::Execute()
 {
     ServerLocation peerLoc;
     int myPos;
+    bool needToWriteMetadata = true;
 
     UpdateCounter(CMD_WRITE_SYNC);
 
@@ -1397,13 +1398,21 @@ WriteSyncOp::Execute()
     }
 
     if (!gChunkManager.IsChunkMetadataLoaded(chunkId)) {
-        KFS_LOG_VA_DEBUG("Write sync failed...checksums got paged out?; so lease expired for %ld",
-                         chunkId);
-        status = -KFS::ELEASEEXPIRED;
-        gLogger.Submit(this);
-        return;
+        off_t csize;
+
+        gChunkManager.ChunkSize(chunkId, &csize);
+        if (csize > 0 && (csize >= (off_t) KFS::CHUNKSIZE)) {
+            // the metadata block could be paged out by a previous sync
+            needToWriteMetadata = false;
+        } else {
+            KFS_LOG_VA_DEBUG("Write sync failed...checksums got paged out?; so lease expired for %ld",
+                             chunkId);
+            status = -KFS::ELEASEEXPIRED;
+            gLogger.Submit(this);
+            return;
+        }
     }
-    
+
     if (writeMaster) {
         // if we are the master, check the lease...
         if (!gLeaseClerk.IsLeaseValid(chunkId)) {
@@ -1431,6 +1440,12 @@ WriteSyncOp::Execute()
     // commit writes on local/remote servers
     SET_HANDLER(this, &WriteSyncOp::HandleDone);
 
+    if (!needToWriteMetadata) {
+        status = 0;
+        HandleDone(0, NULL);
+        return;
+    }
+        
     status = gChunkManager.WriteChunkMetadata(chunkId, this);
     assert(status >= 0);
     if (status < 0)
@@ -1484,8 +1499,10 @@ WriteSyncOp::HandleDone(int code, void *data)
     verifyExecutingOnEventProcessor();    
 #endif
 
-    if (op && (op->status < 0))
+    if (op && (op->status < 0)) {
         status = op->status;
+        KFS_LOG_VA_DEBUG("Peer (%s) returned: ", op->Show().c_str(), op->status);
+    }
 
     numDone++;
 

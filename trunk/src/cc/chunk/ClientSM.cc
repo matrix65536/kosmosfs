@@ -154,8 +154,8 @@ ClientSM::HandleRequest(int code, void *data)
 	    if (!qop->done)
 		break;
 	    SendResponse(qop);
-            OpFinished(qop);
 	    mOps.pop_front();
+            OpFinished(qop);
 	    delete qop;
 	}
         mNetConnection->StartFlush();
@@ -284,16 +284,27 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
     }
 
     if (op->op == CMD_WRITE_SYNC) {
-        if (!mOps.empty()) {
+        // make the write sync depend on a previous write
+        KfsOp *w = NULL;
+        for (deque<KfsOp *>::iterator i = mOps.begin(); i != mOps.end(); i++) {
+            if ((*i)->op == CMD_WRITE)
+                w = *i;
+        }
+        if (w != NULL) {
             OpPair p;
 
             op->clnt = this;
-            p.op = mOps.back();
+            p.op = w;
             p.dependentOp = op;
             mPendingOps.push_back(p);
+
+            KFS_LOG_VA_DEBUG("Keeping write-sync (%d) pending and depends on %d", 
+                             op->seq, p.op->seq);
+
             return true;
         }
     }
+
     mOps.push_back(op);
 
     op->clnt = this;
@@ -308,15 +319,24 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
 void
 ClientSM::OpFinished(KfsOp *doneOp)
 {
-    if (mPendingOps.empty())
-        return;
 
-    OpPair p;
-    p = mPendingOps.front();
-    if (p.op == doneOp) {
-        gChunkServer.OpInserted();
-        SubmitOp(p.dependentOp);
+    // multiple ops could be waiting for a single op to finish...
+    while (1) {
+        if (mPendingOps.empty())
+            return;
+
+        OpPair p;
+        p = mPendingOps.front();
+
+        if (p.op->seq != doneOp->seq) {
+            break;
+        }
+
+        KFS_LOG_VA_DEBUG("Submitting write-sync (%d) since %d finished", p.dependentOp->seq, 
+                         p.op->seq);
         mOps.push_back(p.dependentOp);
+        gChunkServer.OpInserted();
         mPendingOps.pop_front();
+        SubmitOp(p.dependentOp);
     }
 }
