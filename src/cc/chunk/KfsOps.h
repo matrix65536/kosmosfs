@@ -571,7 +571,7 @@ struct WriteSyncOp : public KfsOp {
     std::string Show() const {
         std::ostringstream os;
         
-        os << "write-sync: chunkId = " << chunkId << " chunkversion = " << chunkVersion;
+        os << "write-sync: seq = " << seq << " chunkId = " << chunkId << " chunkversion = " << chunkVersion;
         os << " write-id info: " << servers;
         return os.str();
     }
