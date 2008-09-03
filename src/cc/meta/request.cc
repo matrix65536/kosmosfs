@@ -65,6 +65,7 @@ static int parseHandlerTruncate(Properties &prop, MetaRequest **r);
 static int parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r);
 static int parseHandlerRetireChunkserver(Properties &prop, MetaRequest **r);
 static int parseHandlerToggleRebalancing(Properties &prop, MetaRequest **r);
+static int parseHandlerExecuteRebalancePlan(Properties &prop, MetaRequest **r);
 
 static int parseHandlerLeaseAcquire(Properties &prop, MetaRequest **r);
 static int parseHandlerLeaseRenew(Properties &prop, MetaRequest **r);
@@ -708,6 +709,14 @@ handle_toggle_rebalancing(MetaRequest *r)
 }
 
 static void
+handle_execute_rebalanceplan(MetaRequest *r)
+{
+	MetaExecuteRebalancePlan *req = static_cast <MetaExecuteRebalancePlan *>(r);
+
+	req->status = gLayoutManager.LoadRebalancePlan(req->planPathname);
+}
+
+static void
 handle_log_rollover(MetaRequest *r)
 {
 	r->status = 0;
@@ -894,6 +903,7 @@ setup_handlers()
 	handler[META_CHUNK_REPLICATION_CHECK] = handle_chunk_replication_check;
 	handler[META_RETIRE_CHUNKSERVER] = handle_retire_chunkserver;
 	handler[META_TOGGLE_REBALANCING] = handle_toggle_rebalancing;
+	handler[META_EXECUTE_REBALANCEPLAN] = handle_execute_rebalanceplan;
 	// Chunk server -> Meta server op
 	handler[META_HELLO] = handle_hello;
 	handler[META_BYE] = handle_bye;
@@ -928,6 +938,7 @@ setup_handlers()
 	gParseHandlers["RENAME"] = parseHandlerRename;
 	gParseHandlers["CHANGE_FILE_REPLICATION"] = parseHandlerChangeFileReplication;
 	gParseHandlers["RETIRE_CHUNKSERVER"] = parseHandlerRetireChunkserver;
+	gParseHandlers["EXECUTE_REBALANCEPLAN"] = parseHandlerExecuteRebalancePlan;
 	gParseHandlers["TOGGLE_REBALANCING"] = parseHandlerToggleRebalancing;
 
 	// Lease related ops
@@ -1153,6 +1164,15 @@ MetaRetireChunkserver::log(ofstream &file) const
  */
 int
 MetaToggleRebalancing::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief log execution of rebalance plan (nop)
+ */
+int
+MetaExecuteRebalancePlan::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1695,6 +1715,19 @@ parseHandlerToggleRebalancing(Properties &prop, MetaRequest **r)
 }
 
 /*!
+ * \brief Message that initiates the execution of a rebalance plan.
+*/
+static int
+parseHandlerExecuteRebalancePlan(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	string pathname = prop.getValue("Pathname", "");
+
+	*r = new MetaExecuteRebalancePlan(seq, pathname);
+	return 0;
+}
+
+/*!
  * \brief Parse out the headers from a HELLO message.  The message
  * body contains the id's of the chunks hosted on the server.
  */
@@ -2119,6 +2152,14 @@ MetaRetireChunkserver::response(ostringstream &os)
 
 void
 MetaToggleRebalancing::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
+MetaExecuteRebalancePlan::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";

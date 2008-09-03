@@ -44,6 +44,18 @@ using boost::scoped_array;
 
 #include "common/log.h"
 
+ChunkServer::ChunkServer() :
+    mSeqNo(1), mTimer(NULL),
+	mHelloDone(false), mDown(false), mHeartbeatSent(false),
+	mHeartbeatSkipped(false), mIsRetiring(false), mRackId(-1), 
+	mNumCorruptChunks(0), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
+	mNumChunks(0), mNumChunkWrites(0), 
+	mNumChunkWriteReplications(0), mNumChunkReadReplications(0)
+{
+	// this is used in emulation mode...
+
+}
+
 ChunkServer::ChunkServer(NetConnectionPtr &conn) :
 	mSeqNo(1), mNetConnection(conn), 
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
@@ -872,6 +884,7 @@ ChunkServer::Ping(string &result)
 			<< "%, nblocks=" << mNumChunks 
 			<< ", lastheard=" << now - mLastHeard << " (sec)"
 			<< ", ncorrupt=" << mNumCorruptChunks
+			<< ", nchunksToMove=" << mChunksToMove.size()
 			<< "\t";
 	} else {
 		ost << "s=" << mLocation.hostname << marker << ", p=" << mLocation.port 
@@ -881,6 +894,7 @@ ChunkServer::Ping(string &result)
 			<< "%, nblocks=" << mNumChunks 
 			<< ", lastheard=" << now - mLastHeard << " (sec)"
 			<< ", ncorrupt=" << mNumCorruptChunks
+			<< ", nchunksToMove=" << mChunksToMove.size()
 			<< "\t";
 	}
 	result += ost.str();

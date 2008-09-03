@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <sstream>
 
 #include "LayoutManager.h"
 #include "kfstree.h"
@@ -47,6 +48,7 @@ using std::vector;
 using std::map;
 using std::min;
 using std::endl;
+using std::istringstream;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -77,9 +79,14 @@ const uint32_t CONCURRENT_WRITES_PER_NODE_WATERMARK = 10;
 /// don't want the system to constantly move stuff between nodes when
 /// there isn't much to be gained by it.
 ///
+
 const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.3;
 const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.9;
 
+#if 0
+const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.5;
+const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.6;
+#endif
 
 /// Helper functor that can be used to find a chunkid from a vector
 /// of meta chunk info's.
@@ -95,8 +102,8 @@ public:
 
 LayoutManager::LayoutManager() :
 	mLeaseId(1), mNumOngoingReplications(0), 
-	mIsRebalancingEnabled(false), mLastChunkRebalanced(1),
-	mLastChunkReplicated(1),
+	mIsRebalancingEnabled(false), mIsExecutingRebalancePlan(false),
+	mLastChunkRebalanced(1), mLastChunkReplicated(1),
 	mRecoveryStartTime(0), mMinChunkserversToExitRecovery(1)
 {
 	mReplicationTodoStats = new Counter("Num Replications Todo");
@@ -947,6 +954,13 @@ LayoutManager::ChunkCorrupt(MetaChunkCorrupt *r)
 	mChunkToServerMap[r->chunkId] = v;
 	// check the replication state when the replicaiton checker gets to it
 	ChangeChunkReplication(r->chunkId);
+
+	// this chunk has to be replicated from elsewhere; since this is no
+	// longer hosted on this server, take it out of its list of blocks
+	r->server->MovingChunkDone(r->chunkId);
+	if (r->server->IsRetiring()) {
+		r->server->EvacuateChunkDone(r->chunkId);
+	}
 }
 
 class ChunkDeletor {
@@ -1283,7 +1297,8 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 
 int
 LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
-				uint32_t extraReplicas, const vector<ChunkServerPtr> &candidates)
+				uint32_t extraReplicas, const
+				vector<ChunkServerPtr> &candidates)
 {
 	ChunkServerPtr c, dataServer;
 	vector<MetaChunkInfo *> v;
@@ -1474,6 +1489,10 @@ public:
 				KFS_LOG_VA_INFO("%s has bogus block %ld", 
 					c->GetServerLocation().ToString().c_str(), chunkId);
 			} else {
+				// XXX
+				// if we don't think this chunk is on this
+				// server, then we should update the view...
+
 				candidates.insert(chunkId);
 				KFS_LOG_VA_INFO("%s has block %ld that wasn't in replication candidates", 
 					c->GetServerLocation().ToString().c_str(), chunkId);
@@ -1622,6 +1641,8 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 		if (server->GetNumChunkReplications() > MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
 			break;
 	}
+	// if there is any room left to do more work...
+	ExecuteRebalancePlan(server);
 }
 
 void
@@ -1646,7 +1667,7 @@ LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
 			iter->second.ongoingReplications = 0;
 	}
 
-	req->server->ReplicateChunkDone();
+	req->server->ReplicateChunkDone(req->chunkId);
 
 	source = find_if(mChunkServers.begin(), mChunkServers.end(),
 			MatchingServer(req->srcLocation));
@@ -1857,6 +1878,10 @@ LayoutManager::FindInterRackRebalanceCandidate(ChunkServerPtr &candidate,
 	if (servers.size() == 0) {
 		return;
 	}
+	// XXX: in emulation mode, we have 0 racks due to compile issues
+	if (mRacks.size() <= 1)
+		return;
+
 	// if we had only one rack then the intra-rack move should have found a
 	// candidate.
 	assert(mRacks.size() > 1);
@@ -1883,21 +1908,26 @@ LayoutManager::FindInterRackRebalanceCandidate(ChunkServerPtr &candidate,
 // and if others are loaded (i.e., < 30% free space), move chunks around.  This
 // helps with keeping better disk space utilization (and maybe load).
 //
-void
+int
 LayoutManager::RebalanceServers()
 {
 	if ((InRecovery()) || (mChunkServers.size() == 0)) {
-		return;
+		return 0;
 	}
+
+	// if we are doing rebalancing based on a plan, execute as
+	// much of the plan as there is room.
+
+	ExecuteRebalancePlan();
 
 	for_each(mRacks.begin(), mRacks.end(), mem_fun_ref(&RackInfo::computeSpace));
 
 	if (!mIsRebalancingEnabled)
-		return;
+		return 0;
 
 	vector<ChunkServerPtr> servers = mChunkServers;
 	vector<ChunkServerPtr> loadedServers, nonloadedServers;
-	int extraReplicas;
+	int extraReplicas, numBlocksMoved = 0;
 
 	for (uint32_t i = 0; i < servers.size(); i++) {
 		if (servers[i]->IsRetiring())
@@ -1909,7 +1939,7 @@ LayoutManager::RebalanceServers()
 	}
 
 	if ((nonloadedServers.size() == 0) || (loadedServers.size() == 0))
-		return;
+		return 0;
 
 	bool allbusy = false;
 	// try to start where we left off last time; if that chunk has
@@ -1987,23 +2017,153 @@ LayoutManager::RebalanceServers()
 		uint32_t numCopies = min(candidates.size(), clli.chunkServers.size());
 		uint32_t numOngoing = 0;
 
-		for (uint32_t i = 0; i < candidates.size(); i++) {
-			assert(!IsChunkHostedOnServer(clli.chunkServers, candidates[i]));
-		}
-
-		numOngoing = ReplicateChunk(chunkId, clli, numCopies, candidates);
+		numOngoing = ReplicateChunkToServers(chunkId, clli, numCopies,
+					candidates);
 		if (numOngoing > 0) {
-			// add this chunk to the target set of chunkIds that we are tracking
-			// for replication status change
-			ChangeChunkReplication(chunkId);
-
-			clli.ongoingReplications += numOngoing;
-			mNumOngoingReplications++;
+                        numBlocksMoved++;
 		}
 	}
 	if (!allbusy)
 		// reset
 		mLastChunkRebalanced = 1;
+
+        return numBlocksMoved;
+}
+
+int
+LayoutManager::ReplicateChunkToServers(chunkId_t chunkId, ChunkPlacementInfo &clli,
+					uint32_t numCopies, 
+					vector<ChunkServerPtr> &candidates)
+{
+	for (uint32_t i = 0; i < candidates.size(); i++) {
+		assert(!IsChunkHostedOnServer(clli.chunkServers, candidates[i]));
+	}
+
+	int numOngoing = ReplicateChunk(chunkId, clli, numCopies, candidates);
+	if (numOngoing > 0) {
+		// add this chunk to the target set of chunkIds that we are tracking
+		// for replication status change
+		ChangeChunkReplication(chunkId);
+
+		clli.ongoingReplications += numOngoing;
+		mNumOngoingReplications++;
+	}
+	return numOngoing;
+}
+
+class RebalancePlanExecutor {
+	LayoutManager *mgr;
+public:
+	RebalancePlanExecutor(LayoutManager *l) : mgr(l) { }
+	void operator()(ChunkServerPtr &c) {
+		if ((c->IsRetiring()) || (!c->IsResponsiveServer()))
+			return;
+		mgr->ExecuteRebalancePlan(c);
+	}
+};
+
+int
+LayoutManager::LoadRebalancePlan(const string &planFn)
+{
+	// load the plan from the specified file
+	int fd = open(planFn.c_str(), O_RDONLY);
+
+	if (fd < 0) {
+		KFS_LOG_VA_INFO("Unable to open: %s", planFn.c_str());
+		return -1;
+	}
+
+	RebalancePlanInfo_t rpi;
+	int rval;
+
+	while (1) {
+		rval = read(fd, &rpi, sizeof(RebalancePlanInfo_t));
+		if (rval != sizeof(RebalancePlanInfo_t))
+			break;
+		ServerLocation loc;
+		istringstream ist(rpi.dst);
+		vector <ChunkServerPtr>::iterator j;
+
+		ist >> loc.hostname;
+		ist >> loc.port;
+		j = find_if(mChunkServers.begin(), mChunkServers.end(), 
+			MatchingServer(loc));
+		if (j == mChunkServers.end())
+			continue;
+		ChunkServerPtr c = *j;
+		c->AddToChunksToMove(rpi.chunkId);
+	}
+	close(fd);
+
+	mIsExecutingRebalancePlan = true;
+	KFS_LOG_VA_INFO("Setup for rebalance plan execution from %s is done", planFn.c_str());
+
+	return 0;
+}
+
+void
+LayoutManager::ExecuteRebalancePlan()
+{
+	if (!mIsExecutingRebalancePlan)
+		return;
+
+	for_each(mChunkServers.begin(), mChunkServers.end(),
+		RebalancePlanExecutor(this));
+
+	bool alldone = true;
+
+	for (vector<ChunkServerPtr>::iterator iter = mChunkServers.begin();
+		iter != mChunkServers.end(); iter++) {
+		ChunkServerPtr c = *iter;
+		set<chunkId_t> chunksToMove = c->GetChunksToMove();
+
+		if (!chunksToMove.empty()) {
+			alldone = false;
+			break;
+		}
+	}
+	
+	if (alldone) {
+		KFS_LOG_INFO("Execution of rebalance plan is complete...");
+		mIsExecutingRebalancePlan = false;
+	}
+}
+
+void
+LayoutManager::ExecuteRebalancePlan(ChunkServerPtr &c)
+{
+	set<chunkId_t> chunksToMove = c->GetChunksToMove();
+	vector<ChunkServerPtr> candidates;
+
+	if (c->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD) {
+		KFS_LOG_VA_INFO("Terminating rebalance plan execution for overloaded server %s", c->ServerID().c_str());
+		c->ClearChunksToMove();
+		return;
+	}
+
+	candidates.push_back(c);
+
+	for (set<chunkId_t>::iterator citer = chunksToMove.begin();
+		citer != chunksToMove.end(); citer++) {
+		if (c->GetNumChunkReplications() > 
+			MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE) 
+			return;
+
+		chunkId_t cid = *citer;
+
+		CSMapIter iter = mChunkToServerMap.find(cid);
+		int extraReplicas;
+
+		if ((iter->second.ongoingReplications > 0) ||
+			(!CanReplicateChunkNow(cid, iter->second,
+				extraReplicas))) 
+			continue;
+		// Paranoia...
+		if (IsChunkHostedOnServer(iter->second.chunkServers, c))
+			continue;
+
+		ReplicateChunkToServers(cid, iter->second, 1, candidates);
+	}
 }
 
 class OpenFileChecker {
