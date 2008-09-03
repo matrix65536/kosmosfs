@@ -1559,7 +1559,7 @@ GetChunkMetadataOp::HandleChunkMetaReadDone(int code, void *data)
         return 0;
     }
 
-    uint32_t *checksums;
+    uint32_t *checksums = NULL;
     status = gChunkManager.GetChunkChecksums(chunkId, &checksums);
     if ((status == 0) && (checksums != NULL)) {
         chunkVersion = gChunkManager.GetChunkVersion(chunkId);

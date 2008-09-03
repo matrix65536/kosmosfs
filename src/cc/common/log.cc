@@ -40,10 +40,10 @@ MsgLogger::Init(const char *filename, log4cpp::Priority::Value priority)
     layout->setConversionPattern("%d{%m-%d-%Y %H:%M:%S.%l} %p - %m %n");
 
     if (filename != NULL) {
-        // set the max. log file size to be 10M before it rolls over
+        // set the max. log file size to be 100M before it rolls over
         // to the next; save the last 10 log files. 
         appender = new log4cpp::RollingFileAppender("default", std::string(filename),
-                                                    10 * 1024 * 1024, 10);
+                                                    100 * 1024 * 1024, 10);
     }
     else
         appender = new log4cpp::OstreamAppender("default", &std::cout);
