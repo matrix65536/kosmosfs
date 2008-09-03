@@ -73,6 +73,8 @@ enum MetaOp {
 	META_RETIRE_CHUNKSERVER, 
 	//!< Admin is notifying us to toggle rebalancing
 	META_TOGGLE_REBALANCING,
+	//!< Admin is notifying us to execute a rebalance plan
+	META_EXECUTE_REBALANCEPLAN,
 	//!< Metadata server <-> Chunk server ops
 	META_HELLO,  //!< Hello RPC sent by chunkserver on startup
 	META_BYE,  //!< Internally generated op whenever a chunkserver goes down
@@ -496,6 +498,22 @@ struct MetaToggleRebalancing : public MetaRequest {
 			return "Toggle rebalancing: Enable";
 		else
 			return "Toggle rebalancing: Disable";
+	}
+};
+
+/*!
+ * \brief Execute a rebalance plan that was constructed offline.
+*/
+
+struct MetaExecuteRebalancePlan : public MetaRequest {
+	std::string planPathname; //<! full path to the file with the plan
+	MetaExecuteRebalancePlan(seq_t s, const std::string &p) :
+		MetaRequest(META_EXECUTE_REBALANCEPLAN, s, false), planPathname(p) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show() 
+	{
+		return "Execute rebalance plan : " + planPathname;
 	}
 };
 

@@ -79,6 +79,7 @@ namespace KFS
                 ///   - chunkserver sends a HELLO with config info
                 ///   - send/recv messages with that chunkserver.
                 ///
+                ChunkServer();
                 ChunkServer(NetConnectionPtr &conn);
                 ~ChunkServer();
 
@@ -94,7 +95,7 @@ namespace KFS
 
 		/// Enqueue a request to be dispatched to this server
 		/// @param[in] r  the request to be enqueued.
-		void Enqueue(MetaRequest *r);
+		virtual void Enqueue(MetaRequest *r);
 
                 /// Send an RPC to allocate a chunk on this server.
                 /// An RPC request is enqueued and the call returns.
@@ -136,11 +137,12 @@ namespace KFS
                                 const ServerLocation &loc);
 
 		/// Replication of a chunk finished.  Update statistics
-		void ReplicateChunkDone() {
+		void ReplicateChunkDone(chunkId_t chunkId) {
 			mNumChunkWriteReplications--;
 			assert(mNumChunkWriteReplications >= 0);
 			if (mNumChunkWriteReplications < 0)
 				mNumChunkWriteReplications = 0;
+			MovingChunkDone(chunkId);
 		}
 
 
@@ -206,6 +208,26 @@ namespace KFS
 			return mEvacuatingChunks;
 		}
 
+		/// When the plan is read in, the set of chunks that
+		/// need to be moved to this node is updated.
+		void AddToChunksToMove(chunkId_t chunkId) {
+			mChunksToMove.insert(chunkId);
+		}
+
+		std::set<chunkId_t> GetChunksToMove() {
+			return mChunksToMove;
+		}
+
+		void ClearChunksToMove() {
+			mChunksToMove.clear();
+		}
+
+		/// Whenever this node re-replicates a chunk that was targeted
+		/// for rebalancing, update the set.
+		void MovingChunkDone(chunkId_t chunkId) {
+			mChunksToMove.erase(chunkId);
+		}
+
 		/// Evacuation of a chunk that maybe hosted on this server is
 		/// done; if this server is retiring and all chunks on this are
 		/// evacuated, we can tell the server to retire.
@@ -224,7 +246,7 @@ namespace KFS
                 void NotifyChunkVersChange(fid_t fid, chunkId_t chunkId, seq_t chunkVers);
 
 		/// Dispatch all the pending RPCs to the chunk server.
-		void Dispatch();
+		virtual void Dispatch();
 
 		/// An op has been dispatched.  Stash a pointer to that op
 		/// in the list of dispatched ops.
@@ -327,6 +349,10 @@ namespace KFS
                         return mUsedSpace;
                 }
 
+		int GetNumChunks () const {
+			return mNumChunks;
+		}
+
 		/// Return an estimate of disk space utilization on this server.
 		/// The estimate is between [0..1]
 		float GetSpaceUtilization() {
@@ -344,7 +370,7 @@ namespace KFS
                 /// The chunk server went down.  So, fail all the
                 /// outstanding ops. 
                 ///
-                void FailPendingOps();
+                virtual void FailPendingOps();
 
 		/// For monitoring purposes, dump out state as a string.
 		/// @param [out] result   The state of this server
@@ -353,7 +379,7 @@ namespace KFS
 
 		seq_t NextSeq() { return mSeqNo++; }
 
-        private:
+        protected:
                 /// A sequence # associated with each RPC we send to
                 /// chunk server.  This variable tracks the seq # that
                 /// we should use in the next RPC.
@@ -389,6 +415,10 @@ namespace KFS
 		/// whenever this node is to be retired; when evacuation set is
 		/// empty, the server can be retired.
 		std::set<chunkId_t> mEvacuatingChunks;
+
+		/// Set of chunks that need to be moved to this server.
+		/// This set was previously computed by the rebalance planner.
+		std::set<chunkId_t> mChunksToMove;
 
                 /// Location of the server at which clients can
                 /// connect to

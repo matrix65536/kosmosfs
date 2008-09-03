@@ -317,6 +317,10 @@ namespace KFS
                 ///
 		int GetChunkToServerMapping(chunkId_t chunkId, std::vector<ChunkServerPtr> &c);
 
+		CSMap GetChunkToServerMap() {
+			return mChunkToServerMap;
+		}
+
 
 		/// Dump out the chunk location map to a file.
 		void DumpChunkToServerMap();
@@ -381,7 +385,18 @@ namespace KFS
 			mIsRebalancingEnabled = v;
 		}
 
-        private:
+		/// Methods for doing "planned" rebalancing of data.
+		/// Read in the file that lays out the plan
+		/// Return 0 if we can open the file; -1 otherwise
+		int LoadRebalancePlan(const std::string &planFn);
+
+		/// Execute the plan for all servers
+		void ExecuteRebalancePlan();
+
+		/// Execute planned rebalance for server c
+		void ExecuteRebalancePlan(ChunkServerPtr &c);
+
+        protected:
 		/// A rolling counter for tracking leases that are issued to
 		/// to clients/chunkservers for reading/writing chunks
 		int64_t mLeaseId;
@@ -394,6 +409,9 @@ namespace KFS
 		/// we'd like to turn off rebalancing.  We can enable it a
 		/// suitable time.
 		bool mIsRebalancingEnabled;
+
+		/// Set when a rebalancing plan is being excuted.
+		bool mIsExecutingRebalancePlan;
 
 		/// On each iteration, we try to rebalance some # of blocks;
 		/// this counter tracks the last chunk we checked
@@ -546,7 +564,8 @@ namespace KFS
 
 		/// Periodically, rebalance servers by moving chunks around from
 		/// "over utilized" servers to "under utilized" servers.
-		void RebalanceServers();
+		/// @retval # of blocks that were moved around
+		int RebalanceServers();
 		void FindIntraRackRebalanceCandidates(vector<ChunkServerPtr> &candidates,
 				const vector<ChunkServerPtr> &nonloadedServers,
 				const ChunkPlacementInfo &clli);
@@ -555,6 +574,13 @@ namespace KFS
 				const vector<ChunkServerPtr> &nonloadedServers,
 				const ChunkPlacementInfo &clli);
 
+
+		/// Helper method to replicate a chunk to given set of
+		/// candidates.
+		/// Returns the # of copies that were triggered.
+		int ReplicateChunkToServers(chunkId_t chunkId, ChunkPlacementInfo &clli,
+				uint32_t numCopies,
+				std::vector<ChunkServerPtr> &candidates);
 
 		/// Return true if c is a server in mChunkServers[].
 		bool ValidServer(ChunkServer *c);
@@ -573,6 +599,15 @@ namespace KFS
 		}
 
         };
+
+	// When the rebalance planner it works out a plan that specifies
+	// which chunk has to be moved from src->dst
+	struct RebalancePlanInfo_t {
+		static const int hostnamelen = 256;
+		chunkId_t chunkId;
+		char dst[hostnamelen];
+		char src[hostnamelen];
+	};
 
         extern LayoutManager gLayoutManager;
 }
