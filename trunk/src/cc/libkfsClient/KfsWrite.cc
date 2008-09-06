@@ -75,9 +75,10 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
     ssize_t numIO = 0;
     int res;
 
-    if (!valid_fd(fd) || mFileTable[fd]->openMode == O_RDONLY)
+    if (!valid_fd(fd) || mFileTable[fd] == NULL || mFileTable[fd]->openMode == O_RDONLY) {
+        KFS_LOG_VA_INFO("Write to fd: %d failed---fd is likely closed", fd);
 	return -EBADF;
-
+    }
     FileAttr *fa = FdAttr(fd);
     if (fa->isDirectory)
 	return -EISDIR;
