@@ -287,8 +287,10 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
         // make the write sync depend on a previous write
         KfsOp *w = NULL;
         for (deque<KfsOp *>::iterator i = mOps.begin(); i != mOps.end(); i++) {
-            if ((*i)->op == CMD_WRITE)
+            if (((*i)->op == CMD_WRITE_PREPARE) || ((*i)->op == CMD_WRITE_PREPARE_FWD) ||
+                ((*i)->op == CMD_WRITE)) {                
                 w = *i;
+            }
         }
         if (w != NULL) {
             OpPair p;
@@ -302,6 +304,9 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
                              op->seq, p.op->seq);
 
             return true;
+        } else {
+            KFS_LOG_VA_DEBUG("Write-sync is being pushed down; no writes left... (%d ops left in q)",
+                             mOps.size());
         }
     }
 
