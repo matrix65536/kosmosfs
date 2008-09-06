@@ -176,7 +176,10 @@ public class KfsOutputChannel implements WritableByteChannel, Positionable
         if (kfsFd < 0) 
             throw new IOException("File closed");
 
-        return tell(cPtr, kfsFd);
+        // similar issue as read: the position at which we are writing
+        // needs to be offset by where the C++ code thinks we are and
+        // how much we have buffered
+        return tell(cPtr, kfsFd) + writeBuffer.remaining();
     }
 
     public void close() throws IOException
