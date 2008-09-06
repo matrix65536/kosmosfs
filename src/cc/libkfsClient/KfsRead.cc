@@ -62,8 +62,10 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
     size_t nread = 0, nleft;
     ssize_t numIO;
 
-    if (!valid_fd(fd) || mFileTable[fd]->openMode == O_WRONLY)
+    if (!valid_fd(fd) || mFileTable[fd] == NULL || mFileTable[fd]->openMode == O_WRONLY) {
+        KFS_LOG_VA_INFO("Read to fd: %d failed---fd is likely closed", fd);        
 	return -EBADF;
+    }
 
     FilePosition *pos = FdPos(fd);
     FileAttr *fa = FdAttr(fd);
