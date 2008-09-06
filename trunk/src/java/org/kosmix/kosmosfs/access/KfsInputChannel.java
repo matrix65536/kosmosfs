@@ -157,7 +157,10 @@ public class KfsInputChannel implements ReadableByteChannel, Positionable
         if (kfsFd < 0) 
             throw new IOException("File closed");
 
-        return tell(cPtr, kfsFd);
+        // we keep some data buffered; so, we ask the C++ side where
+        // we are in the file and offset that by the amount in our
+        // buffer
+        return tell(cPtr, kfsFd) - readBuffer.remaining();
     }
 
     public void close() throws IOException
