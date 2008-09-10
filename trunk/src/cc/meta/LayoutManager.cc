@@ -1597,6 +1597,7 @@ LayoutManager::ChunkReplicationChecker()
 	chunkId_t chunkId;
 	CRCandidateSet delset;
 	int extraReplicas, numOngoing;
+	uint32_t numIterations = 0;
 
 	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin(); 
 		citer != mChunkReplicationCandidates.end(); ++citer) {
@@ -1621,12 +1622,17 @@ LayoutManager::ChunkReplicationChecker()
 				mNumOngoingReplications++;
 				mLastChunkReplicated = chunkId;
 			}
+			numIterations++;
 		} else if (extraReplicas == 0) {
 			delset.insert(chunkId);
 		} else {
 			DeleteAddlChunkReplicas(iter->first, iter->second, -extraReplicas);
 			delset.insert(chunkId);
 		}
+		if (numIterations > mChunkServers.size() *
+			MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
+			// throttle...we are handing out
+			break;
 	}
 	
 	if (delset.size() > 0) {
