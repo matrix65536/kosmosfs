@@ -172,6 +172,7 @@ RetireChunkserverOp::Request(ostringstream &os)
     os << "RETIRE_CHUNKSERVER\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Cseq: " << seq << "\r\n";
+    os << "Downtime: " << downtime << "\r\n";
     os << "Chunk-server-name: " << chunkLoc.hostname << "\r\n";
     os << "Chunk-server-port: " << chunkLoc.port << "\r\n\r\n";
 }

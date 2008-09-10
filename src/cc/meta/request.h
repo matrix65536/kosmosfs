@@ -466,19 +466,31 @@ struct MetaChangeFileReplication: public MetaRequest {
 };
 
 /*!
- * \brief Notification to retire a chunkserver.  We use this server (preferably)
- * to evacuate/re-replicate all the blocks on it.
+ * \brief Notification to hibernate/retire a chunkserver: 
+ * Hibernation: when the server is put
+ * in hibernation mode, the server is taken down temporarily with a promise that
+ * it will come back N secs later; if the server doesnt' come up as promised
+ * then re-replication starts.  
+ *
+ * Retirement: is extended downtime.  The server is taken down and we don't know
+ * if it will ever come back.  In this case, we use this server (preferably)
+ * to evacuate/re-replicate all the blocks off it before we take it down.
  */
 
 struct MetaRetireChunkserver : public MetaRequest {
 	ServerLocation location; //<! Location of this server
-	MetaRetireChunkserver(seq_t s, const ServerLocation &l) :
-		MetaRequest(META_RETIRE_CHUNKSERVER, s, false), location(l) { }
+	int nSecsDown; //<! set to -1, we retire; otherwise, # of secs of down time
+	MetaRetireChunkserver(seq_t s, const ServerLocation &l, int d) :
+		MetaRequest(META_RETIRE_CHUNKSERVER, s, false), location(l),
+		nSecsDown(d) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
 	string Show() 
 	{
-		return "Retiring server: " + location.ToString();
+		if (nSecsDown > 0)
+			return "Hibernating server: " + location.ToString();
+		else
+			return "Retiring server: " + location.ToString();
 	}
 };
 
@@ -819,6 +831,7 @@ struct MetaChunkRetire: public MetaChunkRequest {
  * about each of those servers.
  */
 struct MetaPing: public MetaRequest {
+	string systemInfo; //!< result that describes system info (space etc)
 	string servers; //!< result that contains info about chunk servers
 	string retiringServers; //!< info about servers that are being retired
 	string downServers; //!< info about servers that have gone down

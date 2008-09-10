@@ -30,6 +30,7 @@
 #include "Globals.h"
 
 #include <cerrno>
+#include <poll.h>
 #include <netdb.h>
 
 using std::min;
@@ -311,18 +312,19 @@ int TcpSocket::DoSynchRecv(char *buf, int bufLen, struct timeval &timeout)
 {
     int numRecd = 0;
     int res = 0, nfds;
-    fd_set fds;
+    struct pollfd pfd;
 
     while (numRecd < bufLen) {
         if (mSockFd < 0)
             break;
 
         if (res < 0) {
-            FD_ZERO(&fds);
-            FD_SET(mSockFd, &fds);
-            nfds = select(mSockFd + 1, &fds, NULL, &fds, &timeout);
-            if ((nfds == 0) && 
-                ((timeout.tv_sec == 0) && (timeout.tv_usec == 0))) {
+            pfd.fd = mSockFd;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            nfds = poll(&pfd, 1, timeout.tv_sec * 1000);
+            // get a 0 when timeout expires
+            if (nfds == 0) {
                 KFS_LOG_DEBUG("Timeout in synch recv");
                 return numRecd > 0 ? numRecd : -ETIMEDOUT;
             }
@@ -376,15 +378,15 @@ int TcpSocket::DoSynchPeek(char *buf, int bufLen, struct timeval &timeout)
 {
     int numRecd = 0;
     int res, nfds;
-    fd_set fds;
+    struct pollfd pfd;
 
     while (1) {
-        FD_ZERO(&fds);
-        FD_SET(mSockFd, &fds);
-        nfds = select(mSockFd + 1, &fds, NULL, NULL, &timeout);
-
-        if ((nfds == 0) && 
-            ((timeout.tv_sec == 0) && (timeout.tv_usec == 0))) {
+        pfd.fd = mSockFd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        nfds = poll(&pfd, 1, timeout.tv_sec * 1000);
+        // get a 0 when timeout expires
+        if (nfds == 0) {
             return -ETIMEDOUT;
         }
 

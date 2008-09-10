@@ -50,6 +50,8 @@ extern void panic(const string s, bool use_perror);
 extern void sendtime(ostringstream &os, const string &prefix, 
 		     struct timeval &t, const string &suffix);
 
+extern string timeToStr(time_t val);
+
 /// Is a message that ends with "\r\n\r\n" available in the
 /// buffer.
 /// @param[in] iobuf  An IO buffer stream with message
