@@ -257,6 +257,9 @@ LayoutManager::AddNewServer(MetaHello *r)
         if (staleChunkIds.size() > 0) {
                 s->NotifyStaleChunks(staleChunkIds);
         }
+	
+	// Update the list since a new server is in
+	CheckHibernatingServersStatus();
 }
 
 class MapPurger {
@@ -356,30 +359,46 @@ LayoutManager::ServerDown(ChunkServer *server)
 	/// this server.
 	server->FailPendingOps();
 
-	MapPurger purge(mChunkToServerMap, mChunkReplicationCandidates, server);
-	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+	// check if this server was sent to hibernation
+	bool isHibernating = false;
+	for (uint32_t j = 0; j < mHibernatingServers.size(); j++) {
+		if (mHibernatingServers[j].location == server->GetServerLocation()) {
+			// record all the blocks that need to be checked for
+			// re-replication later
+			MapPurger purge(mChunkToServerMap, mHibernatingServers[j].blocks, server);
+
+			for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+			isHibernating = true;
+			break;
+		}
+	}
+
+	if (!isHibernating) {
+		MapPurger purge(mChunkToServerMap, mChunkReplicationCandidates, server);
+		for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+	}
 
 	// for reporting purposes, record when it went down
 	time_t now = time(NULL);
-	char timebuf[64];
-	ctime_r(&now, timebuf);
-	if (timebuf[24] == '\n')
-		timebuf[24] = '\0';
+	string downSince = timeToStr(now);
 	ServerLocation loc = server->GetServerLocation();
+
 	const char *reason;
-	if (server->IsRetiring())
+	if (isHibernating)
+		reason = "Hibernated";
+	else if (server->IsRetiring())
 		reason = "Retired";
 	else
 		reason= "Unreachable";
 
 	mDownServers << "s=" << loc.hostname << ", p=" << loc.port << ", down="  
-			<< timebuf << ", reason=" << reason << "\t";
+			<< downSince << ", reason=" << reason << "\t";
 
 	mChunkServers.erase(i);
 }
 
 int
-LayoutManager::RetireServer(const ServerLocation &loc)
+LayoutManager::RetireServer(const ServerLocation &loc, int downtime)
 {
 	ChunkServerPtr retiringServer;
 	vector <ChunkServerPtr>::iterator i;
@@ -387,9 +406,21 @@ LayoutManager::RetireServer(const ServerLocation &loc)
 	i = find_if(mChunkServers.begin(), mChunkServers.end(), MatchingServer(loc));
 	if (i == mChunkServers.end())
 		return -1;
-	
+
 	retiringServer = *i;
+
 	retiringServer->SetRetiring();
+	if (downtime > 0) {
+		HibernatingServerInfo_t hsi;
+
+		hsi.location = retiringServer->GetServerLocation();
+		hsi.sleepEndTime = time(0) + downtime;
+		mHibernatingServers.push_back(hsi);
+
+		retiringServer->Retire();
+
+		return 0;
+	}
 
 	MapRetirer retirer(mChunkToServerMap, mChunkReplicationCandidates, retiringServer.get());
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), retirer);
@@ -1114,9 +1145,18 @@ LayoutManager::ValidServer(ChunkServer *c)
 
 class Pinger {
 	string &result;
+	// return the total/used for all the nodes in the cluster
+	uint64_t &totalSpace;
+	uint64_t &usedSpace;
 public:
-	Pinger(string &r):result(r) { }
-	void operator () (ChunkServerPtr &c) { c->Ping(result); }
+	Pinger(string &r, uint64_t &t, uint64_t &u) :
+		result(r), totalSpace(t), usedSpace(u) { }
+	void operator () (ChunkServerPtr &c) 
+	{ 
+		c->Ping(result); 
+		totalSpace += c->GetTotalSpace();
+		usedSpace += c->GetUsedSpace();
+	}
 };
 
 class RetiringStatus {
@@ -1127,12 +1167,20 @@ public:
 };
 
 void
-LayoutManager::Ping(string &upServers, string &downServers, string &retiringServers)
+LayoutManager::Ping(string &systemInfo, string &upServers, string &downServers, string &retiringServers)
 {
-	Pinger doPing(upServers);
+	uint64_t totalSpace = 0, usedSpace = 0;
+	Pinger doPing(upServers, totalSpace, usedSpace);
 	for_each(mChunkServers.begin(), mChunkServers.end(), doPing);
 	downServers = mDownServers.str();
 	for_each(mChunkServers.begin(), mChunkServers.end(), RetiringStatus(retiringServers));
+
+	ostringstream os;
+
+	os << "Up since= " << timeToStr(mRecoveryStartTime) << '\t';
+	os << "Total space= " << totalSpace << '\t';
+	os << "Used space= " << usedSpace;
+	systemInfo = os.str();
 }
 
 /// functor to tell if a lease has expired
@@ -1502,11 +1550,45 @@ public:
 };
 
 void
+LayoutManager::CheckHibernatingServersStatus()
+{
+	time_t now = time(0);
+
+	vector <HibernatingServerInfo_t>::iterator iter = mHibernatingServers.begin();
+	vector<ChunkServerPtr>::iterator i;
+
+	while (iter != mHibernatingServers.end()) {
+		i = find_if(mChunkServers.begin(), mChunkServers.end(), 
+			MatchingServer(iter->location));
+		if ((i == mChunkServers.end()) && (now < iter->sleepEndTime)) {
+			// within the time window where the server is sleeping
+			// so, move on
+			iter++;
+			continue;
+		}
+		if (i != mChunkServers.end()) {
+			KFS_LOG_VA_INFO("Hibernated server (%s) is back as promised...", 
+					iter->location.ToString().c_str());
+		} else {
+			// server hasn't come back as promised...so, check
+			// re-replication for the blocks that were on that node
+			KFS_LOG_VA_INFO("Hibernated server (%s) is not back as promised...", 
+				iter->location.ToString().c_str());
+			mChunkReplicationCandidates.insert(iter->blocks.begin(), iter->blocks.end());
+		}
+		mHibernatingServers.erase(iter);
+		iter = mHibernatingServers.begin();
+	}
+}
+
+void
 LayoutManager::ChunkReplicationChecker()
 {
 	if (InRecovery()) {
 		return;
 	}
+
+	CheckHibernatingServersStatus();
 
 	// There is a set of chunks that are affected: their server went down
 	// or there is a change in their degree of replication.  in either

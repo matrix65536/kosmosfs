@@ -196,6 +196,25 @@ namespace KFS
 	typedef std::set <chunkId_t> CRCandidateSet;
 	typedef std::set <chunkId_t>::iterator CRCandidateSetIter;
 
+	//
+	// For maintenance reasons, we'd like to schedule downtime for a server.
+	// When the server is taken down, a promise is made---the server will go
+	// down now and come back up by a specified time. During this window, we
+	// are willing to tolerate reduced # of copies for a block.  Now, if the
+	// server doesn't come up by the promised time, the metaserver will
+	// initiate re-replication of blocks on that node.  This ability allows
+	// us to schedule downtime on a node without having to incur the
+	// overhead of re-replication.
+	//
+	struct HibernatingServerInfo_t {
+		// the server we put in hibernation
+		ServerLocation location;
+		// the blocks on this server
+		CRCandidateSet blocks;
+		// when is it likely to wake up
+		time_t sleepEndTime;
+	};
+
         ///
         /// LayoutManager is responsible for write allocation:
         /// it determines where to place a chunk based on metrics such as,
@@ -236,7 +255,12 @@ namespace KFS
                 /// @param[in] server  The server that is down
 		void ServerDown(ChunkServer *server);
 
-		int RetireServer(const ServerLocation &loc);
+		/// A server is being taken down: if downtime is > 0, it is a
+		/// value in seconds that specifies the time interval within
+		/// which the server will connect back.  If it doesn't connect
+		/// within that interval, the server is assumed to be down and
+		/// re-replication will start.
+		int RetireServer(const ServerLocation &loc, int downtime);
 
                 /// Allocate space to hold a chunk on some
                 /// chunkserver.
@@ -330,6 +354,8 @@ namespace KFS
 
 		/// For monitoring purposes, dump out state of all the
 		/// connected chunk servers.
+		/// @param[out] systemInfo A string that describes system status
+		///   such as, the amount of space in cluster
 		/// @param[out] upServers  The string containing the
 		/// state of the up chunk servers.
 		/// @param[out] downServers  The string containing the
@@ -337,7 +363,7 @@ namespace KFS
 		/// @param[out] retiringServers  The string containing the
 		/// state of the chunk servers that are being retired for
 		/// maintenance.
-		void Ping(string &upServers, string &downServers, string &retiringServers);
+		void Ping(string &systemInfo, string &upServers, string &downServers, string &retiringServers);
 
 		/// Periodically, walk the table of chunk -> [location, lease]
 		/// and remove out dead leases.
@@ -352,6 +378,14 @@ namespace KFS
 		/// if there are sufficient copies of each chunk.  Those chunks with
 		/// fewer copies are (re) replicated.
 		void ChunkReplicationChecker();
+
+		/// A set of nodes have been put in hibernation by an admin.
+		/// This is done for scheduled downtime.  During this period, we
+		/// don't want to pro-actively replicate data on the down nodes;
+		/// if the node doesn't come back as promised, we then start
+		/// re-replication.  Periodically, check the status of
+		/// hibernating nodes.
+		void CheckHibernatingServersStatus();
 
 		/// A chunk replication operation finished.  If the op was successful,
 		/// then, we update the chunk->location map to record the presence
@@ -443,6 +477,13 @@ namespace KFS
 
                 /// List of connected chunk servers.
                 std::vector <ChunkServerPtr> mChunkServers;
+
+		/// List of servers that are hibernating; if they don't wake up
+		/// the time the hibernation period ends, the blocks on those
+		/// nodes needs to be re-replicated.  This provides us the ability
+		/// to take a node down for maintenance and bring it back up
+		/// without incurring re-replication overheads.
+		std::vector <HibernatingServerInfo_t> mHibernatingServers;
 
 		/// Track when servers went down so we can report it
 		std::ostringstream mDownServers;

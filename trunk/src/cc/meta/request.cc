@@ -696,7 +696,7 @@ handle_retire_chunkserver(MetaRequest *r)
 {
 	MetaRetireChunkserver *req = static_cast <MetaRetireChunkserver *>(r);
 
-	req->status = gLayoutManager.RetireServer(req->location);
+	req->status = gLayoutManager.RetireServer(req->location, req->nSecsDown);
 }
 
 static void
@@ -840,7 +840,7 @@ handle_ping(MetaRequest *r)
 
 	req->status = 0;
 
-	gLayoutManager.Ping(req->servers, req->downServers, req->retiringServers);
+	gLayoutManager.Ping(req->systemInfo, req->servers, req->downServers, req->retiringServers);
 
 }
 
@@ -1691,13 +1691,15 @@ parseHandlerRetireChunkserver(Properties &prop, MetaRequest **r)
 {
 	ServerLocation location;
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int downtime;
 
 	location.hostname = prop.getValue("Chunk-server-name", "");
 	location.port = prop.getValue("Chunk-server-port", -1);
 	if (!location.IsValid()) {
 		return -1;
 	}
-	*r = new MetaRetireChunkserver(seq, location);
+	downtime = prop.getValue("Downtime", -1);
+	*r = new MetaRetireChunkserver(seq, location, downtime);
 	return 0;
 }
 
@@ -2172,6 +2174,7 @@ MetaPing::response(ostringstream &os)
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
 	os << "Status: " << status << "\r\n";
+	os << "System Info: " << systemInfo << "\r\n";
 	os << "Servers: " << servers << "\r\n";
 	os << "Retiring Servers: " << retiringServers << "\r\n";
 	os << "Down Servers: " << downServers << "\r\n\r\n";

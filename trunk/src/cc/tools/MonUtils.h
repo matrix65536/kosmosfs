@@ -93,8 +93,9 @@ namespace KFS_MON
 
     struct RetireChunkserverOp : public KfsMonOp {
         KFS::ServerLocation chunkLoc;
-        RetireChunkserverOp(int32_t s, const KFS::ServerLocation &c) :
-            KfsMonOp(CMD_RETIRE_CHUNKSERVER, s), chunkLoc(c) { };
+        int downtime; // # of seconds of downtime
+        RetireChunkserverOp(int32_t s, const KFS::ServerLocation &c, int d) :
+            KfsMonOp(CMD_RETIRE_CHUNKSERVER, s), chunkLoc(c), downtime(d) { };
         void Request(std::ostringstream &os);
         void ParseResponse(const char *resp, int len);
     };

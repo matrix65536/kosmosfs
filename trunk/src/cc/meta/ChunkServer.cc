@@ -44,6 +44,11 @@ using boost::scoped_array;
 
 #include "common/log.h"
 
+//
+// if a chunkserver is not responsive for over 10 mins, mark it down
+//
+const int32_t INACTIVE_SERVER_TIMEOUT = 600;
+
 ChunkServer::ChunkServer() :
     mSeqNo(1), mTimer(NULL),
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
@@ -666,6 +671,16 @@ ChunkServer::Heartbeat()
 
 	if (mHeartbeatSent) {
 		string loc = mLocation.ToString();
+		time_t now = time(0);
+
+		if (now - mLastHeard > INACTIVE_SERVER_TIMEOUT) {
+			KFS_LOG_VA_INFO("Server %s has been non-responsive for too long; taking it down", loc.c_str());
+			// We are executing in the context of the network thread
+			// So, take the server down as though the net connection
+			// broke.
+			HandleRequest(EVENT_NET_ERROR, NULL);
+			return;
+		}
 
 		// If a request is outstanding, don't send one more
 		mHeartbeatSkipped = true;
@@ -746,12 +761,17 @@ ChunkServer::EvacuateChunkDone(chunkId_t chunkId)
 	if (mEvacuatingChunks.empty()) {
 		KFS_LOG_VA_INFO("Evacuation of chunks on %s is done; retiring",
 				ServerID().c_str());
-
-		MetaChunkRetire *r;
-
-		r = new MetaChunkRetire(NextSeq(), this);
-		Enqueue(r);
+		Retire();
 	}
+}
+
+void
+ChunkServer::Retire()
+{
+	MetaChunkRetire *r;
+
+	r = new MetaChunkRetire(NextSeq(), this);
+	Enqueue(r);
 }
 
 //
@@ -873,8 +893,9 @@ ChunkServer::Ping(string &result)
 	time_t now = time(NULL);
 
 	// for retiring nodes, add a '*' so that we can differentiate in the UI
-	if (mIsRetiring)
-		marker = '*';
+	// with web-ui, don't need this...
+	// if (mIsRetiring)
+	//	marker = '*';
 
 	if (mTotalSpace < (1L << 30)) {
 		ost << "s=" << mLocation.hostname << marker << ", p=" << mLocation.port 

@@ -128,6 +128,11 @@ namespace KFS
                 ///
 		int TruncateChunk(chunkId_t chunkId, off_t s);
 
+		///
+		/// Send a message to the server asking it to go down.
+		///
+		void Retire();
+
 		/// Method to get the size of a chunk from a chunkserver.
 		int GetChunkSize(fid_t fid, chunkId_t chunkId);
 

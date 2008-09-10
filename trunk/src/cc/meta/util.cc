@@ -195,6 +195,20 @@ KFS::sendtime(ostringstream &os, const string &prefix,
 }
 
 /*!
+ * A helper function that converts a time_t to string.
+ */
+string
+KFS::timeToStr(time_t val)
+{
+	char timebuf[64];
+
+	ctime_r(&val, timebuf);
+	if (timebuf[24] == '\n')
+		timebuf[24] = '\0';
+	return timebuf;
+}
+
+/*!
  * \brief print warning message on syscall failure
  * \param[in] msg	message text
  * \param[in] use_perror pass text to perror() if true

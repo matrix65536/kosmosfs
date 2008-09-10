@@ -195,6 +195,9 @@ struct FilePosition {
     /// the vector<ChunkServerConn> structure. 
     TcpSocket *preferredServer;
 
+    /// Track the location of the preferred server so we can print debug messages
+    ServerLocation preferredServerLocation;
+
     void ResetServers() {
         chunkServers.clear();
         preferredServer = NULL;
@@ -228,6 +231,11 @@ struct FilePosition {
 
     void SetPreferredServer(const ServerLocation &loc, bool nonblockingConnect = false) {
         preferredServer = GetChunkServerSocket(loc, nonblockingConnect);
+        preferredServerLocation = loc;
+    }
+
+    const ServerLocation &GetPreferredServerLocation() const {
+        return preferredServerLocation;
     }
 
     TcpSocket *GetPreferredServer() {

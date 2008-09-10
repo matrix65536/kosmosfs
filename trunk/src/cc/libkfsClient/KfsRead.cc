@@ -44,6 +44,15 @@ using std::max;
 
 using namespace KFS;
 
+static double ComputeTimeDiff(const struct timeval &startTime, const struct timeval &endTime)
+{
+    float timeSpent;
+
+    timeSpent = (endTime.tv_sec * 1e6 + endTime.tv_usec) - 
+        (startTime.tv_sec * 1e6 + startTime.tv_usec);
+    return timeSpent / 1e6;
+}
+
 static bool
 NeedToRetryRead(int status)
 {
@@ -400,6 +409,17 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     // make sure we aren't overflowing...
     assert(buf + numRead <= buf + numBytes);
 
+    struct timeval readStart, readEnd;
+
+    gettimeofday(&readStart, NULL);
+    {
+        ostringstream os;
+
+        os << pos->GetPreferredServerLocation().ToString().c_str() << ':' 
+           << " c=" << chunk->chunkId << " o=" << pos->chunkOffset << " n=" << numBytes;
+        KFS_LOG_VA_INFO("Reading from %s", os.str().c_str());
+    }
+
     ssize_t numIO = DoPipelinedRead(ops, pos->preferredServer);
     /*
     if (numIO < 0) {
@@ -426,7 +446,18 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     if (retryStatus != 0)
         numIO = retryStatus;
 
-    KFS_LOG_VA_DEBUG("Read data from server...%d bytes", numIO);
+    gettimeofday(&readEnd, NULL);
+
+    double timeSpent = ComputeTimeDiff(readStart, readEnd);
+    {
+        ostringstream os;
+
+        os << pos->GetPreferredServerLocation().ToString().c_str() << ':' 
+           << " c=" << chunk->chunkId << " o=" << pos->chunkOffset << " n=" << numBytes
+           << " got=" << numIO << " time=" << timeSpent;
+        
+        KFS_LOG_VA_INFO("Read done from %s", os.str().c_str());
+    }
 
     return numIO;
 }
@@ -508,4 +539,3 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
     }
     return 0;
 }
-
