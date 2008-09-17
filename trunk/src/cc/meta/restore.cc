@@ -38,6 +38,7 @@
 #include "LayoutManager.h"
 
 using namespace KFS;
+int16_t minReplicasPerFile;
 
 static bool
 checkpoint_seq(deque <string> &c)
@@ -151,6 +152,9 @@ restore_fattr(deque <string> &c)
 	if (!ok)
 		return false;
 
+	if (numReplicas < minReplicasPerFile)
+		numReplicas = minReplicasPerFile;
+
 	// chunkcount is an estimate; recompute it as we add chunks to the file.
 	// reason for it being estimate: if a CP is in progress while the
 	// metatree is updated, we have cases where the chunkcount is off by 1
@@ -206,10 +210,13 @@ init_map(DiskEntry &e)
 /*!
  * \brief rebuild metadata tree from CP file cpname
  * \param[in] cpname	the CP file
+ * \param[in] minReplicas  the desired # of replicas for each chunk of a file; 
+ *   if the values in the checkpoint file are below this threshold, then
+ *   bump replication.
  * \return		true if successful
  */
 bool
-Restorer::rebuild(const string cpname)
+Restorer::rebuild(const string cpname, int16_t minReplicas)
 {
 	const int MAXLINE = 400;
 	char line[MAXLINE];
@@ -220,6 +227,8 @@ Restorer::rebuild(const string cpname)
 
 	file.open(cpname.c_str());
 	bool is_ok = !file.fail();
+
+	minReplicasPerFile = minReplicas;
 
 	while (is_ok && !file.eof()) {
 		++lineno;

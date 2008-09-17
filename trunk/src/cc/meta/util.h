@@ -62,5 +62,7 @@ extern string timeToStr(time_t val);
 ///
 extern bool IsMsgAvail(IOBuffer *iobuf, int *msgLen);
 
+extern float ComputeTimeDiff(const struct timeval &start, const struct timeval &end);
+
 }
 #endif // !defined(KFS_UTIL_H)

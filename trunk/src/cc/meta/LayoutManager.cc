@@ -106,6 +106,8 @@ LayoutManager::LayoutManager() :
 	mLastChunkRebalanced(1), mLastChunkReplicated(1),
 	mRecoveryStartTime(0), mMinChunkserversToExitRecovery(1)
 {
+	pthread_mutex_init(&mChunkServersMutex, NULL);
+
 	mReplicationTodoStats = new Counter("Num Replications Todo");
 	mOngoingReplicationStats = new Counter("Num Ongoing Replications");
 	mTotalReplicationStats = new Counter("Total Num Replications");
@@ -175,18 +177,6 @@ LayoutManager::AddNewServer(MetaHello *r)
 				 r->location.hostname.c_str(), r->location.port);
 		return;
         }
-
-	mChunkServers.push_back(s);
-	vector<RackInfo>::iterator rackIter;
-	
-	rackIter = find_if(mRacks.begin(), mRacks.end(), RackMatcher(r->rackId));
-	if (rackIter != mRacks.end()) {
-		rackIter->addServer(s);
-	} else {
-		RackInfo ri(r->rackId);
-		ri.addServer(s);
-		mRacks.push_back(ri);
-	}
 
 	for (i = 0; i < r->chunks.size(); ++i) {
 		vector<MetaChunkInfo *> v;
@@ -258,6 +248,24 @@ LayoutManager::AddNewServer(MetaHello *r)
                 s->NotifyStaleChunks(staleChunkIds);
         }
 	
+	// prevent the network thread from wandering this list while we change it.
+	pthread_mutex_lock(&mChunkServersMutex);
+
+	mChunkServers.push_back(s);
+
+	pthread_mutex_unlock(&mChunkServersMutex);
+
+	vector<RackInfo>::iterator rackIter;
+	
+	rackIter = find_if(mRacks.begin(), mRacks.end(), RackMatcher(r->rackId));
+	if (rackIter != mRacks.end()) {
+		rackIter->addServer(s);
+	} else {
+		RackInfo ri(r->rackId);
+		ri.addServer(s);
+		mRacks.push_back(ri);
+	}
+
 	// Update the list since a new server is in
 	CheckHibernatingServersStatus();
 }
@@ -1130,7 +1138,14 @@ public:
 void
 LayoutManager::Dispatch()
 {
+	// this method is called in the context of the network thread.
+	// lock out the request processor to prevent changes to the list.
+
+	pthread_mutex_lock(&mChunkServersMutex);
+
 	for_each(mChunkServers.begin(), mChunkServers.end(), Dispatcher());
+
+	pthread_mutex_unlock(&mChunkServersMutex);
 }
 
 bool
@@ -1598,10 +1613,21 @@ LayoutManager::ChunkReplicationChecker()
 	CRCandidateSet delset;
 	int extraReplicas, numOngoing;
 	uint32_t numIterations = 0;
+	struct timeval start;
+
+	gettimeofday(&start, NULL);
 
 	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin(); 
 		citer != mChunkReplicationCandidates.end(); ++citer) {
 		chunkId = *citer;
+
+		struct timeval now;
+		gettimeofday(&now, NULL);
+
+		if (ComputeTimeDiff(start, now) > 5.0)
+			// if we have spent more than 5 seconds here, stop
+			// serve other requests
+			break;
 
         	CSMapIter iter = mChunkToServerMap.find(chunkId);
         	if (iter == mChunkToServerMap.end()) {
@@ -1665,7 +1691,7 @@ LayoutManager::ChunkReplicationChecker()
 }
 
 void
-LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
+LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server, chunkId_t chunkReplicated)
 {
 	chunkId_t chunkId;
 	int extraReplicas = 0, numOngoing;
@@ -1676,18 +1702,32 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server)
 
 	c.push_back(server);
 
-	// try to start where we left off last time; if that chunk has
-	// disappeared, find something "closeby"
-	CRCandidateSetIter citer = mChunkReplicationCandidates.find(mLastChunkReplicated);
-	if (citer == mChunkReplicationCandidates.end())
+	// try to start where we were done with this server
+	CRCandidateSetIter citer = mChunkReplicationCandidates.find(chunkReplicated + 1);
+
+	if (citer == mChunkReplicationCandidates.end()) {
+		// try to start where we left off last time; if that chunk has
+		// disappeared, find something "closeby"
 		citer = mChunkReplicationCandidates.upper_bound(mLastChunkReplicated);
+	}
 
 	if (citer == mChunkReplicationCandidates.end()) {
 		mLastChunkReplicated = 1;
 		citer = mChunkReplicationCandidates.begin();
 	}
 
+	struct timeval start, now;
+
+	gettimeofday(&start, NULL);
+
 	for (; citer != mChunkReplicationCandidates.end(); ++citer) {
+		gettimeofday(&now, NULL);
+
+		if (ComputeTimeDiff(start, now) > 0.2)
+			// if we have spent more than 200 m-seconds here, stop
+			// serve other requests
+			break;
+
 		chunkId = *citer;
 
         	CSMapIter iter = mChunkToServerMap.find(chunkId);
@@ -1811,7 +1851,9 @@ LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
 	UpdateChunkToServerMapping(req->chunkId, req->server.get());
 
 	// since this server is now free, send more work its way...
-	FindReplicationWorkForServer(req->server);
+	if (req->server->GetNumChunkReplications() <= 1) {
+		FindReplicationWorkForServer(req->server, req->chunkId);
+	}
 }
 
 //

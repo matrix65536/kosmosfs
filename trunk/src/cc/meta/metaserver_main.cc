@@ -51,6 +51,8 @@ string gLogDir, gCPDir;
 // min # of chunk servers to exit recovery mode
 uint32_t gMinChunkservers;
 
+int16_t gMinReplicasPerFile;
+
 Properties gProp;
 
 int ReadMetaServerProperties(char *fileName);
@@ -81,7 +83,7 @@ main(int argc, char **argv)
 
 	libkfsio::InitGlobals();
 
-        kfs_startup(gLogDir, gCPDir, gMinChunkservers);
+        kfs_startup(gLogDir, gCPDir, gMinChunkservers, gMinReplicasPerFile);
 
         // Ignore SIGPIPE's that generated when clients break TCP
         // connection.
@@ -155,6 +157,10 @@ ReadMetaServerProperties(char *fileName)
 	// min # of chunkservers that should connect to exit recovery mode
 	gMinChunkservers = gProp.getValue("metaServer.minChunkservers", 1);
 	cout << "min. # of chunkserver that should connect: " << gMinChunkservers << endl;
+
+	// desired min. # of replicas per file
+	gMinReplicasPerFile = gProp.getValue("metaServer.minReplicasPerFile", 1);
+	cout << "min. # of replicas per file: " << gMinReplicasPerFile << endl;
 
 	if (wormMode) {
 		cout << "Enabling WORM mode" << endl;

@@ -44,7 +44,12 @@ namespace KFS {
 class Restorer {
 	ifstream file;			//!< the CP file
 public:
-	bool rebuild(string cpname);	//!< process the CP file
+	/* 
+	 * process the CP file.  also, if the # of replicas of a file is below
+	 * the specified value, bump up replication.  this allows us to change
+	 * the filesystem wide degree of replication in a simple manner.
+	 */
+	bool rebuild(string cpname, int16_t minNumReplicasPerFile = 1);	
 };
 
 extern bool restore_chunkVersionInc(deque <string> &c);

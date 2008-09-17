@@ -21,7 +21,7 @@
  *
  * \file startup.h
  * \brief code for starting up the metadata server
- * \author Blake Lewis (Kosmix Corp.)
+ * \author Blake Lewis and Sriram Rao
  */
 #if !defined(KFS_STARTUP_H)
 #define KFS_STARTUP_H
@@ -30,7 +30,8 @@
 
 namespace KFS {
 
-extern void kfs_startup(const std::string &logdir, const std::string &cpdir, uint32_t minChunkservers);
+extern void kfs_startup(const std::string &logdir, const std::string &cpdir, 
+			uint32_t minChunkservers, uint32_t minReplicasPerFile);
 
 }
 #endif // !defined(KFS_STARTUP_H)

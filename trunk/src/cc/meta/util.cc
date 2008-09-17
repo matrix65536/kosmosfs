@@ -233,3 +233,13 @@ KFS::panic(const string msg, bool use_perror)
 	warn(msg, use_perror);
 	abort();
 }
+
+float KFS::ComputeTimeDiff(const struct timeval &startTime, 
+			const struct timeval &endTime)
+{
+	float timeSpent;
+	
+	timeSpent = (endTime.tv_sec * 1e6 + endTime.tv_usec) - 
+		(startTime.tv_sec * 1e6 + startTime.tv_usec);
+	return timeSpent / 1e6;
+}

@@ -477,6 +477,9 @@ namespace KFS
 
                 /// List of connected chunk servers.
                 std::vector <ChunkServerPtr> mChunkServers;
+		/// Whenever the list of chunkservers has to be modified, this
+		/// lock is used to serialize access
+		pthread_mutex_t mChunkServersMutex;
 
 		/// List of servers that are hibernating; if they don't wake up
 		/// the time the hibernation period ends, the blocks on those
@@ -579,7 +582,9 @@ namespace KFS
 		/// The server has finished re-replicating a chunk.  If there is more
 		/// re-replication to be done, send it the server's way.
 		/// @param[in] server  The server to which re-replication work should be sent
-		void FindReplicationWorkForServer(ChunkServerPtr &server);
+		/// @param[in] chunkReplicated  The chunkid that the server says
+		///     it finished replication.
+		void FindReplicationWorkForServer(ChunkServerPtr &server, chunkId_t chunkReplicated);
 
 		/// There are more replicas of a chunk than the requested amount.  So,
 		/// delete the extra replicas and reclaim space.  When deleting the addtional

@@ -21,7 +21,7 @@
  *
  * \file startup.cc
  * \brief code for starting up the metadata server
- * \author Blake Lewis (Kosmix Corp.)
+ * \author Blake Lewis and Sriram Rao
  *
  */
 #include "startup.h"
@@ -58,13 +58,13 @@ using namespace KFS;
  * records that are from after the CP.
  */
 static int
-setup_initial_tree()
+setup_initial_tree(uint32_t minNumReplicasPerFile)
 {
 	string logfile;
 	int status;
 	if (file_exists(LASTCP)) {
 		Restorer r;
-		status = r.rebuild(LASTCP) ? 0 : -EIO;
+		status = r.rebuild(LASTCP, minNumReplicasPerFile) ? 0 : -EIO;
 		gLayoutManager.InitRecoveryStartTime();
 	} else {
 		status = metatree.new_tree();
@@ -99,7 +99,8 @@ request_consumer(void *dummy)
  * specifying a checkpoint file instead of just using "latest".
  */
 void
-KFS::kfs_startup(const string &logdir, const string &cpdir, uint32_t minChunkServers)
+KFS::kfs_startup(const string &logdir, const string &cpdir, 
+		uint32_t minChunkServers, uint32_t numReplicasPerFile)
 {
 	struct rlimit rlim;
 	int status = getrlimit(RLIMIT_NOFILE, &rlim);
@@ -120,7 +121,7 @@ KFS::kfs_startup(const string &logdir, const string &cpdir, uint32_t minChunkSer
 	logger_setup_paths(logdir);
 	checkpointer_setup_paths(cpdir);
 
-	status = setup_initial_tree();
+	status = setup_initial_tree(numReplicasPerFile);
 	if (status != 0)
 		panic("setup_initial_tree failed", false);
 	status = replayer.playAllLogs();
