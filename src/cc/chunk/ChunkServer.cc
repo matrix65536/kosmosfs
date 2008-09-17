@@ -31,6 +31,9 @@
 #include "ChunkServer.h"
 #include "Utils.h"
 
+#include <netdb.h>
+#include <arpa/inet.h>
+
 using std::list;
 
 using namespace KFS;
@@ -65,7 +68,9 @@ ChunkServer::Init()
 void
 ChunkServer::MainLoop(int clientAcceptPort)
 {
+#if !defined (__sun__)
     static const int MAXHOSTNAMELEN = 256;
+#endif
     char hostname[MAXHOSTNAMELEN];
 
     mClientAcceptPort = clientAcceptPort;
@@ -74,7 +79,11 @@ ChunkServer::MainLoop(int clientAcceptPort)
         exit(-1);
     }
 
-    // KFS_LOG_VA_DEBUG("Hostname: %s", hostname);
+    // convert to IP address
+    struct hostent *hent = gethostbyname(hostname);
+    in_addr ipaddr;
+
+    memcpy(&ipaddr, hent->h_addr, hent->h_length);
     
     mLocation.Reset(hostname, clientAcceptPort);
 
