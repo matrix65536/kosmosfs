@@ -115,7 +115,7 @@ public:
     /// Return true if socket is good for read/write. false otherwise.
     bool IsGood();
 
-    int GetRemoteName(struct sockaddr *remoteAddr, socklen_t *remoteLen);
+    int GetPeerName(struct sockaddr *peerAddr);
 
     /// Sends at-most the specified # of bytes.  
     /// @retval Returns the result of calling send().

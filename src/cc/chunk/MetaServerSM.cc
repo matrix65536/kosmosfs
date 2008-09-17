@@ -36,6 +36,9 @@
 #include "libkfsIO/NetManager.h"
 #include "libkfsIO/Globals.h"
 
+#include <arpa/inet.h>
+#include <netdb.h>
+
 #include <algorithm>
 #include <sstream>
 using std::ostringstream;
@@ -155,7 +158,13 @@ MetaServerSM::SendHello()
     }
     gethostname(hostname, 256);
 
-    ServerLocation loc(hostname, mChunkServerPort);
+    // switch to IP address so we can avoid repeated DNS lookups
+    struct hostent *hent = gethostbyname(hostname);
+    in_addr ipaddr;
+
+    memcpy(&ipaddr, hent->h_addr, hent->h_length);
+
+    ServerLocation loc(inet_ntoa(ipaddr), mChunkServerPort);
     mHelloOp = new HelloMetaOp(nextSeq(), loc, mClusterKey, mRackId);
     mHelloOp->clnt = this;
     // send the op and wait for it comeback
