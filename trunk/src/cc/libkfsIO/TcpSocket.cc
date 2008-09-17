@@ -32,6 +32,7 @@
 #include <cerrno>
 #include <poll.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 
 using std::min;
 using std::max;
@@ -153,17 +154,23 @@ int TcpSocket::Connect(const ServerLocation &location, bool nonblockingConnect)
     struct hostent *hostInfo;
     struct sockaddr_in remoteAddr;
 
-    hostInfo = gethostbyname(location.hostname.c_str());
+    remoteAddr.sin_addr.s_addr = inet_addr(location.hostname.c_str());
 
-    if (hostInfo == NULL) {
+    if (remoteAddr.sin_addr.s_addr == (in_addr_t) -1) {
+        // do the conversion if we weren't handed an IP address
+
+        hostInfo = gethostbyname(location.hostname.c_str());
+
+        if (hostInfo == NULL) {
 #if defined __APPLE__
-        KFS_LOG_VA_DEBUG("herrno: %d, errstr = %s", h_errno, hstrerror(h_errno));
+            KFS_LOG_VA_DEBUG("herrno: %d, errstr = %s", h_errno, hstrerror(h_errno));
 #endif
-        perror("gethostbyname: ");
-        return -1;
-    }
+            perror("gethostbyname: ");
+            return -1;
+        }
 
-    memcpy(&remoteAddr.sin_addr.s_addr, hostInfo->h_addr, sizeof(struct in_addr));
+        memcpy(&remoteAddr.sin_addr.s_addr, hostInfo->h_addr, sizeof(struct in_addr));
+    }
     remoteAddr.sin_port = htons(location.port);
     remoteAddr.sin_family = AF_INET;
 
@@ -199,9 +206,11 @@ void TcpSocket::SetupSocket()
 
 }
 
-int TcpSocket::GetRemoteName(struct sockaddr *remoteAddr, socklen_t *remoteLen)
+int TcpSocket::GetPeerName(struct sockaddr *peerAddr)
 {
-    if (getpeername(mSockFd, remoteAddr, remoteLen) < 0) {
+    socklen_t peerLen;
+
+    if (getpeername(mSockFd, peerAddr, &peerLen) < 0) {
         perror("getpeername: ");
         return -1;
     }
