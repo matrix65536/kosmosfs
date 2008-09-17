@@ -86,9 +86,9 @@ struct ChunkBuffer {
     // a ton and thereby get decent performance; having a big buffer
     // obviates the need to do read-ahead :-)
     static const size_t ONE_MB = 1 << 20;
-    static const size_t BUF_SIZE = KFS::CHUNKSIZE;
-    // to reduce memory footprint, keep a decent size buffer
-    // static const size_t BUF_SIZE = KFS::CHUNKSIZE < 16 * ONE_MB ? KFS::CHUNKSIZE : 16 * ONE_MB;
+    // to reduce memory footprint, keep a decent size buffer; we used to have
+    // 64MB before
+    static const size_t BUF_SIZE = KFS::CHUNKSIZE < 4 * ONE_MB ? KFS::CHUNKSIZE : 4 * ONE_MB;
 
     ChunkBuffer():chunkno(-1), start(0), length(0), dirty(false), buf(NULL) { }
     ~ChunkBuffer() { delete [] buf; }
@@ -240,6 +240,12 @@ struct FilePosition {
 
     TcpSocket *GetPreferredServer() {
         return preferredServer;
+    }
+
+    int GetPreferredServerAddr(struct sockaddr_in &saddr) {
+        if (preferredServer == NULL)
+            return -1;
+        return preferredServer->GetPeerName((struct sockaddr *) &saddr);
     }
 };
 
