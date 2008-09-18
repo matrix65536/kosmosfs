@@ -85,7 +85,7 @@ ChunkServer::MainLoop(int clientAcceptPort)
 
     memcpy(&ipaddr, hent->h_addr, hent->h_length);
     
-    mLocation.Reset(hostname, clientAcceptPort);
+    mLocation.Reset(inet_ntoa(ipaddr), clientAcceptPort);
 
     gClientManager.StartAcceptor(clientAcceptPort);
     gLogger.Start();
