@@ -1726,7 +1726,8 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
     // whatever else is left
 
     if (op->contentBufLen == 0) {
-	op->contentBuf = new char[op->contentLength];
+	op->contentBuf = new char[op->contentLength + 1];
+	op->contentBuf[op->contentLength] = '\0';
     }
 
     // len bytes belongs to the RPC reply.  Whatever is left after
