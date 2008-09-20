@@ -64,34 +64,38 @@ maxConcurrent = 25
 
 def setupMeta(section, config, outputFn, packageFn):
     """ Setup the metaserver binaries/config files on a node. """
-    fh = open(outputFn, 'w')
+    key = config.get(section, 'clusterkey')    
     baseport = config.getint(section, 'baseport')
-    s = "metaServer.clientPort = %d\n" % baseport
-    fh.write(s)
-    s = "metaServer.chunkServerPort = %d\n" % (baseport + 100)
-    fh.write(s)
-    key = config.get(section, 'clusterkey')
-    s = "metaServer.clusterKey = %s\n" % (key)
-    fh.write(s)
     rundir = config.get(section, 'rundir')
-    s = "metaServer.cpDir = %s/bin/kfscp\n" % rundir
-    fh.write(s)
-    s = "metaServer.logDir = %s/bin/kfslog\n" % rundir
-    fh.write(s)
+    
+    fh = open(outputFn, 'w')    
+    print >> fh, "metaServer.clientPort = %d" % baseport
+    print >> fh, "metaServer.chunkServerPort = %d" % (baseport + 100)
+    print >> fh, "metaServer.clusterKey = %s" % (key)
+    print >> fh, "metaServer.cpDir = %s/bin/kfscp" % rundir
+    print >> fh, "metaServer.logDir = %s/bin/kfslog" % rundir
     if config.has_option(section, 'loglevel'):
-        s = "metaServer.loglevel = %s\n" % config.get(section, 'loglevel')
-        fh.write(s)
+        print >> fh, "metaServer.loglevel = %s" % config.get(section, 'loglevel')
 
     if config.has_option(section, 'worm'):
-        s = "metaServer.wormMode = 1\n"
-        fh.write(s)
+        print >> fh, "metaServer.wormMode = 1"
     
     if config.has_option(section, 'numservers'):
-        n = config.get(section, 'numservers')
-        s = "metaServer.minChunkservers = %s" % n
-        fh.write(s)
+        print >> fh, "metaServer.minChunkservers = %s" % config.get(section, 'numservers')
+
     fh.close()
-    cmd = "%s -zcf %s bin/logcompactor bin/metaserver %s lib scripts/*" % (tarProg, packageFn, outputFn)
+
+    if config.has_option(section, 'webuiConfFile'):
+        confFile = config.get(section, 'webuiConfFile')
+        fh = open(confFile, 'w')
+        print >> fh, "[webserver]"
+        print >> fh, "webServer.metaserverPort = %d" % baseport
+        print >> fh, "webServer.port = %d" % (baseport + 1)
+        print >> fh, "webServer.allMachinesFn = %s/webui/all-machines.txt" % rundir
+        print >> fh, "webServer.docRoot = %s/webui/files" % rundir
+        fh.close()
+        
+    cmd = "%s -zcf %s bin/logcompactor bin/metaserver %s lib webui scripts/*" % (tarProg, packageFn, outputFn)
     os.system(cmd)
     installArgs = "-r %s -d %s -m" % (tarProg, rundir)
     return installArgs    
@@ -105,18 +109,14 @@ def setupChunkConfig(section, config, outputFn):
     s = socket.gethostbyname(hostname)
     ipoctets = s.split('.')
     rackId = int(ipoctets[2])
+    #
     fh = open (outputFn, 'w')
-    s = "chunkServer.metaServer.hostname = %s\n" % metaNode
-    fh.write(s)
-    s = "chunkServer.metaServer.port = %d\n" % metaToChunkPort
-    fh.write(s)
-    s = "chunkServer.clientPort = %d\n" % config.getint(section, 'baseport')
-    fh.write(s)
-    key = config.get('metaserver', 'clusterkey')
-    s = "chunkServer.clusterKey = %s\n" % (key)
-    fh.write(s)
-    s = "chunkServer.rackId = %d\n" % (rackId)
-    fh.write(s)    
+    print >> fh, "chunkServer.metaServer.hostname = %s" % metaNode
+    print >> fh, "chunkServer.metaServer.port = %d" % metaToChunkPort
+    print >> fh, "chunkServer.clientPort = %d" % config.getint(section, 'baseport')
+    print >> fh, "chunkServer.clusterKey = %s" % config.get('metaserver', 'clusterkey')
+    print >> fh, "chunkServer.rackId = %d" % (rackId)
+
     space = config.get(section, 'space')
     s = space.split()
     if (len(s) >= 2):
@@ -125,22 +125,19 @@ def setupChunkConfig(section, config, outputFn):
         units = 'b'
     
     value = int(s[0]) * unitsScale[ units[0] ]
-    s = "chunkServer.totalSpace = %d\n" % value
-    fh.write(s)
+    print >> fh, "chunkServer.totalSpace = %d" % value
+
     rundir = config.get(section, 'rundir')
     if config.has_option(section, 'chunkdir'):
         chunkDir = config.get(section, 'chunkdir')
     else:
         chunkDir = "%s/bin/kfschunk" % (rundir)
 
-    s = "chunkServer.chunkDir = %s\n" % (chunkDir)
-    fh.write(s)
-    s = "chunkServer.logDir = %s/bin/kfslog\n" % (rundir)
-    fh.write(s)
+    print >> fh, "chunkServer.chunkDir = %s" % (chunkDir)
+    print >> fh, "chunkServer.logDir = %s/bin/kfslog" % (rundir)
 
     if config.has_option(section, 'loglevel'):
-        s = "chunkServer.loglevel = %s\n" % config.get(section, 'loglevel')
-        fh.write(s)
+        print >> fh, "chunkServer.loglevel = %s" % config.get(section, 'loglevel')
         
     fh.close()
     
@@ -163,8 +160,8 @@ def setupChunk(section, config, outputFn, packageFn):
 
 def usage():
     """ Print out the usage for this program. """
-    print "%s [-f, --file <machines.cfg>] [-r, --tar <tar|gtar>] [ [-b, --bin <dir with binaries>] {-u, --upgrade} | [-U, --uninstall] ]\n" \
-          % sys.argv[0]
+    print "%s [-f, --file <server.cfg>] [-m , --machines <chunkservers.txt>] [-r, --tar <tar|gtar>] \
+    [-w, --webui <webui dir>] [ [-b, --bin <dir with binaries>] {-u, --upgrade} | [-U, --uninstall] ]\n" % sys.argv[0]
     return
 
 def copyDir(srcDir, dstDir):
@@ -173,7 +170,7 @@ def copyDir(srcDir, dstDir):
     os.system(cmd)
 
     
-def getFiles(buildDir):
+def getFiles(buildDir, webuidir):
     """ Copy files from buildDir/bin, buildDir/lib and . to ./bin, ./lib, and ./scripts
     respectively."""
 
@@ -187,10 +184,11 @@ def getFiles(buildDir):
     if (os.path.exists(s + "/amd64")):
         s += "/amd64"
     copyDir(s, './lib')
+    copyDir(webuidir, './webui')
 
 def cleanup(fn):
     """ Cleanout the dirs we created. """
-    cmd = "rm -rf ./scripts ./bin ./lib %s " % fn
+    cmd = "rm -rf ./scripts ./bin ./lib ./webui %s " % fn
     os.system(cmd)
 
 
@@ -251,7 +249,7 @@ class InstallWorker(threading.Thread):
         self.doInstall()
         self.cleanup()
         
-def doInstall(config, builddir, tmpdir, upgrade, serialMode):
+def doInstall(config, builddir, tmpdir, webuidir, upgrade, serialMode):
     if not config.has_section('metaserver'):
         raise config.NoSectionError, "No metaserver section"
 
@@ -259,7 +257,10 @@ def doInstall(config, builddir, tmpdir, upgrade, serialMode):
         print "%s : directory doesn't exist\n" % builddir
         sys.exit(-1)
 
-    getFiles(builddir)
+    getFiles(builddir, webuidir)
+    if os.path.exists('webui'):
+        webuiconfFile = os.path.join(webuidir, "server.conf")
+        config.set('metaserver', 'webuiConfFile', webuiconfFile)
 
     workers = []
     i = 0
@@ -348,15 +349,36 @@ def doUninstall(config):
     for i in xrange(len(workers)):
         workers[i].join(120.0)
     sys.exit(0)
-    
+
+def readChunkserversFile(machinesFn):
+    '''Given a list of chunkserver node names, one per line, construct a config
+    for each chunkserver and add that to the config based on the defaults'''
+    global config
+    defaultChunkOptions = config.options("chunkserver_defaults")
+    for l in open(machinesFn, 'r'):
+        line = l.strip()
+        if (line.startswith('#')):
+            # ignore commented out node names
+            continue
+        section_name = "chunkserver_" + line
+        config.add_section(section_name)
+        config.set(section_name, "node", line)
+        for o in defaultChunkOptions:
+            config.set(section_name, o, config.get("chunkserver_defaults", o))
+
+    config.remove_section("chunkserver_defaults")
+
 if __name__ == '__main__':
-    (opts, args) = getopt.getopt(sys.argv[1:], "b:f:r:t:hsUu",
-                                 ["build=", "file=", "tar=", "tmpdir=", "help", "serialMode", "uninstall", "upgrade"])
+    (opts, args) = getopt.getopt(sys.argv[1:], "b:f:m:r:t:w:hsUu",
+                                 ["build=", "file=", "machines=", "tar=", "tmpdir=",
+                                  "webui=", "help", "serialMode", "uninstall", "upgrade"])
     filename = ""
     builddir = ""
     uninstall = 0
     upgrade = 0
     serialMode = 0
+    machines = ""
+    webuidir = ""
     # Script probably won't work right if you change tmpdir from /tmp location
     tmpdir = "/tmp"
     for (o, a) in opts:
@@ -367,8 +389,12 @@ if __name__ == '__main__':
             filename = a
         elif o in ("-b", "--build"):
             builddir = a
+        elif o in ("-m", "--machines"):
+            machines = a
         elif o in ("-r", "--tar"):
             tarProg = a
+        elif o in ("-w", "--webuidir"):
+            webuidir = a
         elif o in ("-t", "--tmpdir"):
             tmpdir = a
         elif o in ("-U", "--uninstall"):
@@ -385,8 +411,11 @@ if __name__ == '__main__':
     config = ConfigParser()
     config.readfp(open(filename, 'r'))
 
+    if machines != "":
+        readChunkserversFile(machines)
+
     if uninstall == 1:
         doUninstall(config)
     else:
-        doInstall(config, builddir, tmpdir, upgrade, serialMode)
+        doInstall(config, builddir, tmpdir, webuidir, upgrade, serialMode)
         

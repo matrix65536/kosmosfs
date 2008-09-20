@@ -23,6 +23,15 @@
 #
 startServer()
 {
+    if [ "$server" = "metaserver" ];
+	then
+	if [ ! -e $WEBUI_PID_FILE ];
+	    then
+	    webui/kfsstatus.py webui/server.conf > webui/tmp.txt < /dev/null 2>&1 &
+	    echo $! > $WEBUI_PID_FILE
+	fi
+    fi
+
     if [ -e $SERVER_PID_FILE ];
     then
 	PROCID=`cat $SERVER_PID_FILE`
@@ -147,6 +156,8 @@ SERVER_PID_FILE=$LOGS_DIR/$server.pid
 CLEANER_LOG_FILE=$LOGS_DIR/$server.cleaner.log
 CLEANER_PID_FILE=$LOGS_DIR/$server.cleaner.pid
 
+WEBUI_PID_FILE=$LOGS_DIR/$server.webui.pid
+
 case $mode in
     "start")
 	startServer
@@ -155,9 +166,15 @@ case $mode in
 	PROG=$server
 	PID_FILE=$SERVER_PID_FILE
 	stopServer
-	PROG=$server.cleaner
-	PID_FILE=$CLEANER_PID_FILE
-	stopServer
+	if [ "$server" = "metaserver" ];
+	then
+	    PROG=$server.cleaner
+	    PID_FILE=$CLEANER_PID_FILE
+	    stopServer
+	    PROG=$server.webui
+	    PID_FILE=$WEBUI_PID_FILE
+	    stopServer
+	fi
 	;;
     *)
 	echo "Need to specify server"
