@@ -27,26 +27,13 @@
 
 =================
 
-Welcome to the Kosmos File System (KFS)!  The doc directory has files that
-you should read before deploying KFS:
+Welcome to the Kosmos File System (KFS)!  The documentation is now on the
+project Wiki:
 
- - LICENSE.txt : Contains the Apache 2.0 license terms.
+http://kosmosfs.wiki.sourceforge.net/
 
- - doc/INTRO.txt: Describes what KFS is about and the set of features
- that are currently implemented.
-
- - doc/COMPILING.txt: Describes how to compile the source code
-
- - doc/DEPLOYING.txt: Describes how to deploy KFS (either on a single
-   node or on a cluster of machines)
-
- - doc/USING.txt: Contains information about to use a KFS deployment.
-   In particular, how to load data into KFS from your local file
-   system for the first time; the set of tools that are included for
-   accessing the KFS directory tree.
-
- - doc/APPS_INT.txt: Describes how to integrate KFS with your
-   applications.
+KFS is being released under the Apache 2.0 license. A copy of the license
+is included in the file LICENSE.txt.
 
 
 DIRECTORY ORGANIZATION
@@ -54,7 +41,6 @@ DIRECTORY ORGANIZATION
  - kfs (top-level directory)
     |
     |---> conf            (sample config files)
-    |---> doc
     |---> examples        (Example client code for accessing KFS)
     |
     |---> src
