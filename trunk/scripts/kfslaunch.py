@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
 # $Id: kfslaunch.py 36 2007-11-12 02:43:36Z sriramsrao $
 #
@@ -33,7 +33,7 @@ import threading
 from ConfigParser import ConfigParser
 
 def usage():
-    print "%s [-f, --file <machines.cfg>] [ [-s, --start] | [-S, --stop] ]\n" % sys.argv[0]
+    print "%s [-f, --file <server.cfg>] [-m, --machines <chunkservers.txt>] [ [-s, --start] | [-S, --stop] ]\n" % sys.argv[0]
 
 class Worker(threading.Thread):
     """Worker thread that runs a command on remote node"""
@@ -44,17 +44,39 @@ class Worker(threading.Thread):
         print "Running cmd %s" % (self.cmd)
         os.system(self.cmd)
 
+def readChunkserversFile(machinesFn):
+    '''Given a list of chunkserver node names, one per line, construct a config
+    for each chunkserver and add that to the config based on the defaults'''
+    global config
+    defaultChunkOptions = config.options("chunkserver_defaults")
+    for l in open(machinesFn, 'r'):
+        line = l.strip()
+        if (line.startswith('#')):
+            # ignore commented out node names
+            continue
+        section_name = "chunkserver_" + line
+        config.add_section(section_name)
+        config.set(section_name, "node", line)
+        for o in defaultChunkOptions:
+            config.set(section_name, o, config.get("chunkserver_defaults", o))
+
+    config.remove_section("chunkserver_defaults")
+
+
 # Specify whether we want to start/stop services
 if __name__ == '__main__':
-    (opts, args) = getopt.getopt(sys.argv[1:], "f:sSh",
-                                 ["file=", "start", "stop", "help"])
+    (opts, args) = getopt.getopt(sys.argv[1:], "f:m:sSh",
+                                 ["file=", "machines=", "start", "stop", "help"])
     op = ""
+    machines = ""
     for (o, a) in opts:
         if o in ("-h", "--help"):
             usage()
             sys.exit(2)
         if o in ("-f", "--file"):
             filename = a
+        elif o in ("-m", "--machines"):
+            machines = a
         elif o in ("-s", "--start"):
             op = "-s"
         elif o in ("-S", "--stop"):
@@ -71,7 +93,10 @@ if __name__ == '__main__':
     config.readfp(open(filename, 'r'))
     if not config.has_section('metaserver'):
         raise config.NoSectionError, "No metaserver section"
-    
+
+    if machines != "":
+        readChunkserversFile(machines)
+
     sections = config.sections()
     workers = []
     for s in sections:
