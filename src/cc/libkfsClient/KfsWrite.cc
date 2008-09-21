@@ -104,7 +104,7 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	if (pos->preferredServer == NULL) {
 	    numIO = OpenChunk(fd);
 	    if (numIO < 0) {
-		// KFS_LOG_VA_DEBUG("OpenChunk(%ld)", numIO);
+		// KFS_LOG_VA_DEBUG("OpenChunk(%lld)", numIO);
 		break;
 	    }
 	}
@@ -129,7 +129,7 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	nwrote += numIO;
 	numIO = Seek(fd, numIO, SEEK_CUR);
 	if (numIO < 0) {
-	    // KFS_LOG_VA_DEBUG("Seek(%ld)", numIO);
+	    // KFS_LOG_VA_DEBUG("Seek(%lld)", numIO);
 	    break;
 	}
     }
@@ -138,7 +138,7 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	return numIO;
 
     if (nwrote != numBytes) {
-	KFS_LOG_VA_DEBUG("----Write done: asked: %lu, got: %lu-----",
+	KFS_LOG_VA_DEBUG("----Write done: asked: %llu, got: %llu-----",
 			  numBytes, nwrote);
     }
     return nwrote;
@@ -251,6 +251,11 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
             
             timeTaken = (endTime.tv_sec - startTime.tv_sec) +
                 (endTime.tv_usec - startTime.tv_usec) * 1e-6;
+
+            if (timeTaken > 5.0) {
+                KFS_LOG_VA_INFO("Writes thru chain for chunk %lld are taking: %.3f secs", 
+                                GetCurrChunk(fd)->chunkId, timeTaken);
+            }
             
             KFS_LOG_VA_DEBUG("Total Time to write data to server(s): %.4f secs", timeTaken);
         }
@@ -340,7 +345,7 @@ KfsClientImpl::DoAllocation(int fd, bool force)
 	assert(chunk != NULL);
 	chunk->didAllocation = true;
 	if (force) {
-	    KFS_LOG_VA_DEBUG("Forced allocation version: %ld",
+	    KFS_LOG_VA_DEBUG("Forced allocation version: %lld",
                              chunk->chunkVersion);
 	}
 	// XXX: This is incorrect...you may double-count for
@@ -441,7 +446,7 @@ KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_
     op.ReleaseContentBuf();
 
     if (numIO >= 0) {
-	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %ld bytes",
+	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes",
 	                 fd, numIO);
     }
     return numIO;
@@ -565,7 +570,7 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	    continue;
 	}
 	if (numIO < 0) {
-	    KFS_LOG_VA_DEBUG("Write failed...chunk = %ld, version = %ld, offset = %ld, bytes = %ld",
+	    KFS_LOG_VA_DEBUG("Write failed...chunk = %lld, version = %lld, offset = %lld, bytes = %lld",
 	                     ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
 	                     ops[0]->numBytes);
             assert(numIO != -EBADF);
@@ -600,11 +605,11 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
     }
 
     if (numIO != (ssize_t) numBytes) {
-	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %ld bytes, was asked %lu bytes",
+	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes, was asked %llu bytes",
 	                 fd, numIO, numBytes);
     }
 
-    KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %ld bytes",
+    KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes",
                      fd, numIO);
 
     return numIO;
