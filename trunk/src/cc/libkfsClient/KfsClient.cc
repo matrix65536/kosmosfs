@@ -784,7 +784,7 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
         fattr.numReplicas = prop.getValue("Replication", 1);
         fattr.fileSize = prop.getValue("File-size", (off_t) -1);
         if (fattr.fileSize != -1) {
-            KFS_LOG_VA_DEBUG("Got file size from server for %s: %ld", 
+            KFS_LOG_VA_DEBUG("Got file size from server for %s: %lld", 
                              fattr.filename.c_str(), fattr.fileSize);
         }
 
@@ -1031,7 +1031,7 @@ KfsClientImpl::Create(const char *pathname, int numReplicas, bool exclusive)
     CreateOp op(nextSeq(), parentFid, filename.c_str(), numReplicas, exclusive);
     (void)DoMetaOpWithRetry(&op);
     if (op.status < 0) {
-	KFS_LOG_VA_DEBUG("status %ld from create RPC", op.status);
+	KFS_LOG_VA_DEBUG("status %d from create RPC", op.status);
 	return op.status;
     }
 
@@ -1087,7 +1087,7 @@ KfsClientImpl::Rename(const char *oldpath, const char *newpath, bool overwrite)
 		    absNewpath.c_str(), overwrite);
     (void)DoMetaOpWithRetry(&op);
 
-    KFS_LOG_VA_DEBUG("Status of renaming %s -> %s is: %ld", 
+    KFS_LOG_VA_DEBUG("Status of renaming %s -> %s is: %d", 
                      oldpath, newpath, op.status);
 
     // update the path cache
@@ -1451,7 +1451,7 @@ KfsClientImpl::AllocChunk(int fd)
 
     (void) DoMetaOpWithRetry(&op);
     if (op.status < 0) {
-	// KFS_LOG_VA_DEBUG("AllocChunk(%ld)", op.status);
+	// KFS_LOG_VA_DEBUG("AllocChunk(%d)", op.status);
 	return op.status;
     }
     ChunkAttr chunk;
@@ -1467,7 +1467,7 @@ KfsClientImpl::AllocChunk(int fd)
         SizeChunk(fd);
     }
 
-    KFS_LOG_VA_DEBUG("Fileid: %ld, chunk : %ld, version: %ld, hosted on:",
+    KFS_LOG_VA_DEBUG("Fileid: %lld, chunk : %lld, version: %lld, hosted on:",
                      fa->fileId, chunk.chunkId, chunk.chunkVersion);
 
     for (uint32_t i = 0; i < op.chunkServers.size(); i++) {
@@ -1514,7 +1514,7 @@ KfsClientImpl::LocateChunk(int fd, int chunkNum)
     (void)DoMetaOpWithRetry(&op);
     if (op.status < 0) {
 	string errstr = ErrorCodeToStr(op.status);
-	KFS_LOG_VA_DEBUG("LocateChunk (%ld): %s", op.status, errstr.c_str());
+	KFS_LOG_VA_DEBUG("LocateChunk (%d): %s", op.status, errstr.c_str());
 	return op.status;
     }
 
@@ -1687,13 +1687,13 @@ KFS::DoOpResponse(KfsOp *op, TcpSocket *sock)
 
 	if (resSeq == op->seq) {
             if (printMatchingResponse) {
-                KFS_LOG_VA_DEBUG("Seq #'s match (after mismatch seq): Expect: %ld, got: %ld",
+                KFS_LOG_VA_DEBUG("Seq #'s match (after mismatch seq): Expect: %lld, got: %lld",
                                  op->seq, resSeq);
 
             }
 	    break;
 	}
-	KFS_LOG_VA_DEBUG("Seq #'s dont match: Expect: %ld, got: %ld",
+	KFS_LOG_VA_DEBUG("Seq #'s dont match: Expect: %lld, got: %lld",
                          op->seq, resSeq);
         printMatchingResponse = true;
 
@@ -1885,7 +1885,7 @@ KfsClientImpl::ComputeFilesize(kfsFileId_t kfsfid)
 	KFS_LOG_DEBUG("Unable to parse layout info");
 	return -1;
     }
-    KFS_LOG_VA_DEBUG("Fileid: %ld, # of chunks: %lu", kfsfid, lop.chunks.size());
+
     if (lop.chunks.size() == 0)
 	return 0;
 
@@ -1904,9 +1904,6 @@ KfsClientImpl::ComputeFilesize(kfsFileId_t kfsfid)
 	}
 	filesize += endsize;
     }
-
-    KFS_LOG_VA_DEBUG("Size of kfsfid = %ld, size = %ld",
-	             kfsfid, filesize);
 
     return filesize;
 }
@@ -2047,7 +2044,7 @@ KfsClientImpl::SizeChunk(int fd)
     (void)DoOpCommon(&op, FdPos(fd)->preferredServer);
     chunk->chunkSize = op.size;
 
-    KFS_LOG_VA_DEBUG("Chunk: %ld, size = %zd",
+    KFS_LOG_VA_DEBUG("Chunk: %lld, size = %zd",
 	             chunk->chunkId, chunk->chunkSize);
 
     return op.status;
@@ -2171,7 +2168,7 @@ KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
     if (IsFileTableEntryValid(fte))
         return fte;
 
-    KFS_LOG_VA_DEBUG("Entry for <%ld, %s> is likely stale; forcing revalidation", 
+    KFS_LOG_VA_DEBUG("Entry for <%lld, %s> is likely stale; forcing revalidation", 
                      parentFid, name);
     // the entry maybe stale; force revalidation
     ReleaseFileTableEntry(fte);
@@ -2354,7 +2351,7 @@ KfsClientImpl::GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
 	start = next + 1; // next points to '/'
     }
 
-    KFS_LOG_VA_DEBUG("file-id for dir: %s (file = %s) is %ld",
+    KFS_LOG_VA_DEBUG("file-id for dir: %s (file = %s) is %lld",
 	             pathstr.c_str(), name.c_str(), *parentFid);
     return 0;
 }

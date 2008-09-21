@@ -104,7 +104,7 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
 	    break;
 
 	if (pos->fileOffset >= (off_t) fa->fileSize) {
-	    KFS_LOG_VA_DEBUG("Current pointer (%ld) is past EOF (%ld) ...so, done",
+	    KFS_LOG_VA_DEBUG("Current pointer (%lld) is past EOF (%lld) ...so, done",
 	                     pos->fileOffset, fa->fileSize);
 	    break;
 	}
@@ -333,7 +333,7 @@ KfsClientImpl::ZeroFillBuf(int fd, char *buf, size_t numBytes)
     // Fill in 0's based on space in the buffer....
     numIO = min(numIO, numBytes);
 
-    // KFS_LOG_DEBUG("Zero-filling %d bytes for read @ %ld", numIO, mFileTable[fd]->currPos.chunkOffset);
+    // KFS_LOG_DEBUG("Zero-filling %d bytes for read @ %lld", numIO, mFileTable[fd]->currPos.chunkOffset);
 
     memset(buf, 0, numIO);
     return numIO;
