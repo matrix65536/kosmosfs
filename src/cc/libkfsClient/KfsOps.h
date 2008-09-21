@@ -72,14 +72,14 @@ enum KfsOp_t {
 struct KfsOp {
     KfsOp_t op;
     kfsSeq_t   seq;
-    ssize_t   status;
+    int32_t   status;
+    uint32_t  checksum; // a checksum over the data
     size_t    contentLength;
     size_t    contentBufLen;
     char      *contentBuf;
-    uint32_t  checksum; // a checksum over the data
     KfsOp (KfsOp_t o, kfsSeq_t s) :
-        op(o), seq(s), status(0), contentLength(0),
-        contentBufLen(0), contentBuf(NULL) , checksum(0)
+        op(o), seq(s), status(0), checksum(0), contentLength(0),
+        contentBufLen(0), contentBuf(NULL)
     { 
     
     }
