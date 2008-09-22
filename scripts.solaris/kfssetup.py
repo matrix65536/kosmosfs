@@ -90,7 +90,7 @@ def setupMeta(section, config, outputFn, packageFn):
         fh = open(confFile, 'w')
         print >> fh, "[webserver]"
         print >> fh, "webServer.metaserverPort = %d" % baseport
-        print >> fh, "webServer.port = %d" % (baseport + 1)
+        print >> fh, "webServer.port = %d" % (baseport + 50)
         print >> fh, "webServer.allMachinesFn = %s/webui/all-machines.txt" % rundir
         print >> fh, "webServer.docRoot = %s/webui/files" % rundir
         fh.close()
