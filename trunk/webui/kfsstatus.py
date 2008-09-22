@@ -82,7 +82,7 @@ class DownServer:
         else:
             trclass = "class=odd"
 
-        if self.down:
+        if self.stillDown:
             trclass = "class=dead"
         
         print >> buffer, '''<tr ''', trclass, '''><td align="center">''', self.host, '''</td>'''
@@ -341,7 +341,7 @@ def printStyle(buffer):
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <link rel="stylesheet" type="text/css" href="files/kfsstyle.css"/>
-<script type="text/javascript" src="files/sorttable/sorttable.js" />
+<script type="text/javascript" src="files/sorttable/sorttable.js"></script>
 <title>KFS Status</title>
 </head>
 '''
@@ -430,7 +430,7 @@ def printRackViewHTML(rack, servers, buffer):
     print >> buffer, '''
     <div class="floatleft">
      <table class="network-status-table" cellspacing="0" cellpadding="0.1em" summary="Status of nodes in the rack ''', rack, ''' ">
-     <tbody>'''
+     <tbody><tr><td><b>Rack : ''', rack,'''</b></td></tr>'''
     count = 0
     for s in servers:
         s.printHTML(buffer, count)
@@ -445,7 +445,24 @@ def rackView(buffer):
 <body class="oneColLiqCtr">
 <div id="container">
   <div id="mainContent">
-    <p> Number of nodes: ''', numNodes, '''</p>'''    
+	  <table width=100%>
+		  <tr>
+			  <td>
+         <p> Number of nodes: ''', numNodes, ''' </p>
+				</td>
+				<td align=right>
+					<table class="network-status-table" font-size=14>
+					<tbody>
+					  <tr class=notstarted><td></td><td>Not Started</td></tr>
+						<tr class=dead><td></td><td>Dead Node</td></tr>
+						<tr class=retiring><td></td><td>Retiring Node</td></tr>
+						<tr class=><td ></td><td>Healthy</td></tr>
+					</tbody>
+				  </table>
+			  </td>
+		  </tr>
+	  </table>
+		<hr>'''  
     for rack, servers in serversByRack.iteritems():
         printRackViewHTML(rack, servers, buffer)
 
@@ -485,7 +502,7 @@ class Pinger(SimpleHTTPServer.SimpleHTTPRequestHandler):
             txtStream = StringIO()
                 
             printStyle(txtStream)            
-            if self.path.startswith('/rack-view'):
+            if self.path.startswith('/cluster-view'):
                 rackView(txtStream)
             else:
                 systemStatus(txtStream)
@@ -504,18 +521,26 @@ class Pinger(SimpleHTTPServer.SimpleHTTPRequestHandler):
 if __name__ == '__main__':
     PORT=20001
     allMachinesFile = ""
-    if len(sys.argv) == 2:
-        config = ConfigParser()
-        config.readfp(open(sys.argv[1], 'r'))
-        metaserverPort = config.getint('webserver', 'webServer.metaserverPort')
-        docRoot = config.get('webserver', 'webServer.docRoot')
-        PORT = config.getint('webserver', 'webServer.port')
-        allMachinesFile = config.get('webserver', 'webServer.allMachinesFn')
+    if len(sys.argv) != 2:
+        print "Usage : ./kfsstatus.py <server.conf>"
+        sys.exit()
+        
+    if not os.path.exists(sys.argv[1]):
+        print "Unable to open ", sys.argv[1]
+        sys.exit()
+
+    config = ConfigParser()
+    config.readfp(open(sys.argv[1], 'r'))
+    metaserverPort = config.getint('webserver', 'webServer.metaserverPort')
+    docRoot = config.get('webserver', 'webServer.docRoot')
+    PORT = config.getint('webserver', 'webServer.port')
+    allMachinesFile = config.get('webserver', 'webServer.allMachinesFn')
 
     if not os.path.exists(allMachinesFile):
         print "Unable to open all machines file: ", allMachinesFile
     else:
         # Read in the list of nodes that we should be running a chunkserver on
+        print "Starting HttpServer..."
         for line in open(allMachinesFile, 'r'):
             s = socket.gethostbyname(line.strip())
             rackId = int(s.split('.')[2])
