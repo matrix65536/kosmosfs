@@ -46,7 +46,7 @@ MsgLogger::Init(const char *filename, log4cpp::Priority::Value priority)
                                                     100 * 1024 * 1024, 10);
     }
     else
-        appender = new log4cpp::OstreamAppender("default", &std::cout);
+        appender = new log4cpp::OstreamAppender("default", &std::cerr);
 
     appender->setLayout(layout);
 
