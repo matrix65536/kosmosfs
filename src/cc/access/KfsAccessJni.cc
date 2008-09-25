@@ -305,12 +305,10 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_open(
     setStr(path, jenv, jpath);
     setStr(mode, jenv, jmode);
 
-    if (mode == "r")
-        openMode = O_RDONLY;
+    if ((mode == "r") || (mode == "rw"))
+        openMode = O_RDWR;
     else if (mode == "w")
         openMode = O_WRONLY|O_CREAT;
-    else if (mode == "rw")
-        openMode = O_RDWR;
     else if (mode == "a")
         openMode = O_WRONLY | O_APPEND;
 
