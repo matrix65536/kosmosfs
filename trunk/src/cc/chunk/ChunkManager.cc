@@ -1596,7 +1596,8 @@ public:
         ChunkInfoHandle_t *cih  = v.second;
         
         if ((!cih->dataFH) || (cih->dataFH->mFd < 0) ||
-            (now - cih->lastIOTime < INACTIVE_FDS_CLEANUP_INTERVAL_SECS))
+            (now - cih->lastIOTime < INACTIVE_FDS_CLEANUP_INTERVAL_SECS) ||
+            (cih->isBeingReplicated))
             return;
 
         // we have a valid file-id and it has been over 5 mins since we last did I/O on it.
