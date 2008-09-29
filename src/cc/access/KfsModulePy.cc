@@ -226,11 +226,13 @@ modeflag(const char *modestr)
 	int mode = -1;
 
 	if (strcmp(modestr, "r") == 0)
-		mode = O_RDONLY;
+		mode = O_RDWR;
 	else if (strcmp(modestr, "w") == 0)
 		mode = O_WRONLY;
 	else if (strcmp(modestr, "r+") == 0 || strcmp(modestr, "w+") == 0)
 		mode = O_RDWR;
+	else if (strcmp(modestr, "a") == 0)
+		mode = O_WRONLY | O_APPEND;
 
 	return mode;
 }
@@ -543,7 +545,7 @@ kfs_tell(PyObject *pself, PyObject *args)
 		PyErr_SetString(PyExc_IOError, strerror(-pos));
 		return NULL;
 	}
-	Py_RETURN_NONE;
+	return Py_BuildValue("i", pos);
 }
 
 static PyMethodDef File_methods[] = {
