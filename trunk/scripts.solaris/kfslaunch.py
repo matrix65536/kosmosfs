@@ -115,7 +115,7 @@ if __name__ == '__main__':
         else:
             runargs = "-c -f bin/ChunkServer.prp"
             
-        cmd = "ssh %s 'cd %s; scripts/kfsrun.sh %s %s ' " % \
+        cmd = "ssh -o StrictHostKeyChecking=no %s 'cd %s; scripts/kfsrun.sh %s %s ' " % \
               (node, rundir, op, runargs)
         w = Worker(cmd)
         workers.append(w)

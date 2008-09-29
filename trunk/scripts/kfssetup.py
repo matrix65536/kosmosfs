@@ -61,9 +61,14 @@ from ConfigParser import ConfigParser
 unitsScale = {'g' : 1 << 30, 'm' : 1 << 20, 'k' : 1 << 10, 'b' : 1}
 tarProg = 'gtar'
 maxConcurrent = 25
+chunkserversOnly = 0
 
 def setupMeta(section, config, outputFn, packageFn):
     """ Setup the metaserver binaries/config files on a node. """
+    global chunkserversOnly
+    if chunkserversOnly > 0:
+        print "Chunkservers only is set; not doing meta"
+        return
     key = config.get(section, 'clusterkey')    
     baseport = config.getint(section, 'baseport')
     rundir = config.get(section, 'rundir')
@@ -217,12 +222,14 @@ class InstallWorker(threading.Thread):
     def doInstall(self):
         fn = os.path.basename(self.packageFn)
         if (self.section == 'metaserver'):
-            c = "scp -q %s kfsinstall.sh %s:/tmp/; ssh %s 'mv /tmp/%s /tmp/kfspkg.tgz; sh /tmp/kfsinstall.sh %s %s ' " % \
+            if chunkserversOnly > 0:
+                return
+            c = "scp -pr -o StrictHostKeyChecking=no -q %s kfsinstall.sh %s:/tmp/; ssh -o StrictHostKeyChecking=no %s 'mv /tmp/%s /tmp/kfspkg.tgz; sh /tmp/kfsinstall.sh %s %s ' " % \
                 (self.packageFn, self.dest, self.dest, fn, self.mode, self.installArgs)
         else:
             # chunkserver
             configFn = os.path.basename(self.configOutputFn)
-            c = "scp -q %s kfsinstall.sh %s %s:/tmp/; ssh %s 'mv /tmp/%s /tmp/kfspkg.tgz; mv /tmp/%s /tmp/ChunkServer.prp; sh /tmp/kfsinstall.sh %s %s ' " % \
+            c = "scp -pr -o StrictHostKeyChecking=no -q %s kfsinstall.sh %s %s:/tmp/; ssh -o StrictHostKeyChecking=no %s 'mv /tmp/%s /tmp/kfspkg.tgz; mv /tmp/%s /tmp/ChunkServer.prp; sh /tmp/kfsinstall.sh %s %s ' " % \
                 (self.packageFn, self.configOutputFn, self.dest, self.dest, fn, configFn, self.mode, self.installArgs)
             
         os.system(c)
@@ -234,7 +241,7 @@ class InstallWorker(threading.Thread):
         else:
             c = "rm -f %s" % (self.configOutputFn)
         os.system(c)
-        c = "ssh %s 'rm -f /tmp/install.sh /tmp/kfspkg.tgz' " % self.dest
+        c = "ssh -o StrictHostKeyChecking=no %s 'rm -f /tmp/install.sh /tmp/kfspkg.tgz' " % self.dest
         os.system(c)
         
     def run(self):
@@ -337,7 +344,7 @@ def doUninstall(config):
                 chunkDir = "%s/bin/kfschunk" % (rundir)
             otherArgs = "-c \"%s\"" % (chunkDir)
         
-        cmd = "ssh %s 'cd %s; sh scripts/kfsinstall.sh -U -d %s %s' " % \
+        cmd = "ssh -o StrictHostKeyChecking=no %s 'cd %s; sh scripts/kfsinstall.sh -U -d %s %s' " % \
               (node, rundir, rundir, otherArgs)
         # print "Uninstall cmd: %s\n" % cmd
         # os.system(cmd)
@@ -369,8 +376,8 @@ def readChunkserversFile(machinesFn):
     config.remove_section("chunkserver_defaults")
 
 if __name__ == '__main__':
-    (opts, args) = getopt.getopt(sys.argv[1:], "b:f:m:r:t:w:hsUu",
-                                 ["build=", "file=", "machines=", "tar=", "tmpdir=",
+    (opts, args) = getopt.getopt(sys.argv[1:], "cb:f:m:r:t:w:hsUu",
+                                 ["chunkserversOnly", "build=", "file=", "machines=", "tar=", "tmpdir=",
                                   "webui=", "help", "serialMode", "uninstall", "upgrade"])
     filename = ""
     builddir = ""
@@ -379,6 +386,7 @@ if __name__ == '__main__':
     serialMode = 0
     machines = ""
     webuidir = ""
+    chunkserversOnly = 0
     # Script probably won't work right if you change tmpdir from /tmp location
     tmpdir = "/tmp"
     for (o, a) in opts:
@@ -389,6 +397,8 @@ if __name__ == '__main__':
             filename = a
         elif o in ("-b", "--build"):
             builddir = a
+        elif o in ("-c", "--chunkserversOnly"):
+            chunkserversOnly = 1
         elif o in ("-m", "--machines"):
             machines = a
         elif o in ("-r", "--tar"):
