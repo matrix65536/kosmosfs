@@ -45,6 +45,7 @@ extern "C" {
 #define MAX_FILE_NAME_LEN 256
 
 using std::cout;
+using std::cerr;
 using std::endl;
 using std::ofstream;
 
@@ -107,6 +108,7 @@ main(int argc, char **argv)
     if (help || (kfsPath == "") || (localPath == "") || (serverHost == "") || (port < 0)) {
         cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> "
              << " -k <kfs source path> -d <local path> {-v} " << endl;
+        cout << "<local path> of - means stdout and is supported only if <kfs path> is a file" << endl;
         exit(0);
     }
 
@@ -170,6 +172,9 @@ RestoreFile(string &kfsPath, string &localPath)
 	    filename.assign(localPath, slash + 1, string::npos);
 	}
     }
+
+    if (localPath == "-")
+        statInfo.st_mode = S_IFREG;
     
     if (S_ISDIR(statInfo.st_mode)) {
 	return RestoreFile2(kfsPath, localParentDir + "/" + filename);
@@ -233,9 +238,9 @@ RestoreFile2(string kfsfilename, string localfilename)
     const int bufsize = 65536;
     char kfsBuf[bufsize];
     int kfsfd, n = 0, nRead, toRead;
-    ofstream ofs;
+    int localFd;
 
-    cout << "Restoring: " << localfilename << endl;
+    cerr << "Restoring: " << localfilename << endl;
 
     kfsfd = gKfsClient->Open((char *) kfsfilename.c_str(), O_RDONLY);
     if (kfsfd < 0) {
@@ -243,13 +248,18 @@ RestoreFile2(string kfsfilename, string localfilename)
         exit(-1);
     }
 
-    ofs.open(localfilename.c_str(), std::ios_base::out);
-    if (!ofs) {
+    if (localfilename == "-")
+        // send to stdout
+        localFd = dup(1);
+    else
+        localFd = open(localfilename.c_str(), O_WRONLY | O_CREAT, S_IRUSR|S_IWUSR);
+
+    if (localFd < 0) {
         cout << "Unable to open: " << localfilename << endl;
         exit(-1);
     }
     
-    while (!ofs.eof()) {
+    while (1) {
         toRead = bufsize;
 
         nRead = gKfsClient->Read(kfsfd, kfsBuf, toRead);
@@ -258,9 +268,10 @@ RestoreFile2(string kfsfilename, string localfilename)
             break;
         }
         n += nRead;
-        ofs.write(kfsBuf, nRead);
+        write(localFd, kfsBuf, nRead);
     }
     gKfsClient->Close(kfsfd);
+    close(localFd);
     return 0;
 
 }

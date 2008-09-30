@@ -84,7 +84,7 @@ main(int argc, char **argv)
     string kfsPath = "";
     string serverHost = "";
     int port = -1;
-    char *sourcePath = NULL;
+    string sourcePath = "";
     bool help = false;
     bool verboseLogging = false;
     char optchar;
@@ -119,9 +119,10 @@ main(int argc, char **argv)
         }
     }
 
-    if (help || (sourcePath == NULL) || (kfsPath == "") || (serverHost == "") || (port < 0)) {
+    if (help || (sourcePath == "") || (kfsPath == "") || (serverHost == "") || (port < 0)) {
         cout << "Usage: " << argv[0] << " -s <meta server name> -p <port> "
              << " -d <source path> -k <Kfs path> {-v}" << endl;
+        cout << "<source path> of - means stdin and is supported only if <kfs path> is a file" << endl;
         exit(-1);
     }
 
@@ -137,25 +138,26 @@ main(int argc, char **argv)
         KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
     } 
 
-    if (stat(sourcePath, &statInfo) < 0) {
-	cout << "Source path: " << sourcePath << " is non-existent!" << endl;
+    statInfo.st_mode = S_IFREG;
+    if ((sourcePath != "-") && (stat(sourcePath.c_str(), &statInfo) < 0)) {
+        KFS_LOG_VA_INFO("Source path: %s is non-existent", sourcePath.c_str());
 	exit(-1);
     }
 
     if (!S_ISDIR(statInfo.st_mode)) {
-	BackupFile(sourcePath, kfsPath);
+	BackupFile(sourcePath.c_str(), kfsPath);
 	exit(0);
     }
 
-    if ((dirp = opendir(sourcePath)) == NULL) {
+    if ((dirp = opendir(sourcePath.c_str())) == NULL) {
 	perror("opendir: ");
         exit(-1);
     }
 
     // when doing cp -r a/b kfs://c, we need to create c/b in KFS.
-    MakeKfsLeafDir(sourcePath, kfsPath);
+    MakeKfsLeafDir(sourcePath.c_str(), kfsPath);
 
-    BackupDir(sourcePath, kfsPath);
+    BackupDir(sourcePath.c_str(), kfsPath);
 
     closedir(dirp);
 }
@@ -261,7 +263,11 @@ BackupFile2(string srcfilename, string kfsfilename)
     int srcFd;
     int res;
 
-    srcFd = open(srcfilename.c_str(), O_RDONLY);
+    if (srcfilename == "-")
+        // dup stdin() and read from there
+        srcFd = dup(0);
+    else
+        srcFd = open(srcfilename.c_str(), O_RDONLY);
     if (srcFd  < 0) {
         cout << "Unable to open: " << srcfilename.c_str() << endl;
         exit(-1);
