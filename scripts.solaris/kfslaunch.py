@@ -28,7 +28,7 @@
 # Use machines.cfg
 #
 
-import os,os.path,sys,getopt
+import os,os.path,sys,getopt,popen2
 import threading
 from ConfigParser import ConfigParser
 
@@ -37,12 +37,16 @@ def usage():
 
 class Worker(threading.Thread):
     """Worker thread that runs a command on remote node"""
-    def __init__(self, c):
+    def __init__(self, c, n):
         threading.Thread.__init__(self)
         self.cmd = c
+        self.node = n
     def run(self):
-        print "Running cmd %s" % (self.cmd)
-        os.system(self.cmd)
+        # capture stderr and ignore the hostkey has changed message
+        p = popen2.Popen3(self.cmd, True)
+        for out in p.fromchild:
+            if len(out) > 1:
+                print '[%s]: %s' % (self.node, out[:-1])
 
 def readChunkserversFile(machinesFn):
     '''Given a list of chunkserver node names, one per line, construct a config
@@ -117,12 +121,11 @@ if __name__ == '__main__':
             
         cmd = "ssh -o StrictHostKeyChecking=no %s 'cd %s; scripts/kfsrun.sh %s %s ' " % \
               (node, rundir, op, runargs)
-        w = Worker(cmd)
+        w = Worker(cmd, node)
         workers.append(w)
         w.start()
         # os.system(cmd)
 
-    print "Started all the workers..waiting for them to finish"        
     for i in xrange(len(workers)):
         workers[i].join(120.0)
     sys.exit(0)
