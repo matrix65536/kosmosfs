@@ -56,6 +56,7 @@ installServer()
 	-c|--chunk)
 	    mv /tmp/ChunkServer.prp $serverDir/bin/ChunkServer.prp
 	    mkdir -p $serverDir/bin/kfslog
+	    mkdir -p $chunkDir
 	    ;;
 	*)
 	    echo "Unknown server"
@@ -74,7 +75,6 @@ upgradeServer()
 	exit -1
     fi
 
-    sh $serverDir/scripts/kfsrun.sh --stop $serverType 
     cd $serverDir; $tarProg -zxf /tmp/kfspkg.tgz 
     case $serverType in
 	-m|--meta) 
