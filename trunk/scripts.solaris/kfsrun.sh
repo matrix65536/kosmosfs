@@ -50,7 +50,7 @@ startServer()
 	echo "No config file...Not starting $server"
 	exit -1
     fi
-    echo "`hostname`: Starting $server..."
+    echo "Starting $server..."
     export LD_LIBRARY_PATH=`pwd`/lib:$LD_LIBRARY_PATH
 #    export UMEM_DEBUG=default
 #    export UMEM_LOGGING=transaction
@@ -67,7 +67,7 @@ startServer()
 
     if [ ! -e $CLEANER_PID_FILE ];
 	then
-	echo "`hostname`: Starting cleaner..."
+	echo "Starting cleaner..."
 	if [ -n "$backup_node" ];
 	    then
 	    # Once an hour, clean/backup stuff
@@ -89,7 +89,7 @@ startServer()
 
 stopServer()
 {
-    echo -n $"`hostname`: Stopping $PROG: "
+    echo -n $"Stopping $PROG: "
 
     if [[ ! -e $PID_FILE ]]; 
 	then
@@ -107,7 +107,7 @@ stopServer()
     PROC_COUNT=`ps -ef | awk '{print $2}'  | grep -c $PROCID`
     if [[ $PROC_COUNT -gt  0 ]]; 
 	then
-	echo -n $"`hostname`: Stopping $prog ( $PROCID )"
+	echo -n $"Stopping $prog ( $PROCID )"
 	kill -TERM $PROCID
     fi;
 
