@@ -2,7 +2,7 @@
 // $Id$ 
 //
 // Created 2006/03/22
-// Author: Blake Lewis 
+// Author: Blake Lewis
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -23,7 +23,7 @@
 //
 // \file Main.cc
 // \brief Driver code that starts up the meta server
-// 
+//
 //----------------------------------------------------------------------------
 
 #include <signal.h>
@@ -89,7 +89,7 @@ main(int argc, char **argv)
         // connection.
         //
         signal(SIGPIPE, SIG_IGN);
-    
+
         gNetDispatch.Start(gClientPort, gChunkServerPort);
 
         while (1) {
@@ -102,11 +102,11 @@ main(int argc, char **argv)
                 FD_SET(0, &rfds);
                 select(1, &rfds, NULL, NULL, &timeout);
         	// block the main thread without consuming too much CPU
-		// if the net dispatch thread has gotten going, this method 
+		// if the net dispatch thread has gotten going, this method
 		// never returns
 		gNetDispatch.WaitToFinish();
         }
-        
+
 
         return 0;
 }
@@ -164,7 +164,7 @@ ReadMetaServerProperties(char *fileName)
 
 	if (wormMode) {
 		cout << "Enabling WORM mode" << endl;
-		setWORMMode();
+		setWORMMode(wormMode);
 	}
 
 	logLevel = gProp.getValue("metaServer.loglevel", defLogLevel);
@@ -172,6 +172,6 @@ ReadMetaServerProperties(char *fileName)
 	        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
 	else
 		KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
-	
+
         return 0;
 }

@@ -3,7 +3,7 @@
  *
  * \file request.cc
  * \brief process queue of outstanding metadata requests
- * \author Blake Lewis and Sriram Rao 
+ * \author Blake Lewis and Sriram Rao
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.
@@ -77,6 +77,7 @@ static int parseHandlerPing(Properties &prop, MetaRequest **r);
 static int parseHandlerStats(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r);
 static int parseHandlerOpenFiles(Properties &prop, MetaRequest **r);
+static int parseHandlerToggleWORM(Properties &prop, MetaRequest **r);
 
 /// command -> parsehandler map
 typedef map<string, ParseHandler> ParseHandlerMap;
@@ -175,7 +176,7 @@ UpdateCounter(MetaOp opName)
 void
 KFS::ChangeIncarnationNumber(MetaRequest *r)
 {
-	if (chunkVersionInc < 1) 
+	if (chunkVersionInc < 1)
 		// disable this bumping for now
 		++chunkVersionInc;
 	MetaChangeChunkVersionInc *ccvi = new MetaChangeChunkVersionInc(chunkVersionInc, r);
@@ -195,12 +196,12 @@ KFS::setClusterKey(const char *key)
 }
 
 /*
- * In WORM mode, deletes are disabled.
+ * Set WORM mode. In WORM mode, deletes are disabled.
  */
 void
-KFS::setWORMMode()
+KFS::setWORMMode(bool value)
 {
-	gWormMode = true;
+	gWormMode = value;
 }
 
 /*
@@ -709,6 +710,13 @@ handle_toggle_rebalancing(MetaRequest *r)
 }
 
 static void
+handle_toggle_worm(MetaRequest *r) {
+	MetaToggleWORM *req = static_cast <MetaToggleWORM *>(r);
+   	setWORMMode(req->value);
+	req->status = 0;
+}
+
+static void
 handle_execute_rebalanceplan(MetaRequest *r)
 {
 	MetaExecuteRebalancePlan *req = static_cast <MetaExecuteRebalancePlan *>(r);
@@ -904,6 +912,7 @@ setup_handlers()
 	handler[META_RETIRE_CHUNKSERVER] = handle_retire_chunkserver;
 	handler[META_TOGGLE_REBALANCING] = handle_toggle_rebalancing;
 	handler[META_EXECUTE_REBALANCEPLAN] = handle_execute_rebalanceplan;
+	handler[META_TOGGLE_WORM] = handle_toggle_worm;
 	// Chunk server -> Meta server op
 	handler[META_HELLO] = handle_hello;
 	handler[META_BYE] = handle_bye;
@@ -950,6 +959,7 @@ setup_handlers()
 	gParseHandlers["HELLO"] = parseHandlerHello;
 
 	gParseHandlers["PING"] = parseHandlerPing;
+	gParseHandlers["TOGGLE_WORM"] = parseHandlerToggleWORM;
 	gParseHandlers["STATS"] = parseHandlerStats;
 	gParseHandlers["DUMP_CHUNKTOSERVERMAP"] = parseHandlerDumpChunkToServerMap;
 	gParseHandlers["OPEN_FILES"] = parseHandlerOpenFiles;
@@ -1164,6 +1174,15 @@ MetaRetireChunkserver::log(ofstream &file) const
  */
 int
 MetaToggleRebalancing::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief log toggling of metaserver WORM state (nop)
+ */
+int
+MetaToggleWORM::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1488,11 +1507,11 @@ parseHandlerCreate(Properties &prop, MetaRequest **r)
 	name = prop.getValue("Filename", (const char *) NULL);
 	if (name == NULL)
 		return -1;
-	// cap replication 
+	// cap replication
 	numReplicas = min((int16_t) prop.getValue("Num-replicas", 1), MAX_REPLICAS_PER_FILE);
 	if (numReplicas <= 0)
 		return -1;
-	// by default, create overwrites the file; when it is turned off, 
+	// by default, create overwrites the file; when it is turned off,
 	// it is for supporting O_EXCL
 	exclusive = (prop.getValue("Exclusive", 1)) == 1;
 
@@ -1749,7 +1768,7 @@ parseHandlerHello(Properties &prop, MetaRequest **r)
 	}
 	key = prop.getValue("Cluster-key", "");
 	if (key != gClusterKey) {
-		KFS_LOG_VA_INFO("cluster key mismatch: we have %s, chunkserver sent us %s", 
+		KFS_LOG_VA_INFO("cluster key mismatch: we have %s, chunkserver sent us %s",
 				gClusterKey.c_str(), key.c_str());
 		hello->status = -EBADCLUSTERKEY;
 	}
@@ -1823,6 +1842,22 @@ parseHandlerPing(Properties &prop, MetaRequest **r)
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
 
 	*r = new MetaPing(seq);
+	return 0;
+}
+
+/*!
+ * \brief Parse out the headers from a TOGGLE_WORM message.
+ */
+int
+parseHandlerToggleWORM(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	// 1 is enable; 0 is disable
+	int value = prop.getValue("Toggle-WORM", 0);
+	bool v = (value == 1);
+
+	*r = new MetaToggleWORM(seq, v);
+	KFS_LOG_VA_INFO("Toggle WORM: %d", value);
 	return 0;
 }
 
@@ -2154,6 +2189,14 @@ MetaRetireChunkserver::response(ostringstream &os)
 
 void
 MetaToggleRebalancing::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
+MetaToggleWORM::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
