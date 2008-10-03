@@ -70,11 +70,12 @@ enum MetaOp {
 	META_LOG_ROLLOVER,
 	META_CHANGE_FILE_REPLICATION, //! < Client is asking for a change in file's replication factor
 	//!< Admin is notifying us to retire a chunkserver
-	META_RETIRE_CHUNKSERVER, 
+	META_RETIRE_CHUNKSERVER,
 	//!< Admin is notifying us to toggle rebalancing
 	META_TOGGLE_REBALANCING,
 	//!< Admin is notifying us to execute a rebalance plan
 	META_EXECUTE_REBALANCEPLAN,
+	META_TOGGLE_WORM, //!< Toggle metaserver's WORM mode
 	//!< Metadata server <-> Chunk server ops
 	META_HELLO,  //!< Hello RPC sent by chunkserver on startup
 	META_BYE,  //!< Internally generated op whenever a chunkserver goes down
@@ -90,7 +91,7 @@ enum MetaOp {
 	META_CHUNK_CORRUPT, //!< Chunkserver is notifying us that a chunk is corrupt
 	//!< All the blocks on the retiring server have been evacuated and the
 	//!< server can safely go down.  We are asking the server to take a graceful bow
-	META_CHUNK_RETIRE, 
+	META_CHUNK_RETIRE,
 	//!< Lease related messages
 	META_LEASE_ACQUIRE,
 	META_LEASE_RENEW,
@@ -103,7 +104,7 @@ enum MetaOp {
 	META_PING, //!< Print out chunkserves and their configs
 	META_STATS, //!< Print out whatever statistics/counters we have
 	META_DUMP_CHUNKTOSERVERMAP, //! < Dump out the chunk -> location map
-	META_OPEN_FILES //!< Print out open files---for which there is a valid read/write lease 
+	META_OPEN_FILES //!< Print out open files---for which there is a valid read/write lease
 
 };
 
@@ -145,7 +146,7 @@ struct MetaLookup: public MetaRequest {
 		MetaRequest(META_LOOKUP, s, false), dir(d), name(n) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -166,7 +167,7 @@ struct MetaLookupPath: public MetaRequest {
 		MetaRequest(META_LOOKUP_PATH, s, false), root(r), path(p) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -190,7 +191,7 @@ struct MetaCreate: public MetaRequest {
 		name(n), numReplicas(r), exclusive(e) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -212,7 +213,7 @@ struct MetaMkdir: public MetaRequest {
 		MetaRequest(META_MKDIR, s, true), dir(d), name(n) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -232,7 +233,7 @@ struct MetaRemove: public MetaRequest {
 		MetaRequest(META_REMOVE, s, true), dir(d), name(n) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -252,7 +253,7 @@ struct MetaRmdir: public MetaRequest {
 		MetaRequest(META_RMDIR, s, true), dir(d), name(n) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -272,7 +273,7 @@ struct MetaReaddir: public MetaRequest {
 		MetaRequest(META_READDIR, s, false), dir(d) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -292,7 +293,7 @@ struct MetaReaddirPlus: public MetaRequest {
 		MetaRequest(META_READDIRPLUS, s, false), dir(d) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -314,7 +315,7 @@ struct MetaGetalloc: public MetaRequest {
 		MetaRequest(META_GETALLOC, s, false), fid(f), offset(o) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -356,7 +357,7 @@ struct MetaGetlayout: public MetaRequest {
 		MetaRequest(META_GETLAYOUT, s, false), fid(f) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -391,7 +392,7 @@ struct MetaAllocate: public MetaRequest {
 		offset(o), layoutDone(false), numServerReplies(0) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -411,7 +412,7 @@ struct MetaTruncate: public MetaRequest {
 		MetaRequest(META_TRUNCATE, s, true), fid(f), offset(o) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -434,7 +435,7 @@ struct MetaRename: public MetaRequest {
 			oldname(o), newname(n), overwrite(c) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -455,7 +456,7 @@ struct MetaChangeFileReplication: public MetaRequest {
 		MetaRequest(META_CHANGE_FILE_REPLICATION, s, true), fid(f), numReplicas(n) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -466,11 +467,11 @@ struct MetaChangeFileReplication: public MetaRequest {
 };
 
 /*!
- * \brief Notification to hibernate/retire a chunkserver: 
+ * \brief Notification to hibernate/retire a chunkserver:
  * Hibernation: when the server is put
  * in hibernation mode, the server is taken down temporarily with a promise that
  * it will come back N secs later; if the server doesnt' come up as promised
- * then re-replication starts.  
+ * then re-replication starts.
  *
  * Retirement: is extended downtime.  The server is taken down and we don't know
  * if it will ever come back.  In this case, we use this server (preferably)
@@ -485,7 +486,7 @@ struct MetaRetireChunkserver : public MetaRequest {
 		nSecsDown(d) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		if (nSecsDown > 0)
 			return "Hibernating server: " + location.ToString();
@@ -504,7 +505,7 @@ struct MetaToggleRebalancing : public MetaRequest {
 		MetaRequest(META_TOGGLE_REBALANCING, s, false), value(v) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		if (value)
 			return "Toggle rebalancing: Enable";
@@ -523,7 +524,7 @@ struct MetaExecuteRebalancePlan : public MetaRequest {
 		MetaRequest(META_EXECUTE_REBALANCEPLAN, s, false), planPathname(p) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
-	string Show() 
+	string Show()
 	{
 		return "Execute rebalance plan : " + planPathname;
 	}
@@ -559,7 +560,7 @@ struct MetaChangeChunkVersionInc : public MetaRequest {
 		MetaRequest(META_CHANGE_CHUNKVERSIONINC, 0, true),
 		cvi(n), req(r) { }
 	int log(ofstream &file) const;
-	string Show() 
+	string Show()
 	{
 		ostringstream os;
 
@@ -726,10 +727,10 @@ struct MetaChunkReplicate: public MetaChunkRequest {
 	seq_t chunkVersion; //!< output: the chunkservers tells us what it did
 	ServerLocation srcLocation; //!< where to get a copy from
 	ChunkServerPtr server;  //!< "dest" on which we put a copy
-	MetaChunkReplicate(seq_t n, ChunkServer *s, 
+	MetaChunkReplicate(seq_t n, ChunkServer *s,
 			fid_t f, chunkId_t c, seq_t v,
 			const ServerLocation &l):
-		MetaChunkRequest(META_CHUNK_REPLICATE, n, false, NULL, s), 
+		MetaChunkRequest(META_CHUNK_REPLICATE, n, false, NULL, s),
 		fid(f), chunkId(c), chunkVersion(v), srcLocation(l) { }
 	//!< generate the request string that should be sent out
 	void request(ostringstream &os);
@@ -756,7 +757,7 @@ struct MetaChunkSize: public MetaChunkRequest {
 			//!< find the entry we need.
 	chunkId_t chunkId; //!< input: the chunk whose size we need
 	off_t chunkSize; //!< output: the chunk size
-	MetaChunkSize(seq_t n, ChunkServer *s, fid_t f, chunkId_t c) : 
+	MetaChunkSize(seq_t n, ChunkServer *s, fid_t f, chunkId_t c) :
 		MetaChunkRequest(META_CHUNK_SIZE, n, false, NULL, s),
 		fid(f), chunkId(c), chunkSize(-1) { }
 	//!< generate the request string that should be sent out
@@ -845,6 +846,24 @@ struct MetaPing: public MetaRequest {
 	}
 };
 
+/*!
+ * \brief To toggle WORM mode of metaserver a client/tool can send a
+ * TOGGLE_WORM request. In response, the server changes its WORM state.
+ */
+struct MetaToggleWORM: public MetaRequest {
+	bool value; // !< Enable/disable WORM
+	MetaToggleWORM(seq_t s, bool v):
+		MetaRequest(META_TOGGLE_WORM, s, false), value(v) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		if (value)
+			return "Toggle WORM: Enabled";
+		else
+			return "Toggle WORM: Disabled";
+	}
+};
 /*!
  * \brief For monitoring purposes, a client/tool can send a STATS
  * request.  In response, the server replies with the list of all
@@ -1011,7 +1030,7 @@ extern void printleaves();
 extern void ChangeIncarnationNumber(MetaRequest *r);
 extern void RegisterCounters();
 extern void setClusterKey(const char *key);
-extern void setWORMMode();
+extern void setWORMMode(bool value);
 
 }
 #endif /* !defined(KFS_REQUEST_H) */
