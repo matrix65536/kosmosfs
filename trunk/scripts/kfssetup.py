@@ -25,7 +25,7 @@
 #
 
 import os,sys,os.path,getopt
-import socket,threading
+import socket,threading,popen2
 from ConfigParser import ConfigParser
 
 # Use the python config parser to parse out machines setup
@@ -231,8 +231,12 @@ class InstallWorker(threading.Thread):
             configFn = os.path.basename(self.configOutputFn)
             c = "scp -pr -o StrictHostKeyChecking=no -q %s kfsinstall.sh %s %s:/tmp/; ssh -o StrictHostKeyChecking=no %s 'mv /tmp/%s /tmp/kfspkg.tgz; mv /tmp/%s /tmp/ChunkServer.prp; sh /tmp/kfsinstall.sh %s %s ' " % \
                 (self.packageFn, self.configOutputFn, self.dest, self.dest, fn, configFn, self.mode, self.installArgs)
-            
-        os.system(c)
+
+        p = popen2.Popen3(c, True)
+        for out in p.fromchild:
+            if len(out) > 1:
+                print '[%s]: %s' % (self.dest, out[:-1])
+
         
     def cleanup(self):
         if self.doBuildPkg > 0:
@@ -242,7 +246,7 @@ class InstallWorker(threading.Thread):
             c = "rm -f %s" % (self.configOutputFn)
         os.system(c)
         c = "ssh -o StrictHostKeyChecking=no %s 'rm -f /tmp/install.sh /tmp/kfspkg.tgz' " % self.dest
-        os.system(c)
+        popen2.Popen3(c, True)
         
     def run(self):
         self.configOutputFn = "%s/fn.%d" % (self.tmpdir, self.id)
@@ -322,9 +326,13 @@ class UnInstallWorker(threading.Thread):
     def __init__(self, c):
         threading.Thread.__init__(self)
         self.cmd = c
+        self.node = n
     def run(self):
-        print "Running cmd %s" % (self.cmd)
-        os.system(self.cmd)
+        # capture stderr and ignore the hostkey has changed message
+        p = popen2.Popen3(self.cmd, True)
+        for out in p.fromchild:
+            if len(out) > 1:
+                print '[%s]: %s' % (self.node, out[:-1])
 
 def doUninstall(config):
     sections = config.sections()
@@ -348,7 +356,7 @@ def doUninstall(config):
               (node, rundir, rundir, otherArgs)
         # print "Uninstall cmd: %s\n" % cmd
         # os.system(cmd)
-        w = UnInstallWorker(cmd)
+        w = UnInstallWorker(cmd, node)
         workers.append(w)
         w.start()
 

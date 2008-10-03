@@ -44,6 +44,7 @@ class Worker(threading.Thread):
     def run(self):
         # capture stderr and ignore the hostkey has changed message
         p = popen2.Popen3(self.cmd, True)
+        p.tochild.close()        
         for out in p.fromchild:
             if len(out) > 1:
                 print '[%s]: %s' % (self.node, out[:-1])
