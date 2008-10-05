@@ -28,6 +28,7 @@ cptokfs
 cpfromkfs
 kfsshell
 kfsping
+kfstoggleworm
 kfsput
 kfsstats
 kfsfileenum

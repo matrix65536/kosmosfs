@@ -41,7 +41,7 @@ using namespace KFS_MON;
 
 static const char *KFS_VERSION_STR = "KFS/1.0";
 // use a big buffer so we don't have issues about server responses not fitting in
-static const int CMD_BUF_SIZE = 1 << 20;  
+static const int CMD_BUF_SIZE = 1 << 20;
 
 void
 KfsMonOp::ParseResponseCommon(string &resp, Properties &prop)
@@ -49,13 +49,13 @@ KfsMonOp::ParseResponseCommon(string &resp, Properties &prop)
     istringstream ist(resp);
     kfsSeq_t resSeq;
     const char separator = ':';
-    
+
     prop.loadProperties(ist, separator, false);
     resSeq = prop.getValue("Cseq", -1);
     this->status = prop.getValue("Status", -1);
 }
 
-void 
+void
 MetaPingOp::Request(ostringstream &os)
 {
     os << "PING\r\n";
@@ -63,6 +63,20 @@ MetaPingOp::Request(ostringstream &os)
     os << "Cseq: " << seq << "\r\n\r\n";
 }
 
+void
+MetaToggleWORMOp::Request(ostringstream &os)
+{
+    os << "TOGGLE_WORM\r\n";
+    os << "Toggle-WORM: " << value << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Cseq: " << seq << "\r\n\r\n";
+}
+
+void
+MetaToggleWORMOp::ParseResponse(const char *resp, int len)
+{
+    string respStr(resp, len);
+}
 void
 MetaPingOp::ParseResponse(const char *resp, int len)
 {
@@ -110,10 +124,10 @@ MetaPingOp::ParseResponse(const char *resp, int len)
         this->downServers.push_back(serverInfo);
         start = serv.find_first_of("s=", end);
     }
-    
+
 }
 
-void 
+void
 ChunkPingOp::Request(ostringstream &os)
 {
     os << "PING\r\n";
@@ -134,7 +148,7 @@ ChunkPingOp::ParseResponse(const char *resp, int len)
     usedSpace = prop.getValue("Used-space", (long long) 0);
 }
 
-void 
+void
 MetaStatsOp::Request(ostringstream &os)
 {
     os << "STATS\r\n";
@@ -142,7 +156,7 @@ MetaStatsOp::Request(ostringstream &os)
     os << "Cseq: " << seq << "\r\n\r\n";
 }
 
-void 
+void
 ChunkStatsOp::Request(ostringstream &os)
 {
     os << "STATS\r\n";
@@ -166,7 +180,7 @@ ChunkStatsOp::ParseResponse(const char *resp, int len)
     ParseResponseCommon(respStr, stats);
 }
 
-void 
+void
 RetireChunkserverOp::Request(ostringstream &os)
 {
     os << "RETIRE_CHUNKSERVER\r\n";
@@ -229,7 +243,7 @@ KFS_MON::DoOpCommon(KfsMonOp *op, TcpSocket *sock)
 ///
 /// @param[in] sock the socket from which data should be read
 /// @retval # of bytes that were read; 0/-1 if there was an error
-/// 
+///
 int
 KFS_MON::GetResponse(char *buf, int bufSize,
                      int *delims,
