@@ -21,7 +21,7 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 //
-// 
+//
 //----------------------------------------------------------------------------
 
 #ifndef TOOLS_MONUTILS_H
@@ -40,6 +40,7 @@ namespace KFS_MON
         CMD_METAPING,
         CMD_CHUNKPING,
         CMD_METASTATS,
+        CMD_METATOGGLE_WORM,
         CMD_CHUNKSTATS,
         CMD_RETIRE_CHUNKSERVER
     };
@@ -64,6 +65,15 @@ namespace KFS_MON
         void Request(std::ostringstream &os);
         void ParseResponse(const char *resp, int len);
     };
+
+    struct MetaToggleWORMOp : public KfsMonOp {
+        int value;
+        MetaToggleWORMOp(int32_t s, int v) :
+            KfsMonOp(CMD_METATOGGLE_WORM, s), value(v) { };
+        void Request(std::ostringstream &os);
+        void ParseResponse(const char *resp, int len);
+    };
+
 
     struct ChunkPingOp : public KfsMonOp {
         KFS::ServerLocation location;
