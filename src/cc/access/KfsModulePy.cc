@@ -437,12 +437,12 @@ kfs_chunkLocations(PyObject *pself, PyObject *args)
 	}
 	int n = results.size();
 	PyObject *outer = PyTuple_New(n);
-	for (int i = 0; i != n; i++) {
+	for (int i = 0; i < n; i++) {
 		int nlocs = results[i].size();
 		vector<string> locs = results[i];
 		PyObject *inner = PyTuple_New(nlocs);
-		for (int j = 0; j != nlocs; j++) {
-			PyTuple_SetItem(inner, j, PyString_FromString(locs[i].c_str()));
+		for (int j = 0; j < nlocs; j++) {
+			PyTuple_SetItem(inner, j, PyString_FromString(locs[j].c_str()));
 		}
 		PyTuple_SetItem(outer, i, inner);
 	}
