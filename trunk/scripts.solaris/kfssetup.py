@@ -323,10 +323,11 @@ def doInstall(config, builddir, tmpdir, webuidir, upgrade, serialMode):
 
 class UnInstallWorker(threading.Thread):
     """UnInstallWorker thread that runs a command on remote node"""
-    def __init__(self, c):
+    def __init__(self, c, n):
         threading.Thread.__init__(self)
         self.cmd = c
         self.node = n
+        
     def run(self):
         # capture stderr and ignore the hostkey has changed message
         p = popen2.Popen3(self.cmd, True)
