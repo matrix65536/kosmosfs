@@ -279,6 +279,17 @@ public:
 		cmap(m), crset(c), target(t) { }
 	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
 		ChunkPlacementInfo c = p.second;
+        	vector <ChunkServerPtr>::iterator i;
+
+		//
+		// only chunks hosted on the target need to be checked for
+		// replication level
+		//
+		i = find_if(c.chunkServers.begin(), c.chunkServers.end(), 
+			ChunkServerMatcher(target));
+
+		if (i == c.chunkServers.end())
+			return;
 
 		c.chunkServers.erase(remove_if(c.chunkServers.begin(), c.chunkServers.end(), 
 					ChunkServerMatcher(target)), 
@@ -810,12 +821,14 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 			ptr_fun(LeaseInfo::IsValidWriteLease));
 	if (l != v.chunkLeases.end()) {
 		LeaseInfo lease = *l;
-#ifdef DEBUG
 		time_t now = time(0);
+		string s = timeToStr(now);
+#ifdef DEBUG
 		assert(now <= lease.expires);
 		KFS_LOG_DEBUG("write lease exists...no version bump");
 #endif
 		// valid write lease; so, tell the client where to go
+		KFS_LOG_VA_INFO("Valid write lease exists for %lld (expires = %s)", r->chunkId, s.c_str());
 		isNewLease = false;
 		r->servers = v.chunkServers;
 		r->master = lease.chunkServer;
@@ -856,6 +869,9 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 	for (i = 1; i < r->servers.size(); i++) {        
 		r->servers[i]->AllocateChunk(r, -1);
 	}
+
+	KFS_LOG_VA_INFO("New write lease issued for %lld; version = %lld", r->chunkId, r->chunkVersion);
+
 	return 0;
 }
 
