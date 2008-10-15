@@ -95,7 +95,7 @@ struct ServerLocation {
 	is >> port;
     }
 
-    std::string hostname; //!< Location of the server: machine name
+    std::string hostname; //!< Location of the server: machine name/IP addr
     int port; //!< Location of the server: port to connect to
 };
 

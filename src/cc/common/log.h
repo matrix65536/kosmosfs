@@ -30,6 +30,7 @@
 #define LOG4CPP_FIX_ERROR_COLLISION 1
 #include <log4cpp/Category.hh>
 #include <log4cpp/Priority.hh>
+#include <libgen.h>
 
 namespace KFS 
 {
@@ -58,43 +59,47 @@ namespace KFS
 
     };
 
+#ifndef THIS_FILE
+#define THIS_FILE basename((char *) __FILE__)
+#endif
+
 #ifndef KFS_LOG_DEBUG
-#define KFS_LOG_DEBUG(msg) MsgLogger::logger->debug("(%s:%d) " msg, __FILE__, __LINE__);
+#define KFS_LOG_DEBUG(msg) MsgLogger::logger->debug("(%s:%d) " msg, THIS_FILE, __LINE__);
 #define KFS_LOG_VA_DEBUG(msg, ...) \
 	do { \
-         MsgLogger::logger->debug("(%s:%d) " msg, __FILE__, __LINE__, __VA_ARGS__); \
+         MsgLogger::logger->debug("(%s:%d) " msg, THIS_FILE, __LINE__, __VA_ARGS__); \
         } while(0)
 #endif
 
 #ifndef KFS_LOG_INFO
-#define KFS_LOG_INFO(msg) MsgLogger::logger->info("(%s:%d) " msg, __FILE__, __LINE__);
+#define KFS_LOG_INFO(msg) MsgLogger::logger->info("(%s:%d) " msg, THIS_FILE, __LINE__);
 #define KFS_LOG_VA_INFO(msg, ...) \
 	do { \
-         MsgLogger::logger->info("(%s:%d) " msg, __FILE__, __LINE__, __VA_ARGS__); \
+         MsgLogger::logger->info("(%s:%d) " msg, THIS_FILE, __LINE__, __VA_ARGS__); \
         } while(0)
 #endif
 
 #ifndef KFS_LOG_WARN
-#define KFS_LOG_WARN(msg) MsgLogger::logger->warn("(%s:%d) " msg, __FILE__, __LINE__);
+#define KFS_LOG_WARN(msg) MsgLogger::logger->warn("(%s:%d) " msg, THIS_FILE, __LINE__);
 #define KFS_LOG_VA_WARN(msg, ...) \
 	do { \
-         MsgLogger::logger->warn("(%s:%d) " msg, __FILE__, __LINE__, __VA_ARGS__); \
+         MsgLogger::logger->warn("(%s:%d) " msg, THIS_FILE, __LINE__, __VA_ARGS__); \
         } while(0)
 #endif
 
 #ifndef KFS_LOG_ERROR
-#define KFS_LOG_ERROR(msg) MsgLogger::logger->error("(%s:%d) " msg, __FILE__, __LINE__);
+#define KFS_LOG_ERROR(msg) MsgLogger::logger->error("(%s:%d) " msg, THIS_FILE, __LINE__);
 #define KFS_LOG_VA_ERROR(msg, ...) \
 	do { \
-         MsgLogger::logger->error("(%s:%d) " msg, __FILE__, __LINE__, __VA_ARGS__); \
+         MsgLogger::logger->error("(%s:%d) " msg, THIS_FILE, __LINE__, __VA_ARGS__); \
         } while(0)
 #endif
 
 #ifndef KFS_LOG_FATAL
-#define KFS_LOG_FATAL(msg) MsgLogger::logger->fatal("(%s:%d) " msg, __FILE__, __LINE__);
+#define KFS_LOG_FATAL(msg) MsgLogger::logger->fatal("(%s:%d) " msg, THIS_FILE, __LINE__);
 #define KFS_LOG_VA_FATAL(msg, ...) \
 	do { \
-         MsgLogger::logger->fatal("(%s:%d) " msg, __FILE__, __LINE__, __VA_ARGS__); \
+         MsgLogger::logger->fatal("(%s:%d) " msg, THIS_FILE, __LINE__, __VA_ARGS__); \
         } while(0)
 #endif
 
