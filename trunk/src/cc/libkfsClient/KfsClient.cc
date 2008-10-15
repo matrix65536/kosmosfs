@@ -43,6 +43,8 @@ extern "C" {
 #include <cerrno>
 #include <iostream>
 #include <string>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <boost/scoped_array.hpp>
 
 using std::string;
@@ -54,6 +56,7 @@ using std::map;
 using std::vector;
 using std::sort;
 using std::transform;
+using std::random_shuffle;
 
 using std::cout;
 using std::endl;
@@ -66,6 +69,7 @@ const int CMD_BUF_SIZE = 1024;
 // This is intentionally large so that we can do stuff in gdb and not
 // have the client timeout in the midst of a debug session.
 struct timeval gDefaultTimeout = {300, 0};
+
 
 namespace {
     Properties & theProps()
@@ -142,6 +146,15 @@ KfsClient::KfsClient()
 KfsClient::~KfsClient()
 {
     delete mImpl;
+}
+
+void
+KfsClient::SetLogLevel(string logLevel)
+{
+    if (logLevel == "DEBUG")
+        MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    else if (logLevel == "INFO")
+        MsgLogger::SetLevel(log4cpp::Priority::INFO);
 }
 
 int 
@@ -407,6 +420,7 @@ int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
     MsgLogger::Init(NULL);
 
     MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    //MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
 
     mRandSeed = time(NULL);
 
@@ -430,6 +444,19 @@ int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
 	return -1;
     }
 
+
+    // setup the telemetry stuff...
+    struct ip_mreq imreq;
+    string srvIp = "10.2.0.10";
+    // string srvIp = "10.10.1.61";
+    int srvPort = 12000;
+    int multicastPort = 13000;
+
+    imreq.imr_multiaddr.s_addr = inet_addr("226.0.0.1");
+    imreq.imr_interface.s_addr = INADDR_ANY; // use DEFAULT interface
+    
+    // will setup this for release
+    // mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
 
     mIsInitialized = true;
     return 0;
@@ -520,6 +547,12 @@ KfsClientImpl::Mkdirs(const char *pathname)
 	    continue;
 	}
 	res = Mkdir(component.c_str());
+        if (res == -EEXIST) {
+            // when there are multiple clients trying to make the same
+            // directory hierarchy, the first one wins; the subsequent
+            // ones get a EEXIST and that is not fatal
+            continue;
+        }
 	if (res < 0)
 	    return res;
     }
@@ -910,11 +943,13 @@ KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFiles
 	kfsFileId_t parentFid;
 	string filename;
 	int res = GetPathComponents(pathname, &parentFid, filename);
-	if (res == 0)
+	if (res == 0) {
 	    res = LookupAttr(parentFid, filename.c_str(), kfsattr, computeFilesize);
+        }
 	if (res < 0)
 	    return res;
     }
+
 
     memset(&result, 0, sizeof (struct stat));
     result.st_mode = kfsattr.isDirectory ? S_IFDIR : S_IFREG;
@@ -1153,12 +1188,11 @@ KfsClientImpl::Open(const char *pathname, int openMode, int numReplicas)
     if (fte < 0)		// Too many open files
 	return fte;
 
-    if (openMode & O_RDWR)
+    // O_RDONLY is 0 and we use 0 to tell if the entry isn't used
+    if ((openMode & O_RDWR) || (openMode & O_RDONLY))
 	mFileTable[fte]->openMode = O_RDWR;
     else if (openMode & O_WRONLY)
 	mFileTable[fte]->openMode = O_WRONLY;
-    else if (openMode & O_RDONLY)
-	mFileTable[fte]->openMode = O_RDONLY;
     else
         // in this mode, we open the file to cache the attributes
         mFileTable[fte]->openMode = 0;
@@ -1192,7 +1226,9 @@ KfsClientImpl::Close(int fd)
     if (mFileTable[fd]->buffer.dirty) {
 	status = FlushBuffer(fd);
     }
+    KFS_LOG_VA_DEBUG("Closing filetable entry: %d", fd);
     ReleaseFileTableEntry(fd);
+
     return status;
 }
 
@@ -1985,6 +2021,17 @@ public:
     }
 };
 
+class ChunkserverMatcherByIp {
+    in_addr_t hostaddr;
+public:
+    ChunkserverMatcherByIp(const string &hostname) {
+        hostaddr = inet_addr(hostname.c_str());
+    }
+    bool operator()(in_addr &l) const {
+        return hostaddr == l.s_addr;
+    }
+};
+
 int
 KfsClientImpl::OpenChunk(int fd, bool nonblockingConnect)
 {
@@ -2012,20 +2059,55 @@ KfsClientImpl::OpenChunk(int fd, bool nonblockingConnect)
         }
     }
 
-    // if they are on different subnets, pick the one on the same subnet as us
-
-
     vector<ServerLocation> loc = chunk->chunkServerLoc;
+    
+    // take out the slow servers if we can
+    mTelemetryReporter.getNotification(mSlowNodes);
+    bool allNodesSlow = mSlowNodes.size() > 0;
+    if (allNodesSlow) {
+        for (vector<ServerLocation>::size_type i = 0; i != loc.size();
+             ++i) {
+            vector<struct in_addr>::iterator iter = find_if(mSlowNodes.begin(), mSlowNodes.end(),
+                                                            ChunkserverMatcherByIp(loc[i].hostname));
+            if (iter == mSlowNodes.end()) {
+                // not all nodes are slow; so, we can eliminate slow nodes
+                allNodesSlow = false;
+                break;
+            }
+        }
+    }
 
-    // else pick one at random
+  try_again:
+    // pick one at random avoiding slow nodes
+    random_shuffle(loc.begin(), loc.end());
+
     for (vector<ServerLocation>::size_type i = 0;
          (FdPos(fd)->GetPreferredServer() == NULL && i != loc.size());
-         ++i) {
-        uint32_t j = rand_r(&mRandSeed) % loc.size();
+         i++) {
+        if (!allNodesSlow) {
+            vector<struct in_addr>::iterator iter = find_if(mSlowNodes.begin(), mSlowNodes.end(),
+                                                            ChunkserverMatcherByIp(loc[i].hostname));
+            if (iter != mSlowNodes.end()) {
+                KFS_LOG_VA_INFO("For chunk %lld, avoiding slow node: %s", 
+                                chunk->chunkId, loc[i].ToString().c_str());
+                continue;
+            }
+        }
 
-        FdPos(fd)->SetPreferredServer(loc[j], nonblockingConnect);
+        FdPos(fd)->SetPreferredServer(loc[i], nonblockingConnect);
         if (FdPos(fd)->GetPreferredServer() != NULL)
-            KFS_LOG_VA_DEBUG("Randomly chose: %s", loc[j].ToString().c_str());
+            KFS_LOG_VA_DEBUG("For chunk %lld, randomly chose: %s", 
+                             chunk->chunkId, loc[i].ToString().c_str());
+    }
+    if (FdPos(fd)->GetPreferredServer() == NULL) {
+        if (!allNodesSlow) {
+            // the non-slow node isn't responding; so try one of the slow nodes
+            allNodesSlow = false;
+            KFS_LOG_VA_INFO("Retrying to find a server for chunk = %lld", chunk->chunkId);
+            goto try_again;
+        }
+            
+        KFS_LOG_VA_INFO("Unable to find a server for chunk = %lld", chunk->chunkId);
     }
 
     return (FdPos(fd)->GetPreferredServer() == NULL) ? -EHOSTUNREACH : SizeChunk(fd);
@@ -2250,6 +2332,9 @@ KfsClientImpl::ReleaseFileTableEntry(int fte)
     if (mFileTable[fte]->pathCacheIter != mPathCache.end())
         mPathCache.erase(mFileTable[fte]->pathCacheIter);
     */
+    KFS_LOG_VA_DEBUG("Closing filetable entry: %d, openmode = %d, path = %s", 
+                     fte, mFileTable[fte]->openMode, mFileTable[fte]->pathname.c_str());
+
     delete mFileTable[fte];
     mFileTable[fte] = NULL;
 }

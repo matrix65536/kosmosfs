@@ -32,6 +32,7 @@
 #include "libkfsIO/EventManager.h"
 #include "libkfsIO/NetManager.h"
 #include "libkfsIO/Globals.h"
+#include "libkfsIO/TelemetryClient.h"
 
 #include "ChunkManager.h"
 #include "ClientManager.h"
@@ -81,6 +82,8 @@ public:
         return mOpCount;
     }
 
+    void SendTelemetryReport(KfsOp_t op, double timeSpent);
+
 private:
     int mClientAcceptPort;
     // # of ops in the system
@@ -88,6 +91,8 @@ private:
     bool mKickNetThread;
     ServerLocation mLocation;
     std::list<RemoteSyncSMPtr> mRemoteSyncers;
+    // telemetry reporter...used for notifying slow writes thru this node
+    TelemetryClient mTelemetryReporter;
 };
 
 extern void verifyExecutingOnNetProcessor();

@@ -35,6 +35,7 @@
 #include <arpa/inet.h>
 
 using std::list;
+using std::string;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -63,6 +64,26 @@ ChunkServer::Init()
     InitParseHandlers();
     // Register the counters
     RegisterCounters();
+
+    // setup the telemetry stuff...
+    struct ip_mreq imreq;
+    string srvIp = "10.2.0.10";
+    int srvPort = 12000;
+    int multicastPort = 13000;
+
+    imreq.imr_multiaddr.s_addr = inet_addr("226.0.0.1");
+    imreq.imr_interface.s_addr = INADDR_ANY; // use DEFAULT interface
+
+    // will set this up for the release
+    // mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
+}
+
+void
+ChunkServer::SendTelemetryReport(KfsOp_t op, double timeSpent)
+{
+    if (op != CMD_WRITE)
+        return;
+    mTelemetryReporter.publish(timeSpent, "WRITE");
 }
 
 void
@@ -84,7 +105,7 @@ ChunkServer::MainLoop(int clientAcceptPort)
     in_addr ipaddr;
 
     memcpy(&ipaddr, hent->h_addr, hent->h_length);
-    
+
     mLocation.Reset(inet_ntoa(ipaddr), clientAcceptPort);
 
     gClientManager.StartAcceptor(clientAcceptPort);
