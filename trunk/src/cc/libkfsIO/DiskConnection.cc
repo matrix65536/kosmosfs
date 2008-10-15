@@ -206,7 +206,7 @@ int DiskConnection::ReadDone(DiskEventPtr &doneEvent, int res)
                 retval = event->retval;
                 ioBuf->Append(event->data);
             } else {
-                retval = event->retval;
+                retval = -event->aioStatus;
                 break;
             }
         }
@@ -217,7 +217,7 @@ int DiskConnection::ReadDone(DiskEventPtr &doneEvent, int res)
         }
         else {
             globals().ctrDiskIOErrors.Update(1);
-            mCallbackObj->HandleEvent(EVENT_DISK_ERROR, NULL);
+            mCallbackObj->HandleEvent(EVENT_DISK_ERROR, (void *) &retval);
         }
 
         delete ioBuf;
@@ -355,6 +355,7 @@ int DiskConnection::WriteDone(DiskEventPtr &doneEvent, int res)
             event = *eventIter;
             if (event->retval < 0) {
                 success = false;
+                retval = -event->aioStatus;
                 break;
             }
             retval += event->retval;
@@ -366,7 +367,7 @@ int DiskConnection::WriteDone(DiskEventPtr &doneEvent, int res)
         }
         else {
             globals().ctrDiskIOErrors.Update(1);
-            mCallbackObj->HandleEvent(EVENT_DISK_ERROR, NULL);
+            mCallbackObj->HandleEvent(EVENT_DISK_ERROR, &retval);
         }
     }
 
