@@ -60,6 +60,9 @@ NeedToRetryRead(int status)
             (status == -KFS::EBADCKSUM) ||
             (status == -KFS::ESERVERBUSY) ||
             (status == -EHOSTUNREACH) ||
+            (status == -EINVAL) ||
+            (status == -EIO) ||
+            (status == -EAGAIN) ||
             (status == -ETIMEDOUT));
 }
 
@@ -69,7 +72,7 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
     MutexLock l(&mMutex);
 
     size_t nread = 0, nleft;
-    ssize_t numIO;
+    ssize_t numIO = 0;
 
     if (!valid_fd(fd) || mFileTable[fd] == NULL || mFileTable[fd]->openMode == O_WRONLY) {
         KFS_LOG_VA_INFO("Read to fd: %d failed---fd is likely closed", fd);        
@@ -118,10 +121,17 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
 	Seek(fd, numIO, SEEK_CUR);
     }
 
-    /*
-    KFS_LOG_DEBUG("----Read done: asked: %d, got: %d----------",
-	             numBytes, nread);
-    */
+    if ((pos->fileOffset < (off_t) fa->fileSize) && (nread < numBytes)) {
+        FilePosition *pos = FdPos(fd);
+        string s;
+
+        if ((pos != NULL) && (pos->preferredServer != NULL)) {
+            s = pos->GetPreferredServerLocation().ToString();
+        }
+        
+        KFS_LOG_VA_INFO("Read done from %s on %s: @offset: %lld: asked: %d, returning %d, errorcode = %d",
+                        s.c_str(), mFileTable[fd]->pathname.c_str(), pos->fileOffset, numBytes, nread, numIO);
+    }
     return nread;
 }
 
@@ -129,11 +139,23 @@ bool
 KfsClientImpl::IsChunkReadable(int fd)
 {
     FilePosition *pos = FdPos(fd);
-    int res;
+    int res = -1;
 
-    res = LocateChunk(fd, pos->chunkNum);
-    
-    // we can't locate the chunk...so, fail
+    for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
+        res = LocateChunk(fd, pos->chunkNum);
+
+        if (res >= 0)
+            break;
+        if (res == -EAGAIN) {
+            // could be that all 3 servers are temporarily down
+            Sleep(RETRY_DELAY_SECS);
+            continue;
+        } else {
+            // we can't locate the chunk...fail
+            return false;
+        }
+    }
+
     if (res < 0)
         return false;
 
@@ -235,6 +257,18 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
             // either we got data or it is an error which doesn't
             // require a retry of the read.
             break;
+        }
+
+        if (numIO == -EIO) {
+            // we couldn't read the data off the disk from the server;
+            // when we retry, we need to pick another replica
+
+            if (pos->preferredServer != NULL) {
+                string s = pos->GetPreferredServerLocation().ToString();
+                KFS_LOG_VA_INFO("Got error=%d from server %s for %s @offset: %lld; avoiding server",
+                                numIO, s.c_str(), mFileTable[fd]->pathname.c_str(), pos->fileOffset);
+            }
+            pos->AvoidServer(pos->preferredServerLocation);
         }
 
         // KFS_LOG_DEBUG("Need to retry read...");
@@ -417,7 +451,7 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
 
         os << pos->GetPreferredServerLocation().ToString().c_str() << ':' 
            << " c=" << chunk->chunkId << " o=" << pos->chunkOffset << " n=" << numBytes;
-        KFS_LOG_VA_INFO("Reading from %s", os.str().c_str());
+        KFS_LOG_VA_DEBUG("Reading from %s", os.str().c_str());
     }
 
     ssize_t numIO = DoPipelinedRead(ops, pos->preferredServer);
@@ -432,8 +466,11 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     for (vector<KfsOp *>::size_type i = 0; i < ops.size(); ++i) {
 	ReadOp *op = static_cast<ReadOp *> (ops[i]);
 	if (op->status < 0) {
-            if (NeedToRetryRead(op->status))
-                retryStatus = op->status;
+            if (NeedToRetryRead(op->status)) {
+                // preserve EIO so that we can avoid that server
+                if (retryStatus != -EIO)
+                    retryStatus = op->status;
+            }
 	    numIO = op->status;
         }
 	else if (numIO >= 0)
@@ -456,7 +493,17 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
            << " c=" << chunk->chunkId << " o=" << pos->chunkOffset << " n=" << numBytes
            << " got=" << numIO << " time=" << timeSpent;
         
-        KFS_LOG_VA_INFO("Read done from %s", os.str().c_str());
+        if (timeSpent > 5.0) {
+            struct sockaddr_in saddr;
+
+            KFS_LOG_VA_INFO("Read done from %s", os.str().c_str());
+
+            if (pos->GetPreferredServerAddr(saddr) == 0) {
+                KFS_LOG_VA_DEBUG("Sending telemetry report about: %s", os.str().c_str());
+                mTelemetryReporter.publish(saddr.sin_addr, timeSpent, "READ");
+            }
+        }
+        
     }
 
     return numIO;

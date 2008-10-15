@@ -70,6 +70,9 @@ public:
     ///
     int Init(const std::string metaServerHost, int metaServerPort);
 
+    /// Set the logging level to control message verbosity
+    void SetLogLevel(std::string level);
+
     bool IsInitialized();
 
     ///

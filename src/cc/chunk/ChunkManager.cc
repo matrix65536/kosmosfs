@@ -840,12 +840,12 @@ ChunkManager::NotifyMetaCorruptedChunk(kfsChunkId_t chunkId)
     ChunkInfoHandle_t *cih;
 
     if (GetChunkInfoHandle(chunkId, &cih) < 0) {
-        KFS_LOG_VA_ERROR("Unable to notify metaserver of corrupt chunk: %ld",
+        KFS_LOG_VA_ERROR("Unable to notify metaserver of corrupt chunk: %lld",
                       chunkId);
         return;
     }
 
-    KFS_LOG_VA_INFO("Notifying metaserver of corrupt chunk (%ld) in file %ld",
+    KFS_LOG_VA_INFO("Notifying metaserver of corrupt chunk (%ld) in file %lld",
                  cih->chunkInfo.fileId, chunkId);
 
     // This op will get deleted when we get an ack from the metaserver
@@ -1686,6 +1686,10 @@ ChunkManager::GetTotalSpace() const
 
     if (result.f_frsize == 0)
         return mTotalSpace;
+
+#if defined(__APPLE__)
+    return mTotalSpace;
+#endif
 
     // result.* is how much is available on disk; mUsedSpace is how
     // much we used up with chunks; so, the total storage available on

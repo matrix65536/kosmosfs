@@ -333,6 +333,13 @@ public:
         return 0;
     }
 
+    void ChunkIOFailed(kfsChunkId_t chunkId, int err) {
+        if (err == -EIO) {
+            NotifyMetaCorruptedChunk(chunkId);
+            StaleChunk(chunkId);
+        }
+    }
+
 private:
     /// How long should a pending write be held in LRU
     static const int MAX_PENDING_WRITE_LRU_SECS = 300;

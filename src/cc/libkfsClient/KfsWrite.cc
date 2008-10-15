@@ -62,6 +62,7 @@ NeedToRetryAllocation(int status)
     return ((status == -EHOSTUNREACH) ||
 	    (status == -ETIMEDOUT) ||
 	    (status == -EBUSY) ||
+	    (status == -EIO) ||
             (status == -KFS::EBADVERS) ||
 	    (status == -KFS::EALLOCFAILED));
 }
@@ -121,8 +122,8 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	}
 
 	if (numIO < 0) {
-	    string errstr = ErrorCodeToStr(numIO);
-	    // KFS_LOG_VA_DEBUG("WriteToXXX:%s", errstr.c_str());
+            KFS_LOG_VA_INFO("Write failed %s @offset: %lld: asked: %d, did: %d, errorcode = %d",
+                            mFileTable[fd]->pathname.c_str(), pos->fileOffset, numBytes, nwrote, numIO);
 	    break;
 	}
 
@@ -253,8 +254,14 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
                 (endTime.tv_usec - startTime.tv_usec) * 1e-6;
 
             if (timeTaken > 5.0) {
-                KFS_LOG_VA_INFO("Writes thru chain for chunk %lld are taking: %.3f secs", 
-                                GetCurrChunk(fd)->chunkId, timeTaken);
+                ostringstream os;
+                ChunkAttr *chunk = GetCurrChunk(fd);
+
+                for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++)
+                    os << chunk->chunkServerLoc[i].ToString().c_str() << ' ';
+
+                KFS_LOG_VA_INFO("Writes thru chain %s for chunk %lld are taking: %.3f secs", 
+                                os.str().c_str(), GetCurrChunk(fd)->chunkId, timeTaken);
             }
             
             KFS_LOG_VA_DEBUG("Total Time to write data to server(s): %.4f secs", timeTaken);
@@ -263,11 +270,12 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
         if (res >= 0)
             break;
 
-	if ((res == -EHOSTUNREACH) ||
-	    (res == -KFS::EBADVERS)) {
-	    // one of the hosts is non-reachable (aka dead); so, wait
+	if ((res == -EHOSTUNREACH) || (res == -EIO) || (res == -KFS::EBADVERS)) {
+	    // one of the hosts is non-reachable (aka dead) or has a disk issue; so, wait
 	    // and retry.  Since one of the servers has a write-lease, we
 	    // need to wait for the lease to expire before retrying.
+            KFS_LOG_VA_INFO("Will retry allocation/write on chunk %lld due to error code: %d", 
+                            GetCurrChunk(fd)->chunkId, res);
 	    Sleep(KFS::LEASE_INTERVAL_SECS);
 	}
 
@@ -277,9 +285,9 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
             
 	    KFS_LOG_VA_INFO("Server %s says lease expired for %lld.%lld ...re-doing allocation",
                             loc.ToString().c_str(), chunk->chunkId, chunk->chunkVersion);
-	    Sleep(KFS::LEASE_INTERVAL_SECS / 2);
+	    Sleep(KFS::LEASE_INTERVAL_SECS);
 	}
-	if ((res == -EHOSTUNREACH) ||
+	if ((res == -EHOSTUNREACH) || (res == -EIO) ||
 	    (res == -KFS::EBADVERS) ||
 	    (res == -KFS::ELEASEEXPIRED)) {
             // save the value of res; in case we tried too many times
@@ -345,12 +353,12 @@ KfsClientImpl::DoAllocation(int fd, bool force)
 	assert(chunk != NULL);
 	chunk->didAllocation = true;
 	if (force) {
-	    KFS_LOG_VA_DEBUG("Forced allocation version: %lld",
-                             chunk->chunkVersion);
+	    KFS_LOG_VA_INFO("Forced allocation: chunk=%lld, version=%lld",
+                            chunk->chunkId, chunk->chunkVersion);
 	}
-	// XXX: This is incorrect...you may double-count for
-	// allocations that occurred due to lease expirations.
-	++fa->chunkCount;
+        else {
+            ++fa->chunkCount;
+        }
     }
     return 0;
 
@@ -570,9 +578,9 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	    continue;
 	}
 	if (numIO < 0) {
-	    KFS_LOG_VA_DEBUG("Write failed...chunk = %lld, version = %lld, offset = %lld, bytes = %lld",
-	                     ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
-	                     ops[0]->numBytes);
+	    KFS_LOG_VA_INFO("Write failed...chunk = %lld, version = %lld, offset = %lld, error = %d",
+                            ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
+                            numIO);
             assert(numIO != -EBADF);
 	    break;
 	}
@@ -605,12 +613,12 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
     }
 
     if (numIO != (ssize_t) numBytes) {
-	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes, was asked %llu bytes",
+	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes, was asked %lld bytes",
 	                 fd, numIO, numBytes);
+    } else {
+        KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes",
+                         fd, numIO);
     }
-
-    KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes",
-                     fd, numIO);
 
     return numIO;
 }

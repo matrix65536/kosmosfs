@@ -37,6 +37,8 @@
 #include "libkfsIO/TcpSocket.h"
 #include "libkfsIO/Checksum.h"
 
+#include "libkfsIO/TelemetryClient.h"
+
 #include "KfsAttr.h"
 
 #include "KfsOps.h"
@@ -89,7 +91,8 @@ struct ChunkBuffer {
     // to reduce memory footprint, keep a decent size buffer; we used to have
     // 64MB before
     static const size_t BUF_SIZE = KFS::CHUNKSIZE < 4 * ONE_MB ? KFS::CHUNKSIZE : 4 * ONE_MB;
-
+    // static const size_t BUF_SIZE = KFS::CHUNKSIZE;
+    
     ChunkBuffer():chunkno(-1), start(0), length(0), dirty(false), buf(NULL) { }
     ~ChunkBuffer() { delete [] buf; }
     void invalidate() { 
@@ -180,7 +183,6 @@ struct FilePosition {
         preferredServer = NULL;
     }
 
-
     off_t	fileOffset; // offset within the file
     /// which chunk are we at: this is an index into fattr.chunkTable[]
     int32_t	chunkNum;
@@ -227,6 +229,15 @@ struct FilePosition {
         if (s->IsGood())
             return s;
         return NULL;
+    }
+
+    /// take out the chunkserver from the list of servers that we can talk to.  
+    void AvoidServer(const ServerLocation &loc) {
+        std::vector<ChunkServerConn>::iterator iter;
+
+        iter = std::find(chunkServers.begin(), chunkServers.end(), loc);
+        if (iter != chunkServers.end())
+            chunkServers.erase(iter);
     }
 
     void SetPreferredServer(const ServerLocation &loc, bool nonblockingConnect = false) {
@@ -561,6 +572,10 @@ private:
     /// keep a table of open files/directory handles.
     std::vector <FileTableEntry *> mFileTable;
     NameToFdMap mPathCache;
+
+    TelemetryClient mTelemetryReporter;
+    /// set of slow nodes as flagged by the telemetry service
+    std::vector<struct in_addr> mSlowNodes;
 
     /// Check that fd is in range
     bool valid_fd(int fd) { return (fd >= 0 && fd < MAX_FILES); }

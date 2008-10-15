@@ -79,6 +79,7 @@ static PyObject *kfs_remove(PyObject *pself, PyObject *args);
 static PyObject *kfs_rename(PyObject *pself, PyObject *args);
 static PyObject *kfs_open(PyObject *pself, PyObject *args);
 static PyObject *kfs_cd(PyObject *pself, PyObject *args);
+static PyObject *kfs_log_level(PyObject *pself, PyObject *args);
 
 static PyMemberDef Client_members[] = {
 	{ "properties", T_OBJECT,
@@ -104,6 +105,7 @@ static PyMethodDef Client_methods[] = {
 	{ "open", kfs_open, METH_VARARGS, "Open file." },
         { "isfile", kfs_isfile, METH_VARARGS, "Check if a path is a file."},
 	{ "cd", kfs_cd, METH_VARARGS, "Change directory." },
+	{ "log_level", kfs_log_level, METH_VARARGS, "Set log4cpp log level." },
 	{ NULL }
 };
 
@@ -129,6 +131,7 @@ PyDoc_STRVAR(Client_doc,
 "\tremove(path) -- remove a file\n"
 "\topen(path[, mode]) -- open a file and return an object for it\n"
 "\tcd(path)     -- change current directory\n"
+"\tlog_level(level)     -- change the message log level\n"
 "\n\nData:\n"
 "\tproperties   -- the name of the properties file\n"
 "\tcwd          -- the current directory (for relative paths)\n");
@@ -780,6 +783,19 @@ kfs_cd(PyObject *pself, PyObject *args)
 		self->cwd = newcwd;
 	}
 	Py_RETURN_NONE;
+}
+
+static PyObject *
+kfs_log_level(PyObject *pself, PyObject *args)
+{
+	kfs_Client *self = (kfs_Client *)pself;
+	char *logLevel;
+
+	if (PyArg_ParseTuple(args, "s", &logLevel) == -1)
+		return NULL;
+
+	self->client->SetLogLevel(logLevel);
+        Py_RETURN_NONE;
 }
 
 static PyObject *

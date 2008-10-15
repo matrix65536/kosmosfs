@@ -624,8 +624,14 @@ ReadOp::HandleDone(int code, void *data)
     verifyExecutingOnEventProcessor();
 #endif
 
-    if (code == EVENT_DISK_ERROR)
+    if (code == EVENT_DISK_ERROR) {
         status = -1;
+        if (data != NULL) {
+            status = *(int *) data;
+            KFS_LOG_VA_INFO("Disk error: errno = %d, chunkid = %lld", status, chunkId);
+        }
+        gChunkManager.ChunkIOFailed(chunkId, status);
+    }
     else if (code == EVENT_DISK_READ) {
         if (dataBuf == NULL) {
             dataBuf = new IOBuffer();
@@ -696,6 +702,12 @@ WriteOp::HandleWriteDone(int code, void *data)
         // eat up everything that was sent
         dataBuf->Consume(numBytes);
         status = -1;
+        if (data != NULL) {
+            status = *(int *) data;
+            KFS_LOG_VA_INFO("Disk error: errno = %d, chunkid = %lld", status, chunkId);
+        }
+        gChunkManager.ChunkIOFailed(chunkId, status);
+
         wpop->HandleEvent(EVENT_CMD_DONE, this);
         return 0;
     }
@@ -1156,6 +1168,14 @@ WriteIdAllocOp::Execute()
         if (needToForward) {
             status = ForwardToPeer(peerLoc);
             if (status < 0) {
+                if (gLeaseClerk.IsLeaseValid(chunkId)) {
+                    // The write-id allocation has failed; we don't want to renew the lease.
+                    // Now, when the client forces a re-allocation, the
+                    // metaserver will do a version bump; when the node that
+                    // was dead comes back, we can detect it has missed a write
+                    gLeaseClerk.UnRegisterLease(chunkId);
+                }
+
                 // can't forward to peer...so fail the write-id allocation
                 gLogger.Submit(this);
                 return;
@@ -1206,6 +1226,13 @@ WriteIdAllocOp::HandlePeerReply(int code, void *data)
     if (op->status < 0) {
         status = op->status;
         // return clnt->HandleEvent(EVENT_CMD_DONE, this);
+        if (gLeaseClerk.IsLeaseValid(chunkId)) {
+            // The write has failed; we don't want to renew the lease.
+            // Now, when the client forces a re-allocation, the
+            // metaserver will do a version bump; when the node that
+            // was dead comes back, we can detect it has missed a write
+            gLeaseClerk.UnRegisterLease(chunkId);
+        }
         
         gLogger.Submit(this);
         return 0;
@@ -1250,6 +1277,15 @@ WritePrepareOp::Execute()
     if (!gChunkManager.IsChunkMetadataLoaded(chunkId)) {
         KFS_LOG_VA_DEBUG("Write prepare failed...checksums are not loaded; so lease expired for %ld",
                          chunkId);
+
+        if (gLeaseClerk.IsLeaseValid(chunkId)) {
+            // The write-id allocation has failed; we don't want to renew the lease.
+            // Now, when the client forces a re-allocation, the
+            // metaserver will do a version bump; when the node that
+            // was dead comes back, we can detect it has missed a write
+            gLeaseClerk.UnRegisterLease(chunkId);
+        }
+        
         status = -KFS::ELEASEEXPIRED;
         gLogger.Submit(this);
         return;
@@ -1292,6 +1328,14 @@ WritePrepareOp::Execute()
             delete clonedData;
             // so that the error goes out on a sync
             gChunkManager.SetWriteStatus(writeId, status);
+
+            if (gLeaseClerk.IsLeaseValid(chunkId)) {
+                // The write has failed; we don't want to renew the lease.
+                // Now, when the client forces a re-allocation, the
+                // metaserver will do a version bump; when the node that
+                // was dead comes back, we can detect it has missed a write
+                gLeaseClerk.UnRegisterLease(chunkId);
+            }
 
             // can't forward to peer...so fail the write
             gLogger.Submit(this);
@@ -1353,6 +1397,13 @@ WritePrepareOp::HandleDone(int code, void *data)
 
     if ((op != NULL) && (op->status < 0)) {
         status = op->status;
+        if (gLeaseClerk.IsLeaseValid(chunkId)) {
+            // The write has failed; we don't want to renew the lease.
+            // Now, when the client forces a re-allocation, the
+            // metaserver will do a version bump; when the node that
+            // was dead comes back, we can detect it has missed a write
+            gLeaseClerk.UnRegisterLease(chunkId);
+        }
     }
 
     numDone++;
@@ -1431,6 +1482,9 @@ WriteSyncOp::Execute()
     if (needToForward) {
         status = ForwardToPeer(peerLoc);
         if (status < 0) {
+            // write can't be forwarded; so give up the lease, so that
+            // we can force re-allocation
+            gLeaseClerk.UnRegisterLease(chunkId);
             // can't forward to peer...so fail the write
             gLogger.Submit(this);
             return;
@@ -1502,6 +1556,13 @@ WriteSyncOp::HandleDone(int code, void *data)
     if (op && (op->status < 0)) {
         status = op->status;
         KFS_LOG_VA_DEBUG("Peer (%s) returned: ", op->Show().c_str(), op->status);
+        if (gLeaseClerk.IsLeaseValid(chunkId)) {
+            // The write has failed; we don't want to renew the lease.
+            // Now, when the client forces a re-allocation, the
+            // metaserver will do a version bump; when the node that
+            // was dead comes back, we can detect it has missed a write
+            gLeaseClerk.UnRegisterLease(chunkId);
+        }
     }
 
     numDone++;
@@ -1900,8 +1961,15 @@ ReadChunkMetaOp::HandleDone(int code, void *data)
 {
     int res = -EINVAL;
 
-    if (code == EVENT_DISK_ERROR)
+    if (code == EVENT_DISK_ERROR) {
         status = -1;
+        if (data != NULL) {
+            status = *(int *) data;
+            KFS_LOG_VA_INFO("Disk error: errno = %d, chunkid = %lld", status, chunkId);
+            gChunkManager.ChunkIOFailed(chunkId, status);
+            res = status;
+        }
+    }
     else if (code == EVENT_DISK_READ) {
         IOBuffer *dataBuf = (IOBuffer *) data;
     
@@ -1935,6 +2003,11 @@ WriteOp::~WriteOp()
         float timeSpent = ComputeTimeDiff(startTime, lastWriteTime);
         if (timeSpent < 1e-6)
             timeSpent = 0.0;
+
+        if (timeSpent > 5.0) {
+            gChunkServer.SendTelemetryReport(CMD_WRITE, timeSpent);
+        }
+        
         // we don't want write id's to pollute stats
         gettimeofday(&startTime, NULL);
         gCtrWriteDuration.Update(1);
