@@ -468,7 +468,7 @@ handle_getalloc(MetaRequest *r)
 	req->chunkVersion = chunkInfo->chunkVersion;
 	if (gLayoutManager.GetChunkToServerMapping(req->chunkId, c) != 0) {
 		KFS_LOG_DEBUG("handle_getalloc: no chunkservers");
-		req->status = -ENOENT;
+		req->status = -EAGAIN;
 		return;
 	}
 	for_each(c.begin(), c.end(), EnumerateLocations(req->locations));
