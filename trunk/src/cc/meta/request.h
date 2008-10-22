@@ -64,6 +64,7 @@ enum MetaOp {
 	META_READDIRPLUS,
 	META_GETALLOC,
 	META_GETLAYOUT,
+	META_GETDIRSUMMARY,
 	META_ALLOCATE,
 	META_TRUNCATE,
 	META_RENAME,
@@ -362,6 +363,27 @@ struct MetaGetlayout: public MetaRequest {
 		ostringstream os;
 
 		os << "getlayout: fid = " << fid;
+		return os.str();
+	}
+};
+
+/*!
+ * \brief return summary information for a directory---# of files/sizes.
+ */
+struct MetaGetDirSummary : public MetaRequest {
+	fid_t dir; //!< the directory of interest
+	uint64_t numFiles; //!< # of files in dir
+	uint64_t numBytes; //!< # of bytes in dir
+	MetaGetDirSummary(seq_t s, fid_t f):
+		MetaRequest(META_GETDIRSUMMARY, s, false), dir(f), 
+		numFiles(0), numBytes(0) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		ostringstream os;
+
+		os << "getdirsummary: dir = " << dir;
 		return os.str();
 	}
 };
