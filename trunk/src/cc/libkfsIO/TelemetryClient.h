@@ -45,6 +45,8 @@ extern "C" {
 #include <vector>
 #include <string>
 
+#include "telemetry/packet.h"
+
 namespace KFS
 {
     class TelemetryClient {
@@ -63,6 +65,8 @@ namespace KFS
         void publish(double timetaken, std::string opname);
         // send out a message to the server identifying a slow node
         void publish(struct in_addr &target, double timetaken, std::string opname);
+        void publish(struct in_addr &target, double timetaken, std::string opname,
+                     uint32_t count, double *diskIOTime, double *elapsedTime);
         
         // get notification from the server of slow nodes in the system.
         // @param[in/out] slowNodes --- the set of slow nodes as
@@ -82,6 +86,8 @@ namespace KFS
         struct in_addr mAddr;
         // when we last got a notification
         time_t mLastNotification;
+        // helper methods
+        void publish(TelemetryClntPacket_t &tpkt);
     };
 }
 
