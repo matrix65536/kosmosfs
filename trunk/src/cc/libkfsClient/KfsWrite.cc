@@ -288,7 +288,7 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
 	    Sleep(KFS::LEASE_INTERVAL_SECS);
 	}
 	if ((res == -EHOSTUNREACH) || (res == -EIO) ||
-	    (res == -KFS::EBADVERS) ||
+	    (res == -KFS::EBADVERS) || (res == -ETIMEDOUT) ||
 	    (res == -KFS::ELEASEEXPIRED)) {
             // save the value of res; in case we tried too many times
             // and are giving up, we need the error to propogate
@@ -302,7 +302,10 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
 	if (res < 0) {
 	    // any other error
             string errstr = ErrorCodeToStr(res);
-            KFS_LOG_VA_INFO("Write failed because of error: %s", errstr.c_str());
+            ChunkAttr *chunk = GetCurrChunk(fd);
+
+            KFS_LOG_VA_INFO("Write on chunk %lld failed because of error: (code = %d) %s", 
+                            chunk->chunkId, res, errstr.c_str());
 	    break;
         }
     }
@@ -525,7 +528,6 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	op->AttachContentBuf(buf + numWrote, op->numBytes);
 	op->contentLength = op->numBytes;
         op->checksum = ComputeBlockChecksum(op->contentBuf, op->contentLength);
-        // op->checksum = 0;
 
 	numWrote += op->numBytes;
 	ops.push_back(op);
@@ -633,15 +635,17 @@ KfsClientImpl::AllocateWriteId(int fd, off_t offset, size_t numBytes,
 
     op.chunkServerLoc = chunk->chunkServerLoc;
     res = DoOpSend(&op, masterSock);
-    if (res < 0)
+    if (res < 0) {
+        if (op.status < 0)
+            return op.status;
         return res;
-    if (op.status < 0)
-        return op.status;
+    }
     res = DoOpResponse(&op, masterSock);
-    if (res < 0)
+    if (res < 0) {
+        if (op.status < 0)
+            return op.status;
         return res;
-    if (op.status < 0)
-        return op.status;
+    }
 
     // get rid of any old stuff
     writeId.clear();

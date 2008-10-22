@@ -586,9 +586,20 @@ ReadOp::ParseResponseHeader(char *buf, int len)
 {
     string resp(buf, len);
     Properties prop;
+    string checksumStr;
+    uint32_t nentries;
 
     ParseResponseHeaderCommon(resp, prop);
-    checksum = prop.getValue("Checksum", 0);
+    
+    nentries = prop.getValue("Checksum-entries", 0);
+    checksumStr = prop.getValue("Checksums", "");
+    istringstream ist(checksumStr);
+    checksums.clear();
+    for (uint32_t i = 0; i < nentries; i++) {
+        uint32_t cksum;
+        ist >> cksum;
+        checksums.push_back(cksum);
+    }
 }
 
 void

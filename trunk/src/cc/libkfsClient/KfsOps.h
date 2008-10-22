@@ -470,6 +470,7 @@ struct ReadOp : public KfsOp {
     int64_t      chunkVersion; /* input */
     off_t 	 offset;   /* input */
     size_t 	 numBytes; /* input */
+    std::vector<uint32_t> checksums; /* checksum for each 64KB block */
     ReadOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
         KfsOp(CMD_READ, s), chunkId(c), chunkVersion(v),
         offset(0), numBytes(0)
