@@ -135,7 +135,7 @@ main(int argc, char **argv)
     if (verboseLogging) {
         KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
     } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::WARN);
     } 
 
     statInfo.st_mode = S_IFREG;
