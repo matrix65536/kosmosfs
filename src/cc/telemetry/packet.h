@@ -34,6 +34,7 @@ namespace KFS
 {
     static const int OPNAME_LEN = 32;
     static const int MAX_NODES_PER_PKT = 32;
+    static const uint32_t MAX_IO_INFO_PER_PKT = 32;
 
     // Packet sent to the telemetry service by the clients: each
     // client identifies itself and the target that is "slow".  This
@@ -43,13 +44,18 @@ namespace KFS
         TelemetryClntPacket_t() { }
         TelemetryClntPacket_t(const struct in_addr &s, const struct in_addr &t,
                               double tt, const char *n) :
-            source(s), target(t), timetaken(tt) {
+            source(s), target(t), timetaken(tt), count(0) {
             strncpy(opname, n, OPNAME_LEN);
         }
 
         struct in_addr source;
         struct in_addr target;
         double timetaken;
+        // for each individual request, send the time it took
+        // how many IOs are we reporting per packet
+        uint32_t count;
+        double diskIOTime[MAX_IO_INFO_PER_PKT];
+        double elapsedTime[MAX_IO_INFO_PER_PKT];
         char opname[OPNAME_LEN];
     };
 

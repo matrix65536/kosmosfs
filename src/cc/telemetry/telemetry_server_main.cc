@@ -238,6 +238,13 @@ KFS::updateNodeState(TelemetryClntPacket_t &tpkt)
 
     inet_ntop(AF_INET, (struct in_addr *) &(tpkt.source), buffer, INET_ADDRSTRLEN);
 
+    if (tpkt.timetaken < 1e-6) {
+        // packets with negative #'s imply a status report about something gone bad
+        KFS_LOG_VA_INFO("%s reports from %s:  %s",
+                        buffer, s.c_str(), tpkt.opname);
+        return;
+        
+    }
     KFS_LOG_VA_INFO("%s reports that %s takes %.3f for %s",
                     buffer, s.c_str(), tpkt.timetaken, tpkt.opname);
     
