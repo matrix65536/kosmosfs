@@ -42,6 +42,7 @@ using namespace KFS;
 #include <algorithm>
 #include <vector>
 #include <fstream>
+#include <ostream>
 
 #include "common/log.h"
 
@@ -52,6 +53,7 @@ using std::endl;
 using std::string;
 using std::vector;
 using std::ifstream;
+using std::ostringstream;
 
 NodeMap gNodeMap;
 
@@ -247,6 +249,15 @@ KFS::updateNodeState(TelemetryClntPacket_t &tpkt)
     }
     KFS_LOG_VA_INFO("%s reports that %s takes %.3f for %s",
                     buffer, s.c_str(), tpkt.timetaken, tpkt.opname);
+
+    if (tpkt.opname == "READ") {
+        // dump out individual times for READ
+        ostringstream os;
+        for (uint32_t i = 0; i < tpkt.count; i++) {
+            os << "(" << tpkt.diskIOTime[i] << " , " << tpkt.elapsedTime << " ) ";
+        }
+        KFS_LOG_VA_INFO("Breakdown: %s", os.str().c_str());
+    }
     
     if (iter != gNodeMap.end()) {
         iter->second.sampleData(tpkt.timetaken);
