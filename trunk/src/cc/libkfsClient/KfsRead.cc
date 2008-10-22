@@ -624,9 +624,16 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 
                 uint32_t serverCksum = op->checksums[cksumIndex];
                 if (serverCksum != cksum) {
-                    KFS_LOG_VA_INFO("Checksum mismatch starting @pos = %lld: got = %d, computed = %d for %s",
-                                    op->offset + pos, serverCksum, cksum, op->Show().c_str());
+                    struct sockaddr_in saddr;
+                    char ipname[INET_ADDRSTRLEN];
+
+                    sock->GetPeerName((struct sockaddr *) &saddr);
+                    inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN);
+
+                    KFS_LOG_VA_INFO("Checksum mismatch from %s starting @pos = %lld: got = %d, computed = %d for %s",
+                                    ipname, op->offset + pos, serverCksum, cksum, op->Show().c_str());
                     op->status = -KFS::EBADCKSUM;
+                    mTelemetryReporter.publish(saddr.sin_addr, -1.0, "CHECKSUM_MISMATCH");
                 }
             }
         }
