@@ -529,7 +529,17 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
 
             if (pos->GetPreferredServerAddr(saddr) == 0) {
                 KFS_LOG_VA_DEBUG("Sending telemetry report about: %s", os.str().c_str());
-                mTelemetryReporter.publish(saddr.sin_addr, timeSpent, "READ");
+                double diskIOTime[MAX_IO_INFO_PER_PKT];
+                double elapsedTime[MAX_IO_INFO_PER_PKT];
+                vector<KfsOp *>::size_type count = 0;
+                for (; (count < ops.size()) && (count < MAX_IO_INFO_PER_PKT); count++) {
+                    ReadOp *op = static_cast<ReadOp *> (ops[count]);
+
+                    diskIOTime[count] = op->diskIOTime;
+                    elapsedTime[count] = op->elapsedTime;
+                }
+                mTelemetryReporter.publish(saddr.sin_addr, timeSpent, "READ", 
+                                           count, diskIOTime, elapsedTime);
             }
         }
         
@@ -562,6 +572,8 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
     for (next = 0; next < minOps; ++next) {
         op = ops[next];
 
+        gettimeofday(&op->submitTime, NULL);
+
 	res = DoOpSend(op, sock);
 	if (res < 0)
 	    return -1;
@@ -569,11 +581,17 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 
     // run the pipe: whenever one op finishes, queue another
     while (next < ops.size()) {
+        struct timeval now;
 	op = ops[first];
 
 	res = DoOpResponse(op, sock);
 	if (res < 0)
 	    return -1;
+
+        gettimeofday(&now, NULL);
+
+        op->elapsedTime = ComputeTimeDiff(op->submitTime, now);
+
 	++first;
 
 	op = ops[next];
@@ -583,6 +601,8 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 	    break;
 	}
 
+        gettimeofday(&op->submitTime, NULL);
+
 	res = DoOpSend(op, sock);
 	if (res < 0)
 	    return -1;
@@ -591,11 +611,16 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 
     // get the response for the remaining ones
     while (first < next) {
+        struct timeval now;
 	op = ops[first];
 
 	res = DoOpResponse(op, sock);
 	if (res < 0)
 	    return -1;
+
+        gettimeofday(&now, NULL);
+
+        op->elapsedTime = ComputeTimeDiff(op->submitTime, now);
 
 	if (leaseExpired)
 	    op->status = 0;
