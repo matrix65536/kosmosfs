@@ -117,6 +117,29 @@ TelemetryClient::publish(struct in_addr &target, double timetaken, string opname
         return;
 
     TelemetryClntPacket_t tpkt(mAddr, target, timetaken, opname.c_str());
+    publish(tpkt);
+}
+
+void
+TelemetryClient::publish(struct in_addr &target, double timetaken, string opname,
+                         uint32_t count, double *diskIOTime, double *elapsedTime)
+{
+    if (mSock < 0)
+        return;
+
+    TelemetryClntPacket_t tpkt(mAddr, target, timetaken, opname.c_str());
+
+    tpkt.count = count;
+    memcpy(tpkt.diskIOTime, diskIOTime, sizeof(double) * count);
+    memcpy(tpkt.elapsedTime, elapsedTime, sizeof(double) * count);
+    publish(tpkt);
+}
+
+void
+TelemetryClient::publish(TelemetryClntPacket_t &tpkt)
+{
+    if (mSock < 0)
+        return;
 
     socklen_t socklen = sizeof(struct sockaddr_in);
     struct sockaddr_in saddr;
