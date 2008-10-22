@@ -42,7 +42,7 @@ foreach (exe_file ${exe_files})
 endforeach (exe_file)
 
 if (APPLE)
-  target_link_libraries(kfsMeta-shared kfsCommon-shared kfsIO-shared)
+  target_link_libraries(kfsMeta-shared kfsIO-shared kfsCommon-shared)
 endif (APPLE)
 
 if (NOT APPLE)

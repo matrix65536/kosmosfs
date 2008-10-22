@@ -81,7 +81,7 @@ const uint32_t CONCURRENT_WRITES_PER_NODE_WATERMARK = 10;
 ///
 
 const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.3;
-const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.9;
+const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.7;
 
 #if 0
 const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.5;
@@ -2098,7 +2098,7 @@ LayoutManager::RebalanceServers()
 
 		allbusy = true;
 		for (uint32_t i = 0; i < nonloadedServers.size(); i++) {
-			if (nonloadedServers[i]->GetNumChunkReplications() <=
+			if (nonloadedServers[i]->GetNumChunkReplications() <
 				MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE) {
 				allbusy = false;
 				break;
@@ -2108,9 +2108,19 @@ LayoutManager::RebalanceServers()
 		if (allbusy)
 			break;
 
+		if (numBlocksMoved > 200)
+			break;
+
 		chunkId_t chunkId = iter->first;
 		ChunkPlacementInfo &clli = iter->second;
 		vector<ChunkServerPtr> candidates;
+
+		// chunk could be moved around if it is hosted on a loaded server
+		vector<ChunkServerPtr>::const_iterator csp;
+		csp = find_if(clli.chunkServers.begin(), clli.chunkServers.end(),
+				LoadedServerPred());
+		if (csp == clli.chunkServers.end())
+			continue;
 
 		// we have seen this chunkId; next time, we'll start time from
 		// around here
@@ -2125,12 +2135,6 @@ LayoutManager::RebalanceServers()
 		if (extraReplicas < 0)
 			continue;
 
-		// chunk could be moved around if it is hosted on a loaded server
-		vector<ChunkServerPtr>::const_iterator csp;
-		csp = find_if(clli.chunkServers.begin(), clli.chunkServers.end(),
-				LoadedServerPred());
-		if (csp == clli.chunkServers.end())
-			continue;
 
 		// there are two ways nodes can be added:
 		//  1. new nodes to an existing rack: in this case, we want to
@@ -2298,15 +2302,25 @@ LayoutManager::ExecuteRebalancePlan(ChunkServerPtr &c)
 		chunkId_t cid = *citer;
 
 		CSMapIter iter = mChunkToServerMap.find(cid);
+
+		if (iter == mChunkToServerMap.end()) {
+			// chunk got deleted from the time the plan was created
+			// to now.
+			c->MovingChunkDone(cid);
+			continue;
+		}
+
 		int extraReplicas;
 
 		if ((iter->second.ongoingReplications > 0) ||
 			(!CanReplicateChunkNow(cid, iter->second,
 				extraReplicas))) 
 			continue;
-		// Paranoia...
-		if (IsChunkHostedOnServer(iter->second.chunkServers, c))
+		if (IsChunkHostedOnServer(iter->second.chunkServers, c)) {
+			// Paranoia...
+			c->MovingChunkDone(cid);
 			continue;
+		}
 
 		ReplicateChunkToServers(cid, iter->second, 1, candidates);
 	}
