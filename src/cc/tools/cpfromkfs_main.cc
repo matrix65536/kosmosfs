@@ -121,7 +121,7 @@ main(int argc, char **argv)
     if (verboseLogging) {
         KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
     } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::WARN);
     } 
 
     if (gKfsClient->Stat(kfsPath.c_str(), statInfo) < 0) {
@@ -239,8 +239,6 @@ RestoreFile2(string kfsfilename, string localfilename)
     char kfsBuf[bufsize];
     int kfsfd, n = 0, nRead, toRead;
     int localFd;
-
-    cerr << "Restoring: " << localfilename << endl;
 
     kfsfd = gKfsClient->Open((char *) kfsfilename.c_str(), O_RDONLY);
     if (kfsfd < 0) {
