@@ -61,6 +61,23 @@ struct ChunkAttr {
     off_t	chunkSize;
     ChunkAttr(): chunkId(-1), chunkVersion(-1), didAllocation(false),
                  chunkSize(0) { }
+
+    // during reads, if we can't get data from a server, we avoid it
+    // and look elsewhere.  when we avoid it, we take the server out
+    // of the list of candidates.
+    void AvoidServer(ServerLocation &loc) {
+        std::vector<ServerLocation>::iterator iter;
+
+        iter = std::find(chunkServerLoc.begin(), chunkServerLoc.end(), loc);
+        if (iter != chunkServerLoc.end())
+            chunkServerLoc.erase(iter);
+
+        if (chunkServerLoc.size() == 0) {
+            // all the servers we could talk to are gone; so, we need
+            // to re-figure where the data is.
+            chunkId = -1;
+        }
+    }
 };
 
 ///

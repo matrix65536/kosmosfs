@@ -66,6 +66,12 @@ NeedToRetryRead(int status)
             (status == -ETIMEDOUT));
 }
 
+static bool
+NeedToChangeReplica(int errcode)
+{
+    return ((errcode == -EHOSTUNREACH) || (errcode == -ETIMEDOUT) || (errcode == -EIO));
+}
+
 ssize_t
 KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
 {
@@ -130,7 +136,7 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
         }
         
         KFS_LOG_VA_INFO("Read done from %s on %s: @offset: %lld: asked: %d, returning %d, errorcode = %d",
-                        s.c_str(), mFileTable[fd]->pathname.c_str(), pos->fileOffset, numBytes, nread, numIO);
+                        s.c_str(), mFileTable[fd]->pathname.c_str(), pos->fileOffset, numBytes, (int) nread, (int) numIO);
     }
     return nread;
 }
@@ -140,12 +146,25 @@ KfsClientImpl::IsChunkReadable(int fd)
 {
     FilePosition *pos = FdPos(fd);
     int res = -1;
+    ChunkAttr *chunk = NULL;
 
     for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
         res = LocateChunk(fd, pos->chunkNum);
 
-        if (res >= 0)
+        if (res >= 0) {
+            chunk = GetCurrChunk(fd);
+            if (pos->preferredServer == NULL && chunk->chunkId != (kfsChunkId_t)-1) {
+                // use nonblocking connect to chunkserver; if one fails to
+                // connect, we switch to another replica. 
+                res = OpenChunk(fd, true);
+                if (res < 0) {
+                    if (pos->preferredServer != NULL)
+                        pos->AvoidServer(pos->preferredServerLocation);
+                    continue;
+                }
+            }
             break;
+        }
         if (res == -EAGAIN) {
             // could be that all 3 servers are temporarily down
             Sleep(RETRY_DELAY_SECS);
@@ -154,20 +173,12 @@ KfsClientImpl::IsChunkReadable(int fd)
             // we can't locate the chunk...fail
             return false;
         }
+
     }
 
     if (res < 0)
         return false;
 
-    ChunkAttr *chunk = GetCurrChunk(fd);
-
-    if (pos->preferredServer == NULL && chunk->chunkId != (kfsChunkId_t)-1) {
-        // use nonblocking connect to chunkserver; if one fails to
-        // connect, we switch to another replica. 
-	int status = OpenChunk(fd, true);
-	if (status < 0)
-	    return false;
-    }
 
     return IsChunkLeaseGood(chunk->chunkId);
 }
@@ -227,11 +238,26 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
 	    retryCount++;
 	    Sleep(RETRY_DELAY_SECS);
 
-            // open failed..so, bail....we use non-blocking connect to
-            // switch another replica
 	    status = OpenChunk(fd, true);
-	    if (status < 0)
+            if (NeedToChangeReplica(status)) {
+                // we couldn't read the data off the disk from the server;
+                // when we retry, we need to pick another replica
+                
+                if (pos->preferredServer != NULL) {
+                    string s = pos->GetPreferredServerLocation().ToString();
+                    KFS_LOG_VA_INFO("Got error=%d from server %s for %s @offset: %lld; avoiding server",
+                                numIO, s.c_str(), mFileTable[fd]->pathname.c_str(), pos->fileOffset);
+                }
+                chunk->AvoidServer(pos->preferredServerLocation);
+                pos->AvoidServer(pos->preferredServerLocation);
+
+                continue;
+            }
+
+	    if (status < 0) {
+                // open failed..so, bail
 	        return status;
+            }
 	}
 
 	numIO = ZeroFillBuf(fd, buf, numBytes);
@@ -259,7 +285,7 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
             break;
         }
 
-        if (numIO == -EIO) {
+        if (NeedToChangeReplica(numIO)) {
             // we couldn't read the data off the disk from the server;
             // when we retry, we need to pick another replica
 
@@ -268,7 +294,10 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
                 KFS_LOG_VA_INFO("Got error=%d from server %s for %s @offset: %lld; avoiding server",
                                 numIO, s.c_str(), mFileTable[fd]->pathname.c_str(), pos->fileOffset);
             }
+            chunk->AvoidServer(pos->preferredServerLocation);
             pos->AvoidServer(pos->preferredServerLocation);
+
+            continue;
         }
 
         // KFS_LOG_DEBUG("Need to retry read...");
@@ -523,8 +552,7 @@ int
 KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 {
     vector<ReadOp *>::size_type first = 0, next, minOps;
-    int res;
-    uint32_t cksum;
+    int res = 0;
     ReadOp *op;
     bool leaseExpired = false;
 
@@ -547,15 +575,6 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 	if (res < 0)
 	    return -1;
 	++first;
-
-        if ((op->status >= 0) && (op->checksum != 0)) {
-            cksum = ComputeBlockChecksum(op->contentBuf, op->status);
-            if (cksum != op->checksum) {
-                KFS_LOG_VA_INFO("Checksum mismatch: got = %d, computed = %d for %s",
-                                op->checksum, cksum, op->Show().c_str());
-                op->status = -KFS::EBADCKSUM;
-            }
-        }
 
 	op = ops[next];
 
@@ -583,6 +602,34 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 
 	++first;
 
+    }
+
+    // do checksum verification
+    if (res >= 0) {
+        for (next = 0; next < ops.size(); next++) {
+            op = ops[next];
+            if (op->checksums.size() == 0)
+                continue;
+
+            for (size_t pos = 0; pos < op->contentLength; pos += CHECKSUM_BLOCKSIZE) {
+                size_t len = min(CHECKSUM_BLOCKSIZE, (uint32_t) (op->contentLength - pos));
+                uint32_t cksum = ComputeBlockChecksum(op->contentBuf + pos, len);
+                uint32_t cksumIndex = pos / CHECKSUM_BLOCKSIZE;
+                if (op->checksums.size() < cksumIndex) {
+                    // didn't get all the checksums
+                    KFS_LOG_VA_DEBUG("Didn't get checksum for offset: %lld",
+                                     op->offset + pos);
+                    continue;
+                }
+
+                uint32_t serverCksum = op->checksums[cksumIndex];
+                if (serverCksum != cksum) {
+                    KFS_LOG_VA_INFO("Checksum mismatch starting @pos = %lld: got = %d, computed = %d for %s",
+                                    op->offset + pos, serverCksum, cksum, op->Show().c_str());
+                    op->status = -KFS::EBADCKSUM;
+                }
+            }
+        }
     }
     return 0;
 }

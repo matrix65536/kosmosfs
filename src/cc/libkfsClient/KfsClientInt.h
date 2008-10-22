@@ -238,6 +238,9 @@ struct FilePosition {
         iter = std::find(chunkServers.begin(), chunkServers.end(), loc);
         if (iter != chunkServers.end())
             chunkServers.erase(iter);
+
+        if (preferredServerLocation == loc)
+            preferredServer = NULL;
     }
 
     void SetPreferredServer(const ServerLocation &loc, bool nonblockingConnect = false) {
