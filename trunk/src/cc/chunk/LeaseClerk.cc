@@ -190,13 +190,13 @@ LeaseClerk::HandleEvent(int code, void *data)
 			"WRITE_LEASE");
 
 	    KFS_LOG_VA_DEBUG("renewing lease for: chunk=%ld, lease=%ld",
-	    chunkId, lease.leaseId);
+                             chunkId, lease.leaseId);
 
 	    op->clnt = this;
 	    gMetaServerSM.EnqueueOp(op);
 	} else {
 	    KFS_LOG_VA_DEBUG("not renewing lease for: chunk=%ld, lease=%ld",
-	    chunkId, lease.leaseId);
+                             chunkId, lease.leaseId);
 	    // else...need to cleanup expired leases
 	}
 	break;

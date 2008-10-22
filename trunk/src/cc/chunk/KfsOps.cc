@@ -28,6 +28,7 @@
 //----------------------------------------------------------------------------
 
 #include "KfsOps.h"
+#include "common/Version.h"
 #include "common/kfstypes.h"
 #include "libkfsIO/Globals.h"
 #include "meta/thread.h"
@@ -648,8 +649,19 @@ ReadOp::HandleDone(int code, void *data)
             status = numBytesIO;
     }
 
-    if ((status >= 0) && ((uint32_t) numBytesIO <= CHECKSUM_BLOCKSIZE)) {
-        checksum = ComputeBlockChecksum(dataBuf, numBytesIO);
+    if (status >= 0) {
+        if (numBytesIO < (int) CHECKSUM_BLOCKSIZE) {
+            uint32_t cks;
+            cks = ComputeBlockChecksum(dataBuf, numBytesIO);
+            checksum.push_back(cks);
+        } else {
+            checksum = ComputeChecksums(dataBuf, numBytesIO);
+        }
+        // send the disk IO time back to client for telemetry reporting
+        struct timeval timeNow;
+
+        gettimeofday(&timeNow, NULL);
+        diskIOTime = ComputeTimeDiff(startTime, timeNow);
     }
 
     gChunkManager.ChunkSize(chunkId, &chunkSize);
@@ -1275,8 +1287,6 @@ WritePrepareOp::Execute()
     }
 
     if (!gChunkManager.IsChunkMetadataLoaded(chunkId)) {
-        KFS_LOG_VA_DEBUG("Write prepare failed...checksums are not loaded; so lease expired for %ld",
-                         chunkId);
 
         if (gLeaseClerk.IsLeaseValid(chunkId)) {
             // The write-id allocation has failed; we don't want to renew the lease.
@@ -1286,6 +1296,9 @@ WritePrepareOp::Execute()
             gLeaseClerk.UnRegisterLease(chunkId);
         }
         
+        KFS_LOG_VA_INFO("Write prepare failed...checksums are not loaded; so lease expired for %ld",
+                        chunkId);
+
         status = -KFS::ELEASEEXPIRED;
         gLogger.Submit(this);
         return;
@@ -1294,7 +1307,7 @@ WritePrepareOp::Execute()
     if (writeMaster) {
         // if we are the master, check the lease...
         if (!gLeaseClerk.IsLeaseValid(chunkId)) {
-            KFS_LOG_VA_DEBUG("Write prepare failed...lease expired for %ld",
+            KFS_LOG_VA_INFO("Write prepare failed...as lease expired for %ld",
                              chunkId);
             status = -KFS::ELEASEEXPIRED;
             gLogger.Submit(this);
@@ -1456,8 +1469,9 @@ WriteSyncOp::Execute()
             // the metadata block could be paged out by a previous sync
             needToWriteMetadata = false;
         } else {
-            KFS_LOG_VA_DEBUG("Write sync failed...checksums got paged out?; so lease expired for %ld",
-                             chunkId);
+            KFS_LOG_VA_INFO("Write sync failed...checksums got paged out?; so lease expired for %ld",
+                            chunkId);
+
             status = -KFS::ELEASEEXPIRED;
             gLogger.Submit(this);
             return;
@@ -1467,8 +1481,8 @@ WriteSyncOp::Execute()
     if (writeMaster) {
         // if we are the master, check the lease...
         if (!gLeaseClerk.IsLeaseValid(chunkId)) {
-            KFS_LOG_VA_DEBUG("Write sync failed...lease expired for %ld",
-                             chunkId);
+            KFS_LOG_VA_INFO("Write sync failed...lease expired for %ld",
+                            chunkId);
             status = -KFS::ELEASEEXPIRED;
             gLogger.Submit(this);
             return;
@@ -1556,13 +1570,14 @@ WriteSyncOp::HandleDone(int code, void *data)
     if (op && (op->status < 0)) {
         status = op->status;
         KFS_LOG_VA_DEBUG("Peer (%s) returned: ", op->Show().c_str(), op->status);
-        if (gLeaseClerk.IsLeaseValid(chunkId)) {
-            // The write has failed; we don't want to renew the lease.
-            // Now, when the client forces a re-allocation, the
-            // metaserver will do a version bump; when the node that
-            // was dead comes back, we can detect it has missed a write
-            gLeaseClerk.UnRegisterLease(chunkId);
-        }
+    }
+
+    if ((status < 0) && (gLeaseClerk.IsLeaseValid(chunkId))) {
+        // The write has failed; we don't want to renew the lease.
+        // Now, when the client forces a re-allocation, the
+        // metaserver will do a version bump; when the node that
+        // was dead comes back, we can detect it has missed a write
+        gLeaseClerk.UnRegisterLease(chunkId);
     }
 
     numDone++;
@@ -1731,8 +1746,17 @@ ReadOp::Response(ostringstream &os)
         os << "Status: " << status << "\r\n\r\n";
         return;
     }
-    os << "Status: " << status << "\r\n";    
-    os << "Checksum: " << checksum << "\r\n";
+    os << "Status: " << status << "\r\n";
+    os << "DiskIOtime: " << diskIOTime << "\r\n";
+    os << "Checksum-entries: " << checksum.size() << "\r\n";
+    if (checksum.size() == 0) {
+        os << "Checksums: " << 0 << "\r\n";
+    } else {
+        os << "Checksums: ";
+        for (uint32_t i = 0; i < checksum.size(); i++)
+            os << checksum[i] << ' ';
+        os << "\r\n";
+    }
     os << "Content-length: " << numBytesIO << "\r\n\r\n";
 }
 
@@ -2120,6 +2144,8 @@ HelloMetaOp::Request(ostringstream &os)
     os << "Cseq: " << seq << "\r\n";
     os << "Chunk-server-name: " << myLocation.hostname << "\r\n";
     os << "Chunk-server-port: " << myLocation.port << "\r\n";
+    os << "Build-version: " << KFS::KFS_BUILD_VERSION_STRING << "\r\n";
+    os << "Source-version: " << KFS::KFS_SOURCE_REVISION_STRING << "\r\n";
     os << "Cluster-key: " << clusterKey << "\r\n";
     os << "Rack-id: " << rackId << "\r\n";
     os << "Total-space: " << totalSpace << "\r\n";
