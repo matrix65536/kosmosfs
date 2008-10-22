@@ -648,7 +648,8 @@ struct ReadOp : public KfsOp {
     ssize_t	 numBytesIO; /* output: # of bytes actually read */
     DiskConnectionPtr diskConnection; /* disk connection used for reading data */
     IOBuffer *dataBuf; /* buffer with the data read */
-    uint32_t checksum; /* checksum over the data that is sent back to client */
+    std::vector<uint32_t> checksum; /* checksum over the data that is sent back to client */
+    float diskIOTime; /* how long did the AIOs take */
     /*
      * for writes that require the associated checksum block to be
      * read in, store the pointer to the associated write op.
@@ -656,14 +657,14 @@ struct ReadOp : public KfsOp {
     WriteOp *wop;
     ReadOp(kfsSeq_t s) :
         KfsOp(CMD_READ, s), numBytesIO(0), dataBuf(NULL),
-        checksum(0), wop(NULL)
+        wop(NULL)
     {
         SET_HANDLER(this, &ReadOp::HandleDone);
     }
     ReadOp(WriteOp *w, off_t o, size_t n) :
         KfsOp(CMD_READ, w->seq), chunkId(w->chunkId),
         chunkVersion(w->chunkVersion), offset(o), numBytes(n),
-        numBytesIO(0), dataBuf(NULL), checksum(0), wop(w)
+        numBytesIO(0), dataBuf(NULL), wop(w)
     {
         clnt = w;
         SET_HANDLER(this, &ReadOp::HandleDone);

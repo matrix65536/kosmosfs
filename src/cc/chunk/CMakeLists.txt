@@ -37,8 +37,7 @@ foreach (exe_file ${exe_files})
            target_link_libraries (${exe_file} chunk kfsIO kfsCommon pthread)
         else (USE_STATIC_LIB_LINKAGE)
            add_dependencies (${exe_file} chunk-shared kfsCommon-shared kfsIO-shared)
-           target_link_libraries (${exe_file} chunk-shared kfsIO-shared
-kfsCommon-shared pthread)
+           target_link_libraries (${exe_file} chunk-shared kfsIO-shared kfsCommon-shared pthread)
         endif (USE_STATIC_LIB_LINKAGE)
 endforeach (exe_file)
 

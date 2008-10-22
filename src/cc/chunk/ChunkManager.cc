@@ -795,6 +795,14 @@ ChunkManager::ReadChunkDone(ReadOp *op)
     vector<uint32_t> checksums = ComputeChecksums(op->dataBuf, op->dataBuf->BytesConsumable());
 
     // the checksums should be loaded...
+    if (!cih->chunkInfo.AreChecksumsLoaded()) {
+        // the read took too long; the checksums got paged out.  so, ask the client to redo the read
+        KFS_LOG_VA_INFO("Checksums for chunk %lld got paged out; returning EAGAIN to client",
+                        cih->chunkInfo.chunkId);
+        op->status = -EAGAIN;
+        return;
+    }
+
     cih->chunkInfo.VerifyChecksumsLoaded();
 
     for (i = 0; i < checksums.size() &&
