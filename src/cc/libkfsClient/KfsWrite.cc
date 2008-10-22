@@ -271,11 +271,17 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
             break;
 
 	if ((res == -EHOSTUNREACH) || (res == -EIO) || (res == -KFS::EBADVERS)) {
+            ostringstream os;
+            ChunkAttr *chunk = GetCurrChunk(fd);
+            
+            for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++)
+                os << chunk->chunkServerLoc[i].ToString().c_str() << ' ';
+
 	    // one of the hosts is non-reachable (aka dead) or has a disk issue; so, wait
 	    // and retry.  Since one of the servers has a write-lease, we
 	    // need to wait for the lease to expire before retrying.
-            KFS_LOG_VA_INFO("Will retry allocation/write on chunk %lld due to error code: %d", 
-                            GetCurrChunk(fd)->chunkId, res);
+            KFS_LOG_VA_INFO("Daisy-chain: %s; Will retry allocation/write on chunk %lld due to error code: %d", 
+                            os.str().c_str(), GetCurrChunk(fd)->chunkId, res);
 	    Sleep(KFS::LEASE_INTERVAL_SECS);
 	}
 
