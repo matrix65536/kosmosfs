@@ -270,50 +270,34 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
         if (res >= 0)
             break;
 
-	if ((res == -EHOSTUNREACH) || (res == -EIO) || (res == -KFS::EBADVERS)) {
-            ostringstream os;
-            ChunkAttr *chunk = GetCurrChunk(fd);
+        // write failure...retry
+        ostringstream os;
+        ChunkAttr *chunk = GetCurrChunk(fd);
             
-            for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++)
-                os << chunk->chunkServerLoc[i].ToString().c_str() << ' ';
+        for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++)
+            os << chunk->chunkServerLoc[i].ToString().c_str() << ' ';
 
-	    // one of the hosts is non-reachable (aka dead) or has a disk issue; so, wait
-	    // and retry.  Since one of the servers has a write-lease, we
-	    // need to wait for the lease to expire before retrying.
-            KFS_LOG_VA_INFO("Daisy-chain: %s; Will retry allocation/write on chunk %lld due to error code: %d", 
-                            os.str().c_str(), GetCurrChunk(fd)->chunkId, res);
-	    Sleep(KFS::LEASE_INTERVAL_SECS);
-	}
+        // whatever be the error, wait a bit and retry...
+        KFS_LOG_VA_INFO("Daisy-chain: %s; Will retry allocation/write on chunk %lld due to error code: %d", 
+                        os.str().c_str(), GetCurrChunk(fd)->chunkId, res);
+        Sleep(KFS::LEASE_INTERVAL_SECS);
 
-	if (res == -KFS::ELEASEEXPIRED) {
-            ChunkAttr *chunk = GetCurrChunk(fd);
-            ServerLocation loc = chunk->chunkServerLoc[0];
-            
-	    KFS_LOG_VA_INFO("Server %s says lease expired for %lld.%lld ...re-doing allocation",
-                            loc.ToString().c_str(), chunk->chunkId, chunk->chunkVersion);
-	    Sleep(KFS::LEASE_INTERVAL_SECS);
-	}
-	if ((res == -EHOSTUNREACH) || (res == -EIO) ||
-	    (res == -KFS::EBADVERS) || (res == -ETIMEDOUT) ||
-	    (res == -KFS::ELEASEEXPIRED)) {
-            // save the value of res; in case we tried too many times
-            // and are giving up, we need the error to propogate
-            int r;
-	    if ((r = DoAllocation(fd, true)) < 0)
-		return r;
-            
-	    continue;
-	}
-
-	if (res < 0) {
-	    // any other error
-            string errstr = ErrorCodeToStr(res);
-            ChunkAttr *chunk = GetCurrChunk(fd);
-
-            KFS_LOG_VA_INFO("Write on chunk %lld failed because of error: (code = %d) %s", 
-                            chunk->chunkId, res, errstr.c_str());
-	    break;
+        // save the value of res; in case we tried too many times
+        // and are giving up, we need the error to propogate
+        int r;
+        if ((r = DoAllocation(fd, true)) < 0) {
+            KFS_LOG_VA_INFO("Re-allocation on chunk %lld failed because of error code = %d", r);
+            return r;
         }
+    }
+
+    if (res < 0) {
+        // any other error
+        string errstr = ErrorCodeToStr(res);
+        ChunkAttr *chunk = GetCurrChunk(fd);
+
+        KFS_LOG_VA_INFO("Retries failed: Write on chunk %lld failed because of error: (code = %d) %s", 
+                        chunk->chunkId, res, errstr.c_str());
     }
 
     return res;
