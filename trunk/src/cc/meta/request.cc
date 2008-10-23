@@ -82,6 +82,7 @@ static int parseHandlerStats(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r);
 static int parseHandlerOpenFiles(Properties &prop, MetaRequest **r);
 static int parseHandlerToggleWORM(Properties &prop, MetaRequest **r);
+static int parseHandlerUpServers(Properties &prop, MetaRequest **r);
 
 /// command -> parsehandler map
 typedef map<string, ParseHandler> ParseHandlerMap;
@@ -915,6 +916,15 @@ handle_ping(MetaRequest *r)
 }
 
 static void
+handle_upservers(MetaRequest *r)
+{
+    MetaUpServers *req = static_cast <MetaUpServers *>(r);
+
+    req->status = 0;
+    gLayoutManager.UpServers(req->stringStream);
+}
+
+static void
 handle_dump_chunkToServerMap(MetaRequest *r)
 {
 	MetaDumpChunkToServerMap *req = static_cast <MetaDumpChunkToServerMap *>(r);
@@ -994,6 +1004,7 @@ setup_handlers()
 	handler[META_STATS] = handle_stats;
 	handler[META_DUMP_CHUNKTOSERVERMAP] = handle_dump_chunkToServerMap;
 	handler[META_OPEN_FILES] = handle_open_files;
+	handler[META_UPSERVERS] = handle_upservers;
 
 	gParseHandlers["LOOKUP"] = parseHandlerLookup;
 	gParseHandlers["LOOKUP_PATH"] = parseHandlerLookupPath;
@@ -1023,6 +1034,7 @@ setup_handlers()
 	gParseHandlers["HELLO"] = parseHandlerHello;
 
 	gParseHandlers["PING"] = parseHandlerPing;
+	gParseHandlers["UPSERVERS"] = parseHandlerUpServers;
 	gParseHandlers["TOGGLE_WORM"] = parseHandlerToggleWORM;
 	gParseHandlers["STATS"] = parseHandlerStats;
 	gParseHandlers["DUMP_CHUNKTOSERVERMAP"] = parseHandlerDumpChunkToServerMap;
@@ -1396,6 +1408,15 @@ int
 MetaPing::log(ofstream &file) const
 {
 	return 0;
+}
+
+/*!
+ * \brief for a request of upserver, there is nothing to log
+ */
+int
+MetaUpServers::log(ofstream &file) const
+{
+    return 0;
 }
 
 /*!
@@ -1933,6 +1954,18 @@ parseHandlerPing(Properties &prop, MetaRequest **r)
 }
 
 /*!
+ * \brief Parse out the headers for a UPSERVER message.
+ */
+int
+parseHandlerUpServers(Properties &prop, MetaRequest **r)
+{
+    seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+
+    *r = new MetaUpServers(seq);
+    return 0;
+}
+
+/*!
  * \brief Parse out the headers from a TOGGLE_WORM message.
  */
 int
@@ -2328,6 +2361,17 @@ MetaPing::response(ostringstream &os)
 	os << "Servers: " << servers << "\r\n";
 	os << "Retiring Servers: " << retiringServers << "\r\n";
 	os << "Down Servers: " << downServers << "\r\n\r\n";
+}
+
+void
+MetaUpServers::response(ostringstream &os)
+{
+    os << "OK\r\n";
+    os << "Cseq: " << opSeqno << "\r\n";
+    os << "Status: " << status << "\r\n";
+    os << "Content-length: " << stringStream.str().length() << "\r\n\r\n";
+    if (stringStream.str().length() > 0)
+        os << stringStream.str();
 }
 
 void

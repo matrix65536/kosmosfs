@@ -105,7 +105,8 @@ enum MetaOp {
 	META_PING, //!< Print out chunkserves and their configs
 	META_STATS, //!< Print out whatever statistics/counters we have
 	META_DUMP_CHUNKTOSERVERMAP, //! < Dump out the chunk -> location map
-	META_OPEN_FILES //!< Print out open files---for which there is a valid read/write lease
+	META_OPEN_FILES, //!< Print out open files---for which there is a valid read/write lease
+	META_UPSERVERS //!< Print out live chunk servers
 
 };
 
@@ -375,7 +376,7 @@ struct MetaGetDirSummary : public MetaRequest {
 	uint64_t numFiles; //!< # of files in dir
 	uint64_t numBytes; //!< # of bytes in dir
 	MetaGetDirSummary(seq_t s, fid_t f):
-		MetaRequest(META_GETDIRSUMMARY, s, false), dir(f), 
+		MetaRequest(META_GETDIRSUMMARY, s, false), dir(f),
 		numFiles(0), numBytes(0) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
@@ -865,6 +866,22 @@ struct MetaPing: public MetaRequest {
 	string Show()
 	{
 		return "ping";
+	}
+};
+
+/*!
+ * \brief For monitoring purposes, a client/tool can request metaserver
+ * to provide a list of live chunkservers.
+ */
+struct MetaUpServers: public MetaRequest {
+	ostringstream stringStream;
+	MetaUpServers(seq_t s):
+		MetaRequest(META_UPSERVERS, s, false) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		return "upservers";
 	}
 };
 

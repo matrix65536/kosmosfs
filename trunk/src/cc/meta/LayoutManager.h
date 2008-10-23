@@ -89,7 +89,7 @@ namespace KFS
 
 	// Given a chunk-id, where is stored and who has the lease(s)
 	struct ChunkPlacementInfo {
-		ChunkPlacementInfo() : 
+		ChunkPlacementInfo() :
 			fid(-1), ongoingReplications(0) { }
 		// For cross-validation, we store the fid here.  This
 		// is also useful during re-replication: given a chunk, we
@@ -130,7 +130,7 @@ namespace KFS
 		}
 		void removeServer(ChunkServer *server) {
 			std::vector <ChunkServerPtr>::iterator iter;
-			
+
 			iter = find_if(mServers.begin(), mServers.end(),
 					ChunkServerMatcher(server));
 			if (iter == mServers.end())
@@ -191,7 +191,7 @@ namespace KFS
 	typedef std::tr1::unordered_map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
 	typedef std::tr1::unordered_map <chunkId_t, ChunkPlacementInfo >::iterator CSMapIter;
 #endif
-	
+
 	// candidate set of chunks whose replication needs checking
 	typedef std::set <chunkId_t> CRCandidateSet;
 	typedef std::set <chunkId_t>::iterator CRCandidateSetIter;
@@ -368,6 +368,9 @@ namespace KFS
 		/// maintenance.
 		void Ping(string &systemInfo, string &upServers, string &downServers, string &retiringServers);
 
+		/// Return a list of alive chunk servers
+		void UpServers(ostringstream &os);
+
 		/// Periodically, walk the table of chunk -> [location, lease]
 		/// and remove out dead leases.
 		void LeaseCleanup();
@@ -532,15 +535,15 @@ namespace KFS
 		/// @param[in] rackId   The rack to restrict the candidate
 		/// selection to; if rackId = -1, then all servers are fair game
 		void FindCandidateServers(std::vector<ChunkServerPtr> &result,
-					const std::vector<ChunkServerPtr> &excludes, 
+					const std::vector<ChunkServerPtr> &excludes,
 					int rackId = -1);
 
 		/// Helper function to generate candidate servers from
-		/// the specified set of sources for hosting a chunk.  
+		/// the specified set of sources for hosting a chunk.
 		/// The list of servers returned is
 		/// ordered in decreasing space availability.
 		/// @param[out] result  The set of available servers
-		/// @param[in] sources  The set of possible source servers 
+		/// @param[in] sources  The set of possible source servers
 		/// @param[in] excludes  The set of servers to exclude from
 		/// @param[in] rackId   The rack to restrict the candidate
 		/// selection to; if rackId = -1, then all servers are fair game
@@ -551,7 +554,7 @@ namespace KFS
 
 		/// Helper function that takes a set of servers and sorts
 		/// them by space utilization.  The list of servers returned is
-		/// ordered on increasing space utilization (i.e., decreasing 
+		/// ordered on increasing space utilization (i.e., decreasing
 		/// space availability).
 		/// @param[in/out] servers  The set of servers we want sorted
 		void SortServersByUtilization(vector<ChunkServerPtr> &servers);
@@ -564,7 +567,7 @@ namespace KFS
 		/// @param[in] clli  The lease/location information about the chunk.
 		/// @param[out] extraReplicas  The target # of additional replicas for the chunk
 		/// @retval true if the chunk is to be replicated; false otherwise
-		bool CanReplicateChunkNow(chunkId_t chunkId, 
+		bool CanReplicateChunkNow(chunkId_t chunkId,
 				ChunkPlacementInfo &clli,
 				int &extraReplicas);
 
@@ -574,7 +577,7 @@ namespace KFS
 		/// @param[in] chunkId   The id of the chunk which we are checking
 		/// @param[in] clli  The lease/location information about the chunk.
 		/// @param[in] extraReplicas  The target # of additional replicas for the chunk
-		/// @param[in] candidates   The set of servers on which the additional replicas 
+		/// @param[in] candidates   The set of servers on which the additional replicas
 		/// 				should be stored
 		/// @retval  The # of actual replications triggered
 		int ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
@@ -602,7 +605,7 @@ namespace KFS
 		/// Helper function to check set membership.
 		/// @param[in] hosters  Set of servers hosting a chunk
 		/// @param[in] server   The server we want to check for membership in hosters.
-		/// @retval true if server is a member of the set of hosters; 
+		/// @retval true if server is a member of the set of hosters;
 		///         false otherwise
 		bool IsChunkHostedOnServer(const vector<ChunkServerPtr> &hosters,
 						const ChunkServerPtr &server);
@@ -643,7 +646,7 @@ namespace KFS
 			if (mChunkServers.size() < mMinChunkserversToExitRecovery)
 				return true;
 			time_t now = time(0);
-			return now - mRecoveryStartTime <= 
+			return now - mRecoveryStartTime <=
 				KFS::LEASE_INTERVAL_SECS;
 		}
 

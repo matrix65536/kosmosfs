@@ -126,6 +126,14 @@ DumpChunkMapOp::Request(ostringstream &os)
 }
 
 void
+UpServersOp::Request(ostringstream &os)
+{
+    os << "UPSERVERS" << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n\r\n";
+}
+
+void
 ReaddirPlusOp::Request(ostringstream &os)
 {
     os << "READDIRPLUS " << "\r\n";
@@ -439,6 +447,15 @@ DumpChunkMapOp::ParseResponseHeader(char *buf, int len)
 }
 
 void
+UpServersOp::ParseResponseHeader(char *buf, int len)
+{
+	string resp(buf, len);
+	Properties prop;
+
+	ParseResponseHeaderCommon(resp, prop);
+}
+
+void
 ReaddirPlusOp::ParseResponseHeader(char *buf, int len)
 {
     string resp(buf, len);
@@ -624,7 +641,7 @@ ReadOp::ParseResponseHeader(char *buf, int len)
     uint32_t nentries;
 
     ParseResponseHeaderCommon(resp, prop);
-    
+
     nentries = prop.getValue("Checksum-entries", 0);
     checksumStr = prop.getValue("Checksums", "");
     diskIOTime = prop.getValue("DiskIOtime", 0.0);
