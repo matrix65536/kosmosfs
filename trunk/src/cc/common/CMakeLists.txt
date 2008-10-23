@@ -1,6 +1,6 @@
 
 # Take all the .cc files and build a library out of them
-file (GLOB sources . *.cc Version.cc)
+file (GLOB sources . *.cc)
 
 # for the version file
 SET (VERSION_CC ${CMAKE_SOURCE_DIR}/src/cc/common/Version.cc)
@@ -16,8 +16,8 @@ add_custom_target (Version.cc ALL
                     COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/buildVers.py ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Version.cc
                     VERBATIM)
                     
-add_library (kfsCommon-shared SHARED ${sources})
-add_library (kfsCommon STATIC ${sources})
+add_library (kfsCommon-shared SHARED ${sources} ${VERSION_CC})
+add_library (kfsCommon STATIC ${sources} ${VERSION_CC})
 set_target_properties (kfsCommon-shared PROPERTIES OUTPUT_NAME "kfsCommon")
 set_target_properties (kfsCommon PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties (kfsCommon-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
