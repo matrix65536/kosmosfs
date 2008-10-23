@@ -21,7 +21,7 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 //
-// 
+//
 //----------------------------------------------------------------------------
 
 // order of #includes here is critical.  don't change it
@@ -114,8 +114,9 @@ ChunkServer::MainLoop(int clientAcceptPort)
     // gMetaServerSM.SendHello(clientAcceptPort);
     gMetaServerSM.Init(clientAcceptPort);
 
+    gChunkManager.DumpChunkMap();
     StartNetProcessor();
-    
+
     netProcessor.join();
 
 }
@@ -164,7 +165,7 @@ ChunkServer::RemoveServer(RemoteSyncSM *target)
                 RemoteSyncSMMatcher(target->GetLocation()));
     if (i != mRemoteSyncers.end()) {
         mRemoteSyncers.erase(i);
-    }                                      
+    }
 }
 
 void

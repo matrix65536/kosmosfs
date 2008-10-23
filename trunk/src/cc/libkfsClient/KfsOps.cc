@@ -21,7 +21,7 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 //
-// 
+//
 //----------------------------------------------------------------------------
 
 #include "KfsOps.h"
@@ -107,6 +107,22 @@ ReaddirOp::Request(ostringstream &os)
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Directory File-handle: " << fid << "\r\n\r\n";
+}
+
+void
+DumpChunkServerMapOp::Request(ostringstream &os)
+{
+	os << "DUMP_CHUNKTOSERVERMAP" << "\r\n";
+	os << "Cseq: " << seq << "\r\n";
+	os << "Version: " << KFS_VERSION_STR << "\r\n\r\n";
+}
+
+void
+DumpChunkMapOp::Request(ostringstream &os)
+{
+	os << "DUMP_CHUNKMAP" << "\r\n";
+	os << "Cseq: " << seq << "\r\n";
+	os << "Version: " << KFS_VERSION_STR << "\r\n\r\n";
 }
 
 void
@@ -402,6 +418,24 @@ ReaddirOp::ParseResponseHeader(char *buf, int len)
 
     ParseResponseHeaderCommon(resp, prop);
     numEntries = prop.getValue("Num-Entries", 0);
+}
+
+void
+DumpChunkServerMapOp::ParseResponseHeader(char *buf, int len)
+{
+	string resp(buf, len);
+	Properties prop;
+
+	ParseResponseHeaderCommon(resp, prop);
+}
+
+void
+DumpChunkMapOp::ParseResponseHeader(char *buf, int len)
+{
+	string resp(buf, len);
+	Properties prop;
+
+	ParseResponseHeaderCommon(resp, prop);
 }
 
 void

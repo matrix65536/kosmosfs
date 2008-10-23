@@ -349,6 +349,9 @@ namespace KFS
 		/// Dump out the chunk location map to a file.
 		void DumpChunkToServerMap();
 
+		/// Dump out the chunk location map to a string stream.
+		void DumpChunkToServerMap(ostringstream &os);
+
                 /// Ask each of the chunkserver's to dispatch pending RPCs
 		void Dispatch();
 
