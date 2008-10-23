@@ -21,7 +21,7 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 //
-// 
+//
 //----------------------------------------------------------------------------
 
 #ifndef _LIBKFSCLIENT_KFSOPS_H
@@ -57,6 +57,7 @@ enum KfsOp_t {
     CMD_LEASE_ACQUIRE,
     CMD_LEASE_RENEW,
     CMD_CHANGE_FILE_REPLICATION,
+    CMD_DUMP_CHUNKTOSERVERMAP,
     // Chunkserver RPCs
     CMD_OPEN,
     CMD_CLOSE,
@@ -66,7 +67,8 @@ enum KfsOp_t {
     CMD_WRITE_SYNC,
     CMD_SIZE,
     CMD_GET_CHUNK_METADATA,
-    CMD_NCMDS
+    CMD_NCMDS,
+    CMD_DUMP_CHUNKMAP
 };
 
 struct KfsOp {
@@ -80,8 +82,8 @@ struct KfsOp {
     KfsOp (KfsOp_t o, kfsSeq_t s) :
         op(o), seq(s), status(0), checksum(0), contentLength(0),
         contentBufLen(0), contentBuf(NULL)
-    { 
-    
+    {
+
     }
     // to allow dynamic-type-casting, make the destructor virtual
     virtual ~KfsOp() {
@@ -106,7 +108,7 @@ struct KfsOp {
     // Common parsing code: parse the response from string and fill
     // that into a properties structure.
     void ParseResponseHeaderCommon(std::string &resp, Properties &prop);
-    
+
     // Parse a response header from the server: This does the
     // default parsing of OK/Cseq/Status/Content-length.
     virtual void ParseResponseHeader(char *buf, int len);
@@ -141,7 +143,7 @@ struct RemoveOp : public KfsOp {
     kfsFileId_t parentFid; // input parent file-id
     const char *filename;
     RemoveOp(kfsSeq_t s, kfsFileId_t p, const char *f) :
-        KfsOp(CMD_REMOVE, s), parentFid(p), filename(f) 
+        KfsOp(CMD_REMOVE, s), parentFid(p), filename(f)
     {
 
     }
@@ -159,7 +161,7 @@ struct MkdirOp : public KfsOp {
     const char *dirname;
     kfsFileId_t fileId; // result
     MkdirOp(kfsSeq_t s, kfsFileId_t p, const char *d) :
-        KfsOp(CMD_MKDIR, s), parentFid(p), dirname(d) 
+        KfsOp(CMD_MKDIR, s), parentFid(p), dirname(d)
     {
 
     }
@@ -177,7 +179,7 @@ struct RmdirOp : public KfsOp {
     kfsFileId_t parentFid; // input parent file-id
     const char *dirname;
     RmdirOp(kfsSeq_t s, kfsFileId_t p, const char *d) :
-        KfsOp(CMD_RMDIR, s), parentFid(p), dirname(d) 
+        KfsOp(CMD_RMDIR, s), parentFid(p), dirname(d)
     {
 
     }
@@ -197,10 +199,10 @@ struct RenameOp : public KfsOp {
     const char *oldname;  // old file name/dir
     const char *newpath;  // new path to be renamed to
     bool overwrite; // set if the rename can overwrite newpath
-    RenameOp(kfsSeq_t s, kfsFileId_t p, const char *o, 
-             const char *n, bool c) : 
-        KfsOp(CMD_RENAME, s), parentFid(p), oldname(o), 
-        newpath(n), overwrite(c) 
+    RenameOp(kfsSeq_t s, kfsFileId_t p, const char *o,
+             const char *n, bool c) :
+        KfsOp(CMD_RENAME, s), parentFid(p), oldname(o),
+        newpath(n), overwrite(c)
     {
 
     }
@@ -239,6 +241,34 @@ struct ReaddirOp : public KfsOp {
         os << "readdir: fid = " << fid;
         return os.str();
     }
+};
+
+struct DumpChunkServerMapOp : public KfsOp {
+	DumpChunkServerMapOp(kfsSeq_t s):
+		KfsOp(CMD_DUMP_CHUNKTOSERVERMAP, s)
+	{
+	}
+	void Request(std::ostringstream &os);
+	void ParseResponseHeader(char *buf, int len);
+	std::string Show() const {
+		std::ostringstream os;
+		os << "dumpchunktoservermap";
+		return os.str();
+	}
+};
+
+struct DumpChunkMapOp : public KfsOp {
+	DumpChunkMapOp(kfsSeq_t s):
+		KfsOp(CMD_DUMP_CHUNKMAP, s)
+	{
+	}
+	void Request(std::ostringstream &os);
+	void ParseResponseHeader(char *buf, int len);
+	std::string Show() const {
+		std::ostringstream os;
+		os << "dumpchunkmap";
+		return os.str();
+	}
 };
 
 struct ReaddirPlusOp : public KfsOp {
@@ -288,7 +318,7 @@ struct LookupPathOp : public KfsOp {
     const char *filename; // path relative to root
     KfsServerAttr fattr; // result
     LookupPathOp(kfsSeq_t s, kfsFileId_t r, const char *f) :
-        KfsOp(CMD_LOOKUP, s), rootFid(r), filename(f) 
+        KfsOp(CMD_LOOKUP, s), rootFid(r), filename(f)
     {
 
     }
@@ -312,12 +342,12 @@ struct GetAllocOp: public KfsOp {
     // result: where the chunk is hosted name/port
     std::vector<ServerLocation> chunkServers;
     GetAllocOp(kfsSeq_t s, kfsFileId_t f, off_t o) :
-        KfsOp(CMD_GETALLOC, s), fid(f), fileOffset(o) 
+        KfsOp(CMD_GETALLOC, s), fid(f), fileOffset(o)
     {
 
     }
     void Request(std::ostringstream &os);
-    void ParseResponseHeader(char *buf, int len);    
+    void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
 
@@ -341,7 +371,7 @@ struct GetLayoutOp: public KfsOp {
     int numChunks;
     std::vector<ChunkLayoutInfo> chunks;
     GetLayoutOp(kfsSeq_t s, kfsFileId_t f) :
-        KfsOp(CMD_GETLAYOUT, s), fid(f) 
+        KfsOp(CMD_GETLAYOUT, s), fid(f)
     {
 
     }
@@ -385,7 +415,7 @@ struct AllocateOp : public KfsOp {
 
     }
     void Request(std::ostringstream &os);
-    void ParseResponseHeader(char *buf, int len);    
+    void ParseResponseHeader(char *buf, int len);
     string Show() const {
         std::ostringstream os;
 
@@ -398,7 +428,7 @@ struct TruncateOp : public KfsOp {
     kfsFileId_t fid;
     off_t fileOffset;
     TruncateOp(kfsSeq_t s, kfsFileId_t f, off_t o) :
-        KfsOp(CMD_TRUNCATE, s), fid(f), fileOffset(o) 
+        KfsOp(CMD_TRUNCATE, s), fid(f), fileOffset(o)
     {
 
     }
@@ -431,7 +461,7 @@ struct OpenOp : public KfsOp {
 struct CloseOp : public KfsOp {
     kfsChunkId_t chunkId;
     CloseOp(kfsSeq_t s, kfsChunkId_t c) :
-        KfsOp(CMD_CLOSE, s), chunkId(c) 
+        KfsOp(CMD_CLOSE, s), chunkId(c)
     {
 
     }
@@ -481,7 +511,7 @@ struct ReadOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);    
+    void Request(std::ostringstream &os);
     void ParseResponseHeader(char *buf, int len);
 
     std::string Show() const {
@@ -508,7 +538,7 @@ struct WriteIdAllocOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);   
+    void Request(std::ostringstream &os);
     void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -558,7 +588,7 @@ struct WritePrepareOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);   
+    void Request(std::ostringstream &os);
     // void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -584,7 +614,7 @@ struct WriteSyncOp : public KfsOp {
         chunkVersion = v;
         writeInfo = w;
     }
-    void Request(std::ostringstream &os);   
+    void Request(std::ostringstream &os);
     std::string Show() const {
         std::ostringstream os;
 
@@ -598,12 +628,12 @@ struct LeaseAcquireOp : public KfsOp {
     kfsChunkId_t chunkId; // input
     int64_t leaseId; // output
     LeaseAcquireOp(kfsSeq_t s, kfsChunkId_t c) :
-        KfsOp(CMD_LEASE_ACQUIRE, s), chunkId(c), leaseId(-1) 
-    { 
+        KfsOp(CMD_LEASE_ACQUIRE, s), chunkId(c), leaseId(-1)
+    {
 
     }
 
-    void Request(std::ostringstream &os);   
+    void Request(std::ostringstream &os);
     void ParseResponseHeader(char *buf, int len);
 
     std::string Show() const {
@@ -617,12 +647,12 @@ struct LeaseRenewOp : public KfsOp {
     kfsChunkId_t chunkId; // input
     int64_t leaseId; // input
     LeaseRenewOp(kfsSeq_t s, kfsChunkId_t c, int64_t l) :
-        KfsOp(CMD_LEASE_RENEW, s), chunkId(c), leaseId(l) 
-    { 
+        KfsOp(CMD_LEASE_RENEW, s), chunkId(c), leaseId(l)
+    {
 
     }
 
-    void Request(std::ostringstream &os);   
+    void Request(std::ostringstream &os);
     // default parsing of status is sufficient
 
     std::string Show() const {
@@ -636,17 +666,17 @@ struct ChangeFileReplicationOp : public KfsOp {
     kfsFileId_t fid; // input
     int16_t numReplicas; // desired replication
     ChangeFileReplicationOp(kfsSeq_t s, kfsFileId_t f, int16_t r) :
-        KfsOp(CMD_CHANGE_FILE_REPLICATION, s), fid(f), numReplicas(r) 
-    { 
+        KfsOp(CMD_CHANGE_FILE_REPLICATION, s), fid(f), numReplicas(r)
+    {
 
     }
 
-    void Request(std::ostringstream &os);   
+    void Request(std::ostringstream &os);
     void ParseResponseHeader(char *buf, int len);
 
     std::string Show() const {
         std::ostringstream os;
-        os << "change-file-replication: fid=" << fid 
+        os << "change-file-replication: fid=" << fid
            << " # of replicas: " << numReplicas;
         return os.str();
     }

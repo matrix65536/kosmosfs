@@ -340,6 +340,23 @@ public:
 	}
 };
 
+class MapDumperStream {
+	ostringstream &ofs;
+public:
+	MapDumperStream(ostringstream &o) : ofs(o) { }
+	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
+		chunkId_t cid = p.first;
+		ChunkPlacementInfo c = p.second;
+
+		ofs << cid << ' ' << c.fid << ' ' << c.chunkServers.size() << ' ';
+		for (uint32_t i = 0; i < c.chunkServers.size(); i++) {
+			ofs << c.chunkServers[i]->ServerID() << ' ' 
+				<< c.chunkServers[i]->GetRack() << ' ';
+		}
+		ofs << endl;
+	}
+};
+
 //
 // Dump out the chunk block map to a file.  The output can be used in emulation
 // modes where we setup the block map and experiment.
@@ -355,6 +372,14 @@ LayoutManager::DumpChunkToServerMap()
 		MapDumper(ofs));
 	ofs.flush();
 	ofs.close();
+}
+
+// Dump chunk block map to response stream
+void
+LayoutManager::DumpChunkToServerMap(ostringstream &os)
+{
+	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
+			 MapDumperStream(os));
 }
 
 void
