@@ -58,6 +58,7 @@ enum KfsOp_t {
     CMD_LEASE_RENEW,
     CMD_CHANGE_FILE_REPLICATION,
     CMD_DUMP_CHUNKTOSERVERMAP,
+    CMD_UPSERVERS,
     // Chunkserver RPCs
     CMD_OPEN,
     CMD_CLOSE,
@@ -255,6 +256,20 @@ struct DumpChunkServerMapOp : public KfsOp {
 		os << "dumpchunktoservermap";
 		return os.str();
 	}
+};
+
+struct UpServersOp : public KfsOp {
+    UpServersOp(kfsSeq_t s):
+        KfsOp(CMD_UPSERVERS, s)
+    {
+    }
+    void Request(std::ostringstream &os);
+    void ParseResponseHeader(char *buf, int len);
+    std::string Show() const {
+        std::ostringstream os;
+        os << "upservers";
+        return os.str();
+    }
 };
 
 struct DumpChunkMapOp : public KfsOp {
