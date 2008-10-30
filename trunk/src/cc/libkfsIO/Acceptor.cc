@@ -36,12 +36,20 @@ using namespace KFS::libkfsio;
 Acceptor::Acceptor(int port, IAcceptorOwner *owner)
 {
     TcpSocket *sock;
+    int res;
 
     sock = new TcpSocket();
 
     mAcceptorOwner = owner;
-    sock->Listen(port);
+    res = sock->Listen(port);
+
     mConn.reset(new NetConnection(sock, this, true));
+
+    if (res < 0) {
+        KFS_LOG_VA_FATAL("Unable to bind to port: %d, error = %d", port, res);
+        return;
+    }
+
     SET_HANDLER(this, &Acceptor::RecvConnection);
     globals().netManager.AddConnection(mConn);
 }
