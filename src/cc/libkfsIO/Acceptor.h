@@ -82,6 +82,10 @@ public:
     Acceptor(int port, IAcceptorOwner *owner);
     ~Acceptor();
 
+    /// Return true if we were able to bind to the acceptor port
+    bool IsAcceptorStarted() const {
+        return mConn->GetFd() > 0;
+    }
     ///
     /// Event handler to handle incoming connections.  @see KfsCallbackObj
     /// @param code Unused argument

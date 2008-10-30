@@ -35,6 +35,9 @@ void
 ClientManager::StartAcceptor(int port)
 {
     mAcceptor = new Acceptor(port, this);
+    if (!mAcceptor->IsAcceptorStarted()) {
+        die("Unable to start acceptor!");
+    }
 }
 
 void
