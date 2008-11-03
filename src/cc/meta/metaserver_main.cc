@@ -65,16 +65,16 @@ main(int argc, char **argv)
 {
         fd_set rfds;
 
-        if (argc < 2) {
-                cout << "Usage: " << argv[0] << " <properties file> {<msg log file>}" << endl;
-                exit(0);
-        }
-
 	if (argc > 2) {
 		KFS::MsgLogger::Init(argv[2]);
 	} else {
 		KFS::MsgLogger::Init(NULL);
 	}
+
+        if (argc < 2) {
+                cout << "Usage: " << argv[0] << " <properties file> {<msg log file>}" << endl;
+                exit(0);
+        }
 
         if (ReadMetaServerProperties(argv[1]) != 0) {
                 cout << "Bad properties file: " << argv[1] << " aborting..." << endl;
@@ -153,6 +153,10 @@ ReadMetaServerProperties(char *fileName)
 	const char *clusterKey = gProp.getValue("metaServer.clusterKey", "");
 	cout << "Setting cluster key to: " << clusterKey << endl;
 	setClusterKey(clusterKey);
+
+	const char *md5sum = gProp.getValue("metaServer.md5sum", "");
+	cout << "Setting md5sum to: " << md5sum << endl;
+	setMD5Sum(md5sum);
 
 	// min # of chunkservers that should connect to exit recovery mode
 	gMinChunkservers = gProp.getValue("metaServer.minChunkservers", 1);

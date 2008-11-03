@@ -305,6 +305,9 @@ namespace KFS
 		int GetChunkReadLease(MetaLeaseAcquire *r);
 		int LeaseRenew(MetaLeaseRenew *r);
 
+		/// Handler to let a lease owner relinquish a lease.
+		int LeaseRelinquish(MetaLeaseRelinquish *r);
+
 		/// Is a valid lease issued on any of the chunks in the
 		/// vector of MetaChunkInfo's?
 		bool IsValidLeaseIssued(const std::vector <MetaChunkInfo *> &c);

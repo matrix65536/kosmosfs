@@ -81,7 +81,7 @@ const uint32_t CONCURRENT_WRITES_PER_NODE_WATERMARK = 10;
 ///
 
 const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.3;
-const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.7;
+const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.9;
 
 #if 0
 const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.5;
@@ -516,18 +516,34 @@ void
 LayoutManager::FindCandidateRacks(vector<int> &result, const set<int> &excludes)
 {
 	set<int>::const_iterator iter;
+	int32_t numRacksToChoose = mRacks.size() - excludes.size();
+	int32_t count = 0;
+	int rackId, nodeId;
+	set<int> chosenRacks;
 
 	result.clear();
-	// sort(mRacks.begin(), mRacks.end());
-	random_shuffle(mRacks.begin(), mRacks.end());
-	for (uint32_t i = 0; i < mRacks.size(); i++) {
+
+	if (numRacksToChoose == 0)
+		return;
+
+	// choose a rack proportional to the # of nodes that rack
+	while (count < numRacksToChoose) {
+		nodeId = rand() % mChunkServers.size(); 
+		rackId = mChunkServers[nodeId]->GetRack();
 		if (!excludes.empty()) {
-			iter = excludes.find(mRacks[i].id());
+			iter = excludes.find(rackId);
 			if (iter != excludes.end())
 				// rack is in the exclude list
 				continue;
 		}
-		result.push_back(mRacks[i].id());
+		iter = chosenRacks.find(rackId);
+		if (iter != chosenRacks.end()) {
+			// we have chosen this rack already
+			continue;
+		}
+		chosenRacks.insert(rackId);
+		result.push_back(rackId);
+		count++;
 	}
 }
 
@@ -842,6 +858,13 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 		// the allocation request.
 		return -KFS::EDATAUNAVAIL;
 
+	if (v.ongoingReplications > 0) {
+		// don't issue a write lease to a chunk that is being
+		// re-replicated; this prevents replicas from diverging
+		KFS_LOG_VA_INFO("Write lease: %lld is being re-replicated => EBUSY", r->chunkId);
+		return -EBUSY;
+	}
+
 	l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
 			ptr_fun(LeaseInfo::IsValidWriteLease));
 	if (l != v.chunkLeases.end()) {
@@ -1001,6 +1024,27 @@ LayoutManager::LeaseRenew(MetaLeaseRenew *req)
 		return -ELEASEEXPIRED;
 	}
 	l->expires = now + LEASE_INTERVAL_SECS;
+	mChunkToServerMap[req->chunkId] = v;
+	return 0;
+}
+
+int
+LayoutManager::LeaseRelinquish(MetaLeaseRelinquish *req)
+{
+	ChunkPlacementInfo v;
+	vector<LeaseInfo>::iterator l;
+
+        CSMapIter iter = mChunkToServerMap.find(req->chunkId);
+	if (iter == mChunkToServerMap.end())
+		return -ELEASEEXPIRED;
+	
+	v = iter->second;
+	l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
+			LeaseIdMatcher(req->leaseId));
+	if (l == v.chunkLeases.end())
+		return -EINVAL;
+	// the owner of the lease is giving up the lease; so, remove the lease
+	v.chunkLeases.erase(l);
 	mChunkToServerMap[req->chunkId] = v;
 	return 0;
 }
@@ -1470,8 +1514,9 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 		// if we can't find a retiring server, pick a server that has read b/w available
 		for (uint32_t j = 0; (!dataServer) &&
 				(j < clli.chunkServers.size()); j++) {
-			if (clli.chunkServers[j]->GetReplicationReadLoad() >=
-				MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE)
+			if ((clli.chunkServers[j]->GetReplicationReadLoad() >= 
+				MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE) ||
+				(!clli.chunkServers[j]->IsResponsiveServer()))
 				continue;
 			dataServer = clli.chunkServers[j];
 		}
@@ -1704,8 +1749,8 @@ LayoutManager::ChunkReplicationChecker()
 			if (numOngoing > 0) {
 				mNumOngoingReplications++;
 				mLastChunkReplicated = chunkId;
+				numIterations++;
 			}
-			numIterations++;
 		} else if (extraReplicas == 0) {
 			delset.insert(chunkId);
 		} else {
@@ -2325,6 +2370,9 @@ LayoutManager::ExecuteRebalancePlan(ChunkServerPtr &c)
 {
 	set<chunkId_t> chunksToMove = c->GetChunksToMove();
 	vector<ChunkServerPtr> candidates;
+
+	if (!mIsExecutingRebalancePlan)
+		return;
 
 	if (c->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD) {
 		KFS_LOG_VA_INFO("Terminating rebalance plan execution for overloaded server %s", c->ServerID().c_str());

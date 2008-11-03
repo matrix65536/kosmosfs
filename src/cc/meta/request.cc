@@ -73,6 +73,7 @@ static int parseHandlerExecuteRebalancePlan(Properties &prop, MetaRequest **r);
 
 static int parseHandlerLeaseAcquire(Properties &prop, MetaRequest **r);
 static int parseHandlerLeaseRenew(Properties &prop, MetaRequest **r);
+static int parseHandlerLeaseRelinquish(Properties &prop, MetaRequest **r);
 static int parseHandlerChunkCorrupt(Properties &prop, MetaRequest **r);
 
 static int parseHandlerHello(Properties &prop, MetaRequest **r);
@@ -98,6 +99,7 @@ OpCounterMap gCounters;
 
 // see the comments in setClusterKey()
 string gClusterKey;
+string gMD5Sum;
 bool gWormMode = false;
 
 static bool
@@ -198,6 +200,19 @@ void
 KFS::setClusterKey(const char *key)
 {
 	gClusterKey = key;
+}
+
+/*
+ * Set the acceptable MD5Sum for binaries for this cluster.  All chunkservers connecting to
+ * the metaserver should provide this MD5Sum in the hello message.  This allows
+ * us to tell if there is any chunkserver that missed a binary update and should
+ * not be allowed to join the cluster.
+ * @param[in] md5sum  The desired MD5Sum 
+*/
+void
+KFS::setMD5Sum(const char *md5sum)
+{
+	gMD5Sum = md5sum;
 }
 
 /*
@@ -833,6 +848,16 @@ handle_lease_renew(MetaRequest *r)
 }
 
 static void
+handle_lease_relinquish(MetaRequest *r)
+{
+	MetaLeaseRelinquish *req = static_cast <MetaLeaseRelinquish *>(r);
+
+	req->status = gLayoutManager.LeaseRelinquish(req);
+	KFS_LOG_VA_INFO("Lease relinquish: %s, status = %d", r->Show().c_str(),
+			req->status);
+}
+
+static void
 handle_lease_cleanup(MetaRequest *r)
 {
 	MetaLeaseCleanup *req = static_cast <MetaLeaseCleanup *>(r);
@@ -993,6 +1018,7 @@ setup_handlers()
 	// Lease related ops
 	handler[META_LEASE_ACQUIRE] = handle_lease_acquire;
 	handler[META_LEASE_RENEW] = handle_lease_renew;
+	handler[META_LEASE_RELINQUISH] = handle_lease_relinquish;
 	handler[META_LEASE_CLEANUP] = handle_lease_cleanup;
 
 	// Chunk version # increment/corrupt chunk
@@ -1028,6 +1054,7 @@ setup_handlers()
 	// Lease related ops
 	gParseHandlers["LEASE_ACQUIRE"] = parseHandlerLeaseAcquire;
 	gParseHandlers["LEASE_RENEW"] = parseHandlerLeaseRenew;
+	gParseHandlers["LEASE_RELINQUISH"] = parseHandlerLeaseRelinquish;
 	gParseHandlers["CORRUPT_CHUNK"] = parseHandlerChunkCorrupt;
 
 	// Meta server <-> Chunk server ops
@@ -1466,6 +1493,15 @@ MetaLeaseRenew::log(ofstream &file) const
 }
 
 /*!
+ * \brief for a lease renew relinquish, there is nothing to log
+ */
+int
+MetaLeaseRelinquish::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
  * \brief for a lease cleanup request, there is nothing to log
  */
 int
@@ -1880,6 +1916,12 @@ parseHandlerHello(Properties &prop, MetaRequest **r)
 				gClusterKey.c_str(), key.c_str());
 		hello->status = -EBADCLUSTERKEY;
 	}
+	key = prop.getValue("MD5Sum", "");
+	if (key != gMD5Sum) {
+		KFS_LOG_VA_INFO("MD5sum mismatch: we have %s, chunkserver sent us %s",
+				gMD5Sum.c_str(), key.c_str());
+		hello->status = -EBADCLUSTERKEY;
+	}
 	hello->totalSpace = prop.getValue("Total-space", (long long) 0);
 	hello->usedSpace = prop.getValue("Used-space", (long long) 0);
 	hello->rackId = prop.getValue("Rack-id", (int) -1);
@@ -1924,6 +1966,27 @@ parseHandlerLeaseRenew(Properties &prop, MetaRequest **r)
 		leaseType = READ_LEASE;
 
 	*r = new MetaLeaseRenew(seq, leaseType, chunkId, leaseId);
+	return 0;
+}
+
+/*!
+ * \brief Parse out the headers from a LEASE_RELINQUISH message.
+ */
+int
+parseHandlerLeaseRelinquish(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	chunkId_t chunkId = prop.getValue("Chunk-handle", (chunkId_t) -1);
+	int64_t leaseId = prop.getValue("Lease-id", (int64_t) -1);
+	string leaseTypeStr = prop.getValue("Lease-type", "READ_LEASE");
+	LeaseType leaseType;
+
+	if (leaseTypeStr == "WRITE_LEASE")
+		leaseType = WRITE_LEASE;
+	else
+		leaseType = READ_LEASE;
+
+	*r = new MetaLeaseRelinquish(seq, leaseType, chunkId, leaseId);
 	return 0;
 }
 
@@ -2274,6 +2337,14 @@ MetaLeaseAcquire::response(ostringstream &os)
 
 void
 MetaLeaseRenew::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
+MetaLeaseRelinquish::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
