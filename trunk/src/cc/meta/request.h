@@ -96,6 +96,7 @@ enum MetaOp {
 	//!< Lease related messages
 	META_LEASE_ACQUIRE,
 	META_LEASE_RENEW,
+	META_LEASE_RELINQUISH,
 	//!< Internally generated to cleanup leases
 	META_LEASE_CLEANUP,
 	//!< Internally generated to update the increment for chunk version #'s
@@ -1029,6 +1030,33 @@ struct MetaLeaseRenew: public MetaRequest {
 };
 
 /*!
+ * \brief Op for relinquishing a lease on a chunk of a file.
+ */
+struct MetaLeaseRelinquish: public MetaRequest {
+	LeaseType leaseType; //!< input
+	chunkId_t chunkId; //!< input
+	int64_t leaseId; //!< input
+	MetaLeaseRelinquish(seq_t s, LeaseType t, chunkId_t c, int64_t l):
+		MetaRequest(META_LEASE_RELINQUISH, s, false),
+		leaseType(t), chunkId(c), leaseId(l) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		ostringstream os;
+
+		os << "lease relinquish: ";
+		if (leaseType == READ_LEASE)
+			os << "read lease ";
+		else
+			os << "write lease ";
+
+		os << " chunkId = " << chunkId << " leaseId = " << leaseId;
+		return os.str();
+	}
+};
+
+/*!
  * \brief An internally generated op to force the cleanup of
  * dead leases thru the main event processing loop.
  */
@@ -1069,6 +1097,7 @@ extern void printleaves();
 extern void ChangeIncarnationNumber(MetaRequest *r);
 extern void RegisterCounters();
 extern void setClusterKey(const char *key);
+extern void setMD5Sum(const char *md5sum);
 extern void setWORMMode(bool value);
 
 }

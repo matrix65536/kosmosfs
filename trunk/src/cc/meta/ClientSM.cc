@@ -29,6 +29,7 @@
 
 
 #include "ClientSM.h"
+#include "ChunkServer.h"
 #include "util.h"
 using namespace KFS;
 
@@ -64,6 +65,18 @@ ClientSM::SendResponse(MetaRequest *op)
 	ostringstream os;
 
 	op->response(os);
+
+	if (op->op == META_ALLOCATE) {
+		MetaAllocate *alloc = static_cast<MetaAllocate *>(op);
+		ostringstream o;
+
+		o << "alloc: " << alloc->chunkId << ' ' << alloc->chunkVersion << ' ';
+		for (uint32_t i = 0; i < alloc->servers.size(); i++) {
+			os << alloc->servers[i]->ServerID() << ' ';
+		}
+		KFS_LOG_VA_INFO("Allocate: %s", o.str().c_str());
+
+	}
 
 	KFS_LOG_VA_DEBUG("Command %s, Status: %d", 
 			op->Show().c_str(), op->status);
@@ -180,6 +193,10 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 	}
 
 	KFS_LOG_VA_DEBUG("Got command: %s", mOp->Show().c_str());
+
+	if (mOp->op == META_ALLOCATE) {
+		KFS_LOG_VA_INFO("Got allocate: %s", mOp->Show().c_str());
+	}
 
 	// Command is ready to be pushed down.  So remove the cmd from the buffer.
 	iobuf->Consume(cmdLen);
