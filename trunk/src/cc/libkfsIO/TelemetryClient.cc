@@ -28,6 +28,7 @@
 
 #include "TelemetryClient.h"
 #include "telemetry/packet.h"
+#include "common/log.h"
 
 #include <cerrno>
 #include <unistd.h>
@@ -93,8 +94,12 @@ void TelemetryClient::Init(const struct ip_mreq &imreq,
 
     // convert to IP address
     struct hostent *hent = gethostbyname(hostname);
-
-    memcpy(&mAddr, hent->h_addr, hent->h_length);
+    if (hent != NULL) {
+        memcpy(&mAddr, hent->h_addr, hent->h_length);
+    } else {
+        KFS_LOG_VA_INFO("Unable to resolve: %s", hostname);
+        memset(&mAddr, 0, sizeof(struct in_addr));
+    }
 }
 
 TelemetryClient::~TelemetryClient()

@@ -72,10 +72,14 @@ void NetConnection::HandleReadEvent(bool isSystemOverloaded)
 void NetConnection::HandleWriteEvent()
 {
     int nwrote;
-
-    // if non-blocking connect was set, then the first callback
-    // signaling write-ready means that connect() has succeeded.
-    mDoingNonblockingConnect = false;
+    
+    if (mDoingNonblockingConnect) {
+        // if non-blocking connect was set, then the first callback
+        // signaling write-ready means that connect() has succeeded.
+        mDoingNonblockingConnect = false;
+        mLastFlushResult = 0;
+        return;
+    }
 
     // clear the value so we can let flushes thru when possible
     mLastFlushResult = 0;
