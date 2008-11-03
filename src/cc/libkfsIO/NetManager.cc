@@ -138,9 +138,11 @@ NetManager::MainLoop()
             conn = *iter;
             fd = conn->GetFd();
 
-            assert(fd > 0);
-            if (fd < 0)
+            if (fd < 0) {
+                // we'll get rid of this connection in the while loop below
+                conn->mPollVectorIndex = -2;
                 continue;
+            }
 
             if (fd == globals().netKicker.GetFd()) {
                 conn->mPollVectorIndex = -1;
@@ -191,14 +193,6 @@ NetManager::MainLoop()
 
         gettimeofday(&endTime, NULL);
 
-        /*
-        if (res == 0) {
-            float timeTaken = (endTime.tv_sec - startTime.tv_sec) +
-                (endTime.tv_usec - startTime.tv_usec) * 1e-6;
-    
-            KFS_LOG_VA_DEBUG("Select returned 0 and time blocked: %f", timeTaken);
-        }
-        */
         // list of timeout handlers...call them back
 
         fd = globals().netKicker.GetFd();
@@ -212,6 +206,15 @@ NetManager::MainLoop()
         iter = mConnections.begin();
         while (iter != mConnections.end()) {
             conn = *iter;
+            // Something happened and the connection has closed.  So,
+            // remove the connection from our list.
+            if (conn->GetFd() < 0) {
+                eltToRemove = iter;
+                ++iter;
+                mConnections.erase(eltToRemove);
+                continue;
+            }
+
             if ((conn->GetFd() == globals().netKicker.GetFd()) ||
                 (conn->mPollVectorIndex < 0)) {
                 ++iter;
@@ -240,17 +243,7 @@ NetManager::MainLoop()
                     conn->HandleErrorEvent();
                 }
             }
-
-            // Something happened and the connection has closed.  So,
-            // remove the connection from our list.
-            if (conn->GetFd() < 0) {
-                KFS_LOG_DEBUG("Removing fd from poll list");
-                eltToRemove = iter;
-                ++iter;
-                mConnections.erase(eltToRemove);
-            } else {
-                ++iter;
-            }
+            ++iter;
         }
 
     }

@@ -139,7 +139,7 @@ int TcpSocket::Connect(const struct sockaddr_in *remoteAddr, bool nonblockingCon
         return -1;
     }
 
-    if (nonblockingConnect)
+    if ((res < 0) && nonblockingConnect)
         res = -errno;
 
     SetupSocket();
