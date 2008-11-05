@@ -75,6 +75,9 @@ public:
     void RegisterLease(kfsChunkId_t chunkId, int64_t leaseId);
     void UnRegisterLease(kfsChunkId_t chunkId);
 
+    /// Used for voluntarily giving up a write lease.
+    ///
+    void RelinquishLease(kfsChunkId_t chunkId);
     /// Record the occurence of a write.  This notifies the clerk to
     /// renew the lease prior to the end of the lease period.
     void DoingWrite(kfsChunkId_t chunkId);

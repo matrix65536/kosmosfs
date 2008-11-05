@@ -131,12 +131,12 @@ LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
     time_t now = time(NULL);
     LeaseInfo_t lease = iter->second;
 
-    if (chunkId != 0) {
-        KFS_LOG_VA_DEBUG("Lease for chunk = %ld renewed",
-                         chunkId);
-    }
-    
+    KFS_LOG_VA_INFO("lease renewed for chunk = %ld, lease = %ld", chunkId, lease.leaseId);
+
     lease.expires = now + LEASE_INTERVAL_SECS;
+    if (lease.expires < now)
+        lease.expires = now + 1;
+
     lease.leaseRenewSent = false;
     mLeases[chunkId] = lease;
     //globals().eventManager.Schedule(lease.timer, LEASE_RENEW_INTERVAL_MSECS);
@@ -248,8 +248,8 @@ public:
 	    LeaseRenewOp *op = new LeaseRenewOp(-1, chunkId, lease.leaseId,
 			"WRITE_LEASE");
 
-	    KFS_LOG_VA_DEBUG("renewing lease for: chunk=%ld, lease=%ld, lease valid=%d secs",
-                             chunkId, lease.leaseId, lease.expires - now);
+	    KFS_LOG_VA_INFO("sending lease renew for: chunk=%ld, lease=%ld, lease valid=%d secs",
+                            chunkId, lease.leaseId, lease.expires - now);
 
 	    op->clnt = lc;
             v.second.leaseRenewSent = true;
@@ -264,7 +264,30 @@ LeaseClerk::Timeout()
     time_t now = time(0);
     if (now - mLastLeaseCheckTime < 1) 
         return;
+    mLastLeaseCheckTime = now;
     // once per second, check the state of the leases
     CleanupExpiredLeases();
     for_each(mLeases.begin(), mLeases.end(), LeaseRenewer(this, now));
+}
+
+void
+LeaseClerk::RelinquishLease(kfsChunkId_t chunkId)
+{
+    if (!IsLeaseValid(chunkId))
+        return;
+
+    // is a valid lease; so, notify metaserver
+    time_t now = time(0);
+    LeaseMapIter iter = mLeases.find(chunkId);
+    LeaseInfo_t lease = iter->second;
+    LeaseRelinquishOp *op = new LeaseRelinquishOp(-1, chunkId, lease.leaseId, "WRITE_LEASE");
+
+    KFS_LOG_VA_INFO("sending lease relinquish for: chunk=%ld, lease=%ld, lease valid=%d secs",
+                    chunkId, lease.leaseId, lease.expires - now);
+    
+    op->clnt = this;
+    gMetaServerSM.EnqueueOp(op);
+
+    mLeases.erase(iter);
+    
 }

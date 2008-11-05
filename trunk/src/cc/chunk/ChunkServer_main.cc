@@ -50,6 +50,7 @@ using std::endl;
 
 string gLogDir;
 vector<string> gChunkDirs;
+string gMD5Sum;
 
 ServerLocation gMetaServerLoc;
 int64_t gTotalSpace;			// max. storage space to use
@@ -98,7 +99,7 @@ main(int argc, char **argv)
     gChunkServer.Init();
     gChunkManager.Init(gChunkDirs, gTotalSpace);
     gLogger.Init(gLogDir);
-    gMetaServerSM.SetMetaInfo(gMetaServerLoc, gClusterKey, gChunkServerRackId);
+    gMetaServerSM.SetMetaInfo(gMetaServerLoc, gClusterKey, gChunkServerRackId, gMD5Sum);
 
     signal(SIGPIPE, SIG_IGN);
 
@@ -212,6 +213,9 @@ ReadChunkServerProperties(char *fileName)
 
     gClusterKey = gProp.getValue("chunkServer.clusterKey", "");
     cout << "using cluster key = " << gClusterKey << endl;
+
+    gMD5Sum = gProp.getValue("chunkServer.md5sum", "");
+    cout << "md5sum that send to metaserver: " << gMD5Sum << endl;
 
     logLevel = gProp.getValue("chunkServer.loglevel", defLogLevel);
     if (logLevel == "INFO")

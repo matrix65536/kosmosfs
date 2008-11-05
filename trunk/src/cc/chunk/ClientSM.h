@@ -39,6 +39,7 @@ class ClientSM; // forward declaration to get things to build...
 #include "libkfsIO/DiskConnection.h"
 #include "libkfsIO/NetConnection.h"
 #include "Chunk.h"
+#include "RemoteSyncSM.h"
 #include "KfsOps.h"
 
 namespace KFS
@@ -77,7 +78,12 @@ public:
     // This is a terminal state handler.  In this state, we wait for
     // all outstanding ops to finish and then destroy this.
     int HandleTerminate(int code, void *data);
-    
+
+    // For daisy-chain writes, retrieve the server object for the
+    // chunkserver running at the specified location.
+    //
+    RemoteSyncSMPtr FindServer(const ServerLocation &loc, bool connect = true);
+
 private:
     NetConnectionPtr	mNetConnection;
     /// Queue of outstanding ops from the client.  We reply to ops in FIFO
@@ -85,6 +91,10 @@ private:
 
     /// Queue of pending ops: ops that depend on other ops to finish before we can execute them.
     std::list<OpPair> mPendingOps;
+
+    /// for writes, we daisy-chain the chunkservers in the forwarding path.  this list
+    /// maintains the set of servers to which we have a connection.
+    std::list<RemoteSyncSMPtr> mRemoteSyncers;
 
     /// Given a (possibly) complete op in a buffer, run it.
     /// @retval True if the command was handled (i.e., we have all the

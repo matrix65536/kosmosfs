@@ -74,8 +74,7 @@ ChunkServer::Init()
     imreq.imr_multiaddr.s_addr = inet_addr("226.0.0.1");
     imreq.imr_interface.s_addr = INADDR_ANY; // use DEFAULT interface
 
-    // will set this up for the release
-    // mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
+    mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
 }
 
 void
@@ -114,58 +113,11 @@ ChunkServer::MainLoop(int clientAcceptPort)
     // gMetaServerSM.SendHello(clientAcceptPort);
     gMetaServerSM.Init(clientAcceptPort);
 
-    gChunkManager.DumpChunkMap();
+    // gChunkManager.DumpChunkMap();
     StartNetProcessor();
 
     netProcessor.join();
 
-}
-
-class RemoteSyncSMMatcher {
-    ServerLocation myLoc;
-public:
-    RemoteSyncSMMatcher(const ServerLocation &loc) :
-        myLoc(loc) { }
-    bool operator() (RemoteSyncSMPtr other) {
-        return other->GetLocation() == myLoc;
-    }
-};
-
-RemoteSyncSMPtr
-ChunkServer::FindServer(const ServerLocation &location, bool connect)
-{
-    list<RemoteSyncSMPtr>::iterator i;
-    RemoteSyncSMPtr peer;
-
-    i = find_if(mRemoteSyncers.begin(), mRemoteSyncers.end(),
-                RemoteSyncSMMatcher(location));
-    if (i != mRemoteSyncers.end()) {
-        peer = *i;
-        return peer;
-    }
-    if (!connect)
-        return peer;
-
-    peer.reset(new RemoteSyncSM(location));
-    if (peer->Connect()) {
-        mRemoteSyncers.push_back(peer);
-    } else {
-        // we couldn't connect...so, force destruction
-        peer.reset();
-    }
-    return peer;
-}
-
-void
-ChunkServer::RemoveServer(RemoteSyncSM *target)
-{
-    list<RemoteSyncSMPtr>::iterator i;
-
-    i = find_if(mRemoteSyncers.begin(), mRemoteSyncers.end(),
-                RemoteSyncSMMatcher(target->GetLocation()));
-    if (i != mRemoteSyncers.end()) {
-        mRemoteSyncers.erase(i);
-    }
 }
 
 void
@@ -181,4 +133,14 @@ void
 KFS::StopNetProcessor(int status)
 {
     netProcessor.exit(status);
+}
+
+RemoteSyncSMPtr ChunkServer::FindServer(const ServerLocation &location, bool connect)
+{
+    return KFS::FindServer(mRemoteSyncers, location, connect);
+}
+
+void ChunkServer::RemoveServer(RemoteSyncSM *target)
+{
+    KFS::RemoveServer(mRemoteSyncers, target);
 }

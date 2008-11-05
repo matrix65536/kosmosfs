@@ -89,12 +89,15 @@ ClientSM::SendResponse(KfsOp *op)
     if (len > 0)
         mNetConnection->Write(os.str().c_str(), len);
 
+    if (op->op == CMD_WRITE_SYNC) {
+        KFS_LOG_VA_INFO("Ack'ing write sync: %s", op->Show().c_str());
+    }
+
     if (op->op == CMD_READ) {
         // need to send out the data read
         rop = static_cast<ReadOp *> (op);
         if (op->status >= 0) {
-            KFS_LOG_VA_DEBUG("Bytes avail from read: %d\n",
-                             rop->dataBuf->BytesConsumable());
+            KFS_LOG_VA_INFO("Read done: %s, status = %d", rop->Show().c_str(), rop->status);
             assert(rop->dataBuf->BytesConsumable() == rop->status);
             mNetConnection->Write(rop->dataBuf, rop->numBytesIO);
         }
@@ -153,12 +156,14 @@ ClientSM::HandleRequest(int code, void *data)
 	    KfsOp *qop = mOps.front();
 	    if (!qop->done)
 		break;
-	    SendResponse(qop);
+            if (mNetConnection)
+                SendResponse(qop);
 	    mOps.pop_front();
             OpFinished(qop);
 	    delete qop;
 	}
-        mNetConnection->StartFlush();
+        if (mNetConnection)
+            mNetConnection->StartFlush();
 	break;
 
     case EVENT_NET_ERROR:
@@ -167,12 +172,15 @@ ClientSM::HandleRequest(int code, void *data)
 	if (mNetConnection)
 	    mNetConnection->Close();
 
-        // wait for the ops to finish
-        SET_HANDLER(this, &ClientSM::HandleTerminate);
-        if (mOps.empty()) {
-            delete this;
-        }
+        // get rid of the connection to all the peers in daisy chain;
+        // if there were any outstanding ops, they will all come back
+        // to this method as EVENT_CMD_DONE and we clean them up above.
+        ReleaseAllServers(mRemoteSyncers);
 
+        // if there are any disk ops, wait for the ops to finish
+        SET_HANDLER(this, &ClientSM::HandleTerminate);
+
+        HandleTerminate(code, NULL);
 	break;
 
     default:
@@ -216,10 +224,16 @@ ClientSM::HandleTerminate(int code, void *data)
 	    delete op;
 	}
 	break;
+
+    case EVENT_NET_ERROR:
+        // clean things up
+        break;
+
     default:
 	assert(!"Unknown event");
 	break;
     }
+
     if (mOps.empty()) {
         // all ops are done...so, now, we can nuke ourself.
         assert(mPendingOps.empty());
@@ -284,6 +298,7 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
     }
 
     if (op->op == CMD_WRITE_SYNC) {
+        KFS_LOG_VA_INFO("Received write sync: %s", op->Show().c_str());
         // make the write sync depend on a previous write
         KfsOp *w = NULL;
         for (deque<KfsOp *>::iterator i = mOps.begin(); i != mOps.end(); i++) {
@@ -344,4 +359,10 @@ ClientSM::OpFinished(KfsOp *doneOp)
         mPendingOps.pop_front();
         SubmitOp(p.dependentOp);
     }
+}
+
+RemoteSyncSMPtr
+ClientSM::FindServer(const ServerLocation &loc, bool connect)
+{
+    return KFS::FindServer(mRemoteSyncers, loc, connect);
 }

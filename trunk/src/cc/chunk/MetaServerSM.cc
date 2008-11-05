@@ -70,11 +70,12 @@ MetaServerSM::~MetaServerSM()
 
 void 
 MetaServerSM::SetMetaInfo(const ServerLocation &metaLoc, const char *clusterKey, 
-                          int rackId)
+                          int rackId, const std::string &md5sum)
 {
     mLocation = metaLoc;
     mClusterKey = clusterKey;
     mRackId = rackId;
+    mMD5Sum = md5sum;
 }
 
 void
@@ -162,10 +163,13 @@ MetaServerSM::SendHello()
     struct hostent *hent = gethostbyname(hostname);
     in_addr ipaddr;
 
+    if (hent == NULL) {
+        die("Unable to resolve hostname");
+    }
     memcpy(&ipaddr, hent->h_addr, hent->h_length);
 
     ServerLocation loc(inet_ntoa(ipaddr), mChunkServerPort);
-    mHelloOp = new HelloMetaOp(nextSeq(), loc, mClusterKey, mRackId);
+    mHelloOp = new HelloMetaOp(nextSeq(), loc, mClusterKey, mMD5Sum, mRackId);
     mHelloOp->clnt = this;
     // send the op and wait for it comeback
     KFS::SubmitOp(mHelloOp);
@@ -349,7 +353,7 @@ MetaServerSM::HandleReply(IOBuffer *iobuf, int msgLen)
     if (status == -EBADCLUSTERKEY) {
         KFS_LOG_VA_FATAL("Aborting...due to cluster key mismatch; our key: %s",
                          mClusterKey.c_str());
-        exit(-1);
+        die("bad cluster key");
     }
     iter = find_if(mDispatchedOps.begin(), mDispatchedOps.end(), 
                    OpMatcher(seq));

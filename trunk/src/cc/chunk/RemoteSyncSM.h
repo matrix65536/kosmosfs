@@ -37,6 +37,9 @@
 #include "libkfsIO/ITimeout.h"
 #include "meta/queue.h"
 
+#include <sys/types.h>
+#include <time.h>
+
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
 
@@ -52,9 +55,10 @@ class RemoteSyncSM : public KfsCallbackObj,
 public:
 
     RemoteSyncSM(const ServerLocation &location) :
-        mLocation(location), mSeqnum(1), mTimer(NULL),
-        mKillRemoteSyncOp(1, this)
-    { };
+        mLocation(location), mSeqnum(1), mTimer(NULL)
+    { 
+        mLastResponseRecd = mLastRequestSent = time(0);
+    };
 
     ~RemoteSyncSM();
 
@@ -76,6 +80,13 @@ public:
     }
 
 private:
+
+    // if we don't get a reply back for an RPC in 5 mins, we assume
+    // that the peer is non-responsive on the socket we are using/peer
+    // could be dead and socket isn't telling us.  
+    //
+    static const int32_t INACTIVE_SERVER_TIMEOUT = 300;
+
     NetConnectionPtr mNetConnection;
 
     ServerLocation mLocation;
@@ -83,11 +94,16 @@ private:
     /// Assign a sequence # for each op we send to the remote server
     kfsSeq_t mSeqnum;
 
+    // if over N minutes have passed between the last request - last
+    // response, that likely means that the chunkserver at the other
+    // end isn't responding on this connection.  We use these values
+    // to timeout connections.
+    time_t mLastRequestSent;
+    time_t mLastResponseRecd;
+    
     /// A timer to periodically dispatch pending
     /// messages to the remote server
     RemoteSyncSMTimeoutImpl *mTimer;
-
-    KillRemoteSyncOp mKillRemoteSyncOp;
 
     /// Queue of outstanding ops to be dispatched: this is the queue
     /// shared between event processor and the network threads.  When
@@ -125,6 +141,13 @@ private:
 
 
 typedef boost::shared_ptr<RemoteSyncSM> RemoteSyncSMPtr;
+
+    RemoteSyncSMPtr FindServer(std::list<RemoteSyncSMPtr> &remoteSyncers, const ServerLocation &location, 
+                               bool connect);
+    
+    void RemoveServer(std::list<RemoteSyncSMPtr> &remoteSyncers, RemoteSyncSM *target);
+
+    void ReleaseAllServers(std::list<RemoteSyncSMPtr> &remoteSyncers);
 
 }
 
