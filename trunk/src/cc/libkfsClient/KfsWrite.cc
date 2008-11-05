@@ -48,15 +48,6 @@ using std::endl;
 using namespace KFS;
 
 static bool
-NeedToRetryWrite(int status)
-{
-    return ((status == -EHOSTUNREACH) ||
-	    (status == -ETIMEDOUT) ||
-            (status == -KFS::EBADCKSUM) ||
-	    (status == -KFS::ESERVERBUSY));
-}
-
-static bool
 NeedToRetryAllocation(int status)
 {
     return ((status == -EHOSTUNREACH) ||
@@ -122,8 +113,13 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	}
 
 	if (numIO < 0) {
+            if (numIO == -KFS::ELEASEEXPIRED) {
+                KFS_LOG_VA_INFO("Continuing to retry write for errorcode = %d", numIO);
+                continue;
+            }
             KFS_LOG_VA_INFO("Write failed %s @offset: %lld: asked: %d, did: %d, errorcode = %d",
                             mFileTable[fd]->pathname.c_str(), pos->fileOffset, numBytes, nwrote, numIO);
+
 	    break;
 	}
 
@@ -357,103 +353,6 @@ KfsClientImpl::DoAllocation(int fd, bool force)
 
 }
 
-#if 0
-ssize_t
-KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
-{
-    ssize_t numIO;
-    FilePosition *pos = FdPos(fd);
-    ChunkAttr *chunk = GetCurrChunk(fd);
-    vector<WriteInfo> w;
-    WritePrepareOp op(nextSeq(), chunk->chunkId, chunk->chunkVersion);
-    // get the socket for the master
-    ServerLocation loc = chunk->chunkServerLoc[0];
-    TcpSocket *masterSock = pos->GetChunkServerSocket(loc);
-
-    op.offset = offset;
-    op.numBytes = min(numBytes, KFS::CHUNKSIZE);
-    op.AttachContentBuf(buf, numBytes);
-    op.contentLength = op.numBytes;
-
-    w.resize(chunk->chunkServerLoc.size());
-
-    for (uint8_t retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
-	if (retryCount) {
-	    KFS_LOG_VA_DEBUG("Will retry write after %d secs",
-	                     RETRY_DELAY_SECS);
-	    Sleep(RETRY_DELAY_SECS);
-	    op.seq = nextSeq();
-	}
-
-	for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++) {
-	    ServerLocation l = chunk->chunkServerLoc[i];
-	    TcpSocket *s = pos->GetChunkServerSocket(l);
-
-	    assert(op.contentLength == op.numBytes);
-
-	    numIO = DoOpCommon(&op, s);
-
-	    w[i].serverLoc = l;
-
-	    if (op.status == 0) {
-                istringstream ist(op.writeIdStr);
-                ServerLocation loc;
-                int64_t id;
-                
-                ist >> loc.hostname;
-                ist >> loc.port;
-                ist >> id;
-
-		w[i].writeId = id;
-		continue;
-	    }
-
-	    if (NeedToRetryWrite(op.status)) {
-		break;
-	    }
-
-	    w[i].writeId = -1;
-	}
-
-	if (NeedToRetryWrite(op.status)) {
-	    // do a retry
-	    continue;
-	}
-
-	WriteSyncOp cop(nextSeq(), chunk->chunkId, chunk->chunkVersion, w);
-
-	numIO = DoOpCommon(&cop, masterSock);
-	op.status = cop.status;
-
-	if (!NeedToRetryWrite(op.status)) {
-	    break;
-	} // else ...retry
-    }
-
-    if (op.status >= 0 && (off_t)chunk->chunkSize < offset + op.status) {
-	// grow the chunksize only if we wrote past the last byte in the chunk
-	chunk->chunkSize = offset + op.status;
-
-	// if we wrote past the last byte of the file, then grow the
-	// file size.  Note that, chunks 0..chunkNum-1 are assumed to
-	// be full.  So, take the size of the last chunk and to that
-	// add the size of the "full" chunks to get the size
-	FileAttr *fa = FdAttr(fd);
-	off_t eow = chunk->chunkSize + (pos->chunkNum  * KFS::CHUNKSIZE);
-	fa->fileSize = max(fa->fileSize, eow);
-    }
-
-    numIO = op.status;
-    op.ReleaseContentBuf();
-
-    if (numIO >= 0) {
-	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes",
-	                 fd, numIO);
-    }
-    return numIO;
-}
-#endif
-
 ssize_t
 KfsClientImpl::DoSmallWriteToServer(int fd, off_t offset, const char *buf, size_t numBytes)
 {
@@ -519,6 +418,14 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	op->contentLength = op->numBytes;
         op->checksum = ComputeBlockChecksum(op->contentBuf, op->contentLength);
 
+        {
+            ostringstream os;
+
+            os << "@offset: " << op->offset << " nbytes: " << op->numBytes
+               << " cksum: " << op->checksum;
+            KFS_LOG_VA_DEBUG("%s", os.str().c_str());
+        }
+
 	numWrote += op->numBytes;
 	ops.push_back(op);
     }
@@ -528,55 +435,15 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
     // then forwards each op to one replica, who then forwards to
     // next.
 
-    for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
-	if (retryCount != 0) {
-	    KFS_LOG_VA_DEBUG("Will retry write after %d secs",
-	                     RETRY_DELAY_SECS);
-	    Sleep(RETRY_DELAY_SECS);
+    numIO = DoPipelinedWrite(fd, ops, masterSock);
 
-	    KFS_LOG_DEBUG("Starting retry sequence...");
-
-            // get the write id
-            numIO = AllocateWriteId(fd, offset, numBytes, writeId, masterSock);
-            if (numIO < 0) {
-                KFS_LOG_DEBUG("Allocate write id failed...retrying");
-                continue;
-            }
-
-	    // for each op bump the sequence #
-	    for (vector<WritePrepareOp *>::size_type i = 0; i < ops.size(); i++) {
-		ops[i]->seq = nextSeq();
-		ops[i]->status = 0;
-                ops[i]->writeInfo = writeId;
-		assert(ops[i]->contentLength == ops[i]->numBytes);
-	    }
-	}
-	numIO = DoPipelinedWrite(fd, ops, masterSock);
-
-	assert(numIO != -KFS::EBADVERS);
-
-	if ((numIO == 0) || (numIO == -KFS::ELEASEEXPIRED)) {
-	    // all good or the server lease expired; so, we have to
-	    // redo the allocation and such
-	    break;
-	}
-	if (NeedToRetryWrite(numIO) || (numIO == -EINVAL)) {
-	    // retry; we can get an EINVAL if the server died in the
-	    // midst of a push: after we got write-id and sent it
-	    // data, it died and restarted; so, when we send commit,
-	    // it doesn't know the write-id and returns an EINVAL
-            string errstr = ErrorCodeToStr(numIO);
-            KFS_LOG_VA_INFO("Retrying write because of error: %s", errstr.c_str());
-	    continue;
-	}
-	if (numIO < 0) {
-	    KFS_LOG_VA_INFO("Write failed...chunk = %lld, version = %lld, offset = %lld, error = %d",
-                            ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
-                            numIO);
-            assert(numIO != -EBADF);
-	    break;
-	}
-        KFS_LOG_VA_DEBUG("Pipelined write did: %d", numIO);
+    if (numIO < 0) {
+        //
+        // the write failed; caller will do the retry
+        //
+        KFS_LOG_VA_INFO("Write failed...chunk = %lld, version = %lld, offset = %lld, error = %d",
+                        ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
+                        numIO);
     }
 
     // figure out how much was committed
@@ -625,13 +492,13 @@ KfsClientImpl::AllocateWriteId(int fd, off_t offset, size_t numBytes,
 
     op.chunkServerLoc = chunk->chunkServerLoc;
     res = DoOpSend(&op, masterSock);
-    if (res < 0) {
+    if ((res < 0) || (op.status < 0)) {
         if (op.status < 0)
             return op.status;
         return res;
     }
     res = DoOpResponse(&op, masterSock);
-    if (res < 0) {
+    if ((res < 0) || (op.status < 0)) {
         if (op.status < 0)
             return op.status;
         return res;
