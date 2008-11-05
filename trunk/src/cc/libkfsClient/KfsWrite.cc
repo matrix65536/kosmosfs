@@ -276,7 +276,7 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
         // whatever be the error, wait a bit and retry...
         KFS_LOG_VA_INFO("Daisy-chain: %s; Will retry allocation/write on chunk %lld due to error code: %d", 
                         os.str().c_str(), GetCurrChunk(fd)->chunkId, res);
-        Sleep(KFS::LEASE_INTERVAL_SECS);
+        Sleep(LEASE_RETRY_DELAY_SECS);
 
         // save the value of res; in case we tried too many times
         // and are giving up, we need the error to propogate
@@ -320,12 +320,11 @@ KfsClientImpl::DoAllocation(int fd, bool force)
 	// handouts etc).
 	for (uint8_t retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
 	    if (retryCount) {
-		KFS_LOG_DEBUG("Allocation failed...will retry after a few secs");
 		if (res == -EBUSY)
 		    // the metaserver says it can't get us a lease for
-		    // the chunk.  so, wait for a lease interval to
+		    // the chunk.  so, wait for a bit for the lease to
 		    // expire and then retry
-		    Sleep(KFS::LEASE_INTERVAL_SECS);
+		    Sleep(LEASE_RETRY_DELAY_SECS);
 		else
 		    Sleep(RETRY_DELAY_SECS);
 	    }

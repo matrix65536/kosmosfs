@@ -50,7 +50,7 @@ public:
     /// Before the lease expires at the server, we submit we a renew
     /// request, so that the lease remains valid.  So, back-off a few
     /// secs before the leases and submit the renew
-    static const int LEASE_RENEW_INTERVAL_SECS = KFS::LEASE_INTERVAL_SECS - 10;
+    static const int LEASE_RENEW_INTERVAL_SECS = KFS::LEASE_INTERVAL_SECS - 30;
 
     LeaseClerk() { };
     ~LeaseClerk(){ };
