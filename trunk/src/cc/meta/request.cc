@@ -2457,14 +2457,17 @@ MetaStats::response(ostringstream &os)
 void
 MetaDumpChunkToServerMap::response(ostringstream &os)
 {
-    ostringstream v;
-	gLayoutManager.DumpChunkToServerMap(v);
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+
+	/*
+    	ostringstream v;
+	gLayoutManager.DumpChunkToServerMap(v);
 	os << "Content-length: " << v.str().length() << "\r\n\r\n";
 	if (v.str().length() > 0)
 	    os << v.str();
+	*/
 }
 
 void
