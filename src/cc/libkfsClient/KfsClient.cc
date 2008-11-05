@@ -2102,7 +2102,7 @@ KfsClientImpl::OpenChunk(int fd, bool nonblockingConnect)
     if (FdPos(fd)->GetPreferredServer() == NULL) {
         if (!allNodesSlow) {
             // the non-slow node isn't responding; so try one of the slow nodes
-            allNodesSlow = false;
+            allNodesSlow = true;
             KFS_LOG_VA_INFO("Retrying to find a server for chunk = %lld", chunk->chunkId);
             goto try_again;
         }
@@ -2510,6 +2510,23 @@ KfsClientImpl::RenewLease(kfsChunkId_t chunkId)
     if (op.status == -EINVAL) {
 	mLeaseClerk.UnRegisterLease(op.chunkId);
     }
+}
+
+void
+KfsClientImpl::RelinquishLease(kfsChunkId_t chunkId)
+{
+    int64_t leaseId;
+
+    int res = mLeaseClerk.GetLeaseId(chunkId, leaseId);
+    if (res < 0)
+	return;
+
+    KFS_LOG_VA_INFO("sending lease relinquish for: chunk=%lld, lease=%lld", chunkId, leaseId);
+
+    LeaseRelinquishOp op(nextSeq(), chunkId, leaseId);
+    res = DoOpCommon(&op, &mMetaServerSock);
+    
+    mLeaseClerk.LeaseRelinquished(chunkId);
 }
 
 int

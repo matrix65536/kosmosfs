@@ -357,6 +357,17 @@ LeaseRenewOp::Request(ostringstream &os)
 }
 
 void
+LeaseRelinquishOp::Request(ostringstream &os)
+{
+    os << "LEASE_RELINQUISH\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Chunk-handle:" << chunkId << "\r\n";
+    os << "Lease-id: " << leaseId << "\r\n";
+    os << "Lease-type: READ_LEASE" << "\r\n\r\n";
+}
+
+void
 ChangeFileReplicationOp::Request(ostringstream &os)
 {
     os << "CHANGE_FILE_REPLICATION \r\n";

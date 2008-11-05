@@ -826,6 +826,7 @@ private:
     /// get/renew leases
     int GetLease(kfsChunkId_t chunkId);
     void RenewLease(kfsChunkId_t chunkId);
+    void RelinquishLease(kfsChunkId_t chunkId);
 
     bool GetDataChecksums(const ServerLocation &loc, 
                           kfsChunkId_t chunkId, 

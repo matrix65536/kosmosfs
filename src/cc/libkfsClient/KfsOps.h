@@ -56,6 +56,7 @@ enum KfsOp_t {
     CMD_RENAME,
     CMD_LEASE_ACQUIRE,
     CMD_LEASE_RENEW,
+    CMD_LEASE_RELINQUISH,
     CMD_CHANGE_FILE_REPLICATION,
     CMD_DUMP_CHUNKTOSERVERMAP,
     CMD_UPSERVERS,
@@ -673,6 +674,28 @@ struct LeaseRenewOp : public KfsOp {
     std::string Show() const {
         std::ostringstream os;
         os << "lease-renew: chunkid=" << chunkId << " leaseId=" << leaseId;
+        return os.str();
+    }
+};
+
+// Whenever we want to give up a lease early, we notify the metaserver
+// using this op.
+struct LeaseRelinquishOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    int64_t leaseId;
+    std::string leaseType;
+    LeaseRelinquishOp(kfsSeq_t s, kfsChunkId_t c, int64_t l) :
+        KfsOp(CMD_LEASE_RELINQUISH, s), chunkId(c), leaseId(l)
+    {
+
+    }
+    void Request(std::ostringstream &os);
+    // defaut parsing of status is sufficient
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "lease-relinquish: " << " chunkid = " << chunkId;
+        os << " leaseId: " << leaseId << " type: " << leaseType;
         return os.str();
     }
 };

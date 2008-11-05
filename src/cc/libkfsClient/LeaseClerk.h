@@ -70,6 +70,7 @@ public:
     int GetLeaseId(kfsChunkId_t chunkId, int64_t &leaseId);
 
     void LeaseRenewed(kfsChunkId_t chunkId);
+    void LeaseRelinquished(kfsChunkId_t chunkId);
 
 private:
     /// All the leases registered with the clerk
