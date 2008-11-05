@@ -150,6 +150,8 @@ Replicator::HandleReadDone(int code, void *data)
 #endif
 
     if (mReadOp.status < 0) {
+        KFS_LOG_VA_INFO("Read from peer %s failed with error: %d",
+                        mPeer->GetLocation().ToString().c_str(), mReadOp.status);
         Terminate();
         return 0;
     }
@@ -192,6 +194,7 @@ Replicator::HandleWriteDone(int code, void *data)
     assert((code == EVENT_CMD_DONE) || (code == EVENT_DISK_WROTE));
 
     if (mWriteOp.status < 0) {
+        KFS_LOG_VA_INFO("Write failed with error: %d", mWriteOp.status);
         Terminate();
         return 0;
     }
@@ -223,7 +226,8 @@ Replicator::Terminate()
             return;
     } 
       
-    KFS_LOG_VA_INFO("Replication for %ld failed...cleaning up", mChunkId);
+    KFS_LOG_VA_INFO("Replication for %ld failed from %s...cleaning up", 
+                    mChunkId, mPeer->GetLocation().ToString().c_str());
     gChunkManager.DeleteChunk(mChunkId);
     mOwner->status = -1;
     // Notify the owner of completion

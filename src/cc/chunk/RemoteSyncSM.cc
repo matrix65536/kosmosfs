@@ -83,8 +83,8 @@ RemoteSyncSM::Connect()
         globals().netManager.RegisterTimeoutHandler(mTimer);
     }
 
-    KFS_LOG_VA_INFO("Connect to remote server (%s) succeeded...",
-                    mLocation.ToString().c_str());
+    KFS_LOG_VA_INFO("Connect to remote server (%s) succeeded (res = %d)...",
+                    mLocation.ToString().c_str(), res);
 
     SET_HANDLER(this, &RemoteSyncSM::HandleEvent);
 
@@ -100,9 +100,25 @@ void
 RemoteSyncSM::Enqueue(KfsOp *op)
 {
     ostringstream os;
+
+    // for the most part, the difference between sent - recd will be
+    // <= 0: response recd will have a later time than the request
+    // sent; should a server become non-responsive, then the value
+    // will start becoming positive---there is an outstanding request
+    // for which we haven't received a reply.  if that takes too long,
+    // we close the connection and fail the outstanding ops; we then
+    // start a new connection and try to push ops down.
+    if ((mLastRequestSent - mLastResponseRecd)  > INACTIVE_SERVER_TIMEOUT) {
+        KFS_LOG_VA_INFO("Timeout: Closing connection to peer: %s", mLocation.ToString().c_str());
+        mNetConnection->Close();
+        FailAllOps();
+        mLastRequestSent = mLastResponseRecd = time(0);
+    }
         
     if (!mNetConnection) {
+        mLastRequestSent = mLastResponseRecd = time(0);
         if (!Connect()) {
+            KFS_LOG_VA_INFO("Connect to peer %s failed; failing ops", mLocation.ToString().c_str());
             mDispatchedOps.push_back(op);
             FailAllOps();
             return;
@@ -119,8 +135,10 @@ RemoteSyncSM::Enqueue(KfsOp *op)
         op->status = 0;
         KFS::SubmitOpResponse(op);            
     }
-    else
+    else {
+        mLastRequestSent = time(0);
         mDispatchedOps.push_back(op);
+    }
     mNetConnection->StartFlush();
 }
 
@@ -142,6 +160,7 @@ RemoteSyncSM::Dispatch()
         ostringstream os;
         
         if (!mNetConnection) {
+            KFS_LOG_VA_INFO("No connection to peer %s; retrying connect", mLocation.ToString().c_str());
             if (!Connect()) {
                 mDispatchedOps.push_back(op);
                 FailAllOps();
@@ -182,6 +201,7 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 	// We read something from the network.  Run the RPC that
 	// came in if we got all the data for the RPC
 	iobuf = (IOBuffer *) data;
+        mLastResponseRecd = time(0);
 	while (IsMsgAvail(iobuf, &msgLen)) {
 	    res = HandleResponse(iobuf, msgLen);
             if (res < 0)
@@ -197,22 +217,19 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	KFS_LOG_DEBUG("Closing connection");
+	KFS_LOG_VA_INFO("Closing connection to peer: %s due to error", mLocation.ToString().c_str());
 
 	if (mNetConnection)
 	    mNetConnection->Close();
 
-        globals().netManager.UnRegisterTimeoutHandler(mTimer);
-        delete mTimer;
-        mTimer = NULL;
+        if (mTimer != NULL) {
+            globals().netManager.UnRegisterTimeoutHandler(mTimer);
+            delete mTimer;
+            mTimer = NULL;
+        }
 
-	// fail all the ops
-	FailAllOps();
-
-        //  submit this as an op thru the event processor to remove
-        //  this one....when we remove the server, we fail any other
-        //  ops at that point
-        KFS::SubmitOp(&mKillRemoteSyncOp);
+        // we are done...
+        Finish();
 
 	break;
 
@@ -326,5 +343,73 @@ RemoteSyncSM::Finish()
 #endif    
 
     FailAllOps();
+    // if the object was owned by the chunkserver, have it release the reference
     gChunkServer.RemoveServer(this);
+}
+
+//
+// Utility functions to operate on a list of remotesync servers
+//
+
+class RemoteSyncSMMatcher {
+    ServerLocation myLoc;
+public:
+    RemoteSyncSMMatcher(const ServerLocation &loc) :
+        myLoc(loc) { }
+    bool operator() (RemoteSyncSMPtr other) {
+        return other->GetLocation() == myLoc;
+    }
+};
+
+RemoteSyncSMPtr
+KFS::FindServer(list<RemoteSyncSMPtr> &remoteSyncers, const ServerLocation &location, 
+                bool connect)
+{
+    list<RemoteSyncSMPtr>::iterator i;
+    RemoteSyncSMPtr peer;
+
+    i = find_if(remoteSyncers.begin(), remoteSyncers.end(),
+                RemoteSyncSMMatcher(location));
+    if (i != remoteSyncers.end()) {
+        peer = *i;
+        return peer;
+    }
+    if (!connect)
+        return peer;
+
+    peer.reset(new RemoteSyncSM(location));
+    if (peer->Connect()) {
+        remoteSyncers.push_back(peer);
+    } else {
+        // we couldn't connect...so, force destruction
+        peer.reset();
+    }
+    return peer;
+}
+
+void
+KFS::RemoveServer(list<RemoteSyncSMPtr> &remoteSyncers, RemoteSyncSM *target)
+{
+    list<RemoteSyncSMPtr>::iterator i;
+
+    i = find_if(remoteSyncers.begin(), remoteSyncers.end(),
+                RemoteSyncSMMatcher(target->GetLocation()));
+    if (i != remoteSyncers.end()) {
+        remoteSyncers.erase(i);
+    }
+}
+
+void
+KFS::ReleaseAllServers(list<RemoteSyncSMPtr> &remoteSyncers)
+{
+    list<RemoteSyncSMPtr>::iterator i;
+    while (1) {
+        i = remoteSyncers.begin();
+        if (i == remoteSyncers.end())
+            break;
+        RemoteSyncSMPtr r = *i;
+
+        remoteSyncers.erase(i);
+        r->Finish();
+    }
 }

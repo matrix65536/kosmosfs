@@ -50,7 +50,7 @@ const size_t KFS_CHUNK_HEADER_SIZE = 16384;
 /// Encapsulate a chunk file descriptor and information about the
 /// chunk such as name and version #.
 struct ChunkInfoHandle_t {
-    ChunkInfoHandle_t() : lastIOTime(0), isBeingReplicated(false),
+    ChunkInfoHandle_t() : lastIOTime(0), isBeingReplicated(false), 
                           isMetadataReadOngoing(false), readChunkMetaOp(NULL) {  };
 
     struct ChunkInfo_t chunkInfo;
@@ -98,7 +98,7 @@ class ChunkManager {
 public:
     ChunkManager();
     ~ChunkManager();
-
+    
     /// Init function to configure the chunk manager object.
     void Init(const std::vector<std::string> &chunkDirs, int64_t totalSpace);
 
@@ -109,7 +109,7 @@ public:
     /// @param[in] chunkVersion  the version assigned by the metaserver to this chunk
     /// @param[in] isBeingReplicated is the allocation for replicating a chunk?
     /// @retval status code
-    int 	AllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId,
+    int 	AllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId, 
                            int64_t chunkVersion,
                            bool isBeingReplicated = false);
 
@@ -117,13 +117,6 @@ public:
     /// @param[in] chunkId id of the chunk being deleted.
     /// @retval status code
     int		DeleteChunk(kfsChunkId_t chunkId);
-
-    /// Dump chunk map with information about chunkID and chunkSize
-    void     DumpChunkMap();
-
-    /// Dump chunk map with information about chunkID and chunkSize
-    /// to a string stream
-    void 	 DumpChunkMap(std::ostringstream &ofs);
 
     /// A previously created chunk is stale; move it to stale chunks
     /// dir; space can be reclaimed later
@@ -143,7 +136,7 @@ public:
     /// @param[in] chunkId id of the chunk being allocated.
     /// @param[in] chunkVersion  the version assigned by the metaserver to this chunk
     /// @retval status code
-    int 	ChangeChunkVers(kfsFileId_t fileId, kfsChunkId_t chunkId,
+    int 	ChangeChunkVers(kfsFileId_t fileId, kfsChunkId_t chunkId, 
                            int64_t chunkVersion);
 
     /// Open a chunk for I/O.
@@ -171,7 +164,7 @@ public:
     /// @retval 0 if op was successfully scheduled; -errno otherwise
     int		WriteChunkMetadata(kfsChunkId_t chunkId, KfsOp *cb);
     int		ReadChunkMetadata(kfsChunkId_t chunkId, KfsOp *cb);
-
+    
     /// Notification that read is finished
     void	ReadChunkMetadataDone(kfsChunkId_t chunkId);
 
@@ -181,7 +174,7 @@ public:
     int		SetChunkMetadata(const DiskChunkInfo_t &dci);
     bool	IsChunkMetadataLoaded(kfsChunkId_t chunkId) {
         ChunkInfoHandle_t *cih = NULL;
-
+        
         if (GetChunkInfoHandle(chunkId, &cih) < 0)
             return false;
         return cih->chunkInfo.AreChecksumsLoaded();
@@ -208,7 +201,7 @@ public:
     /// Register a timeout handler with the net manager for taking
     /// checkpoints.  Also, get the logger going
     void	Start();
-
+    
     /// Write out the chunk table data structure to disk
     void	Checkpoint();
 
@@ -227,22 +220,22 @@ public:
     void AddMapping(ChunkInfoHandle_t *cih);
 
     /// Replay a chunk allocation.
-    ///
+    /// 
     /// @param[in] fileId  id of the file that has chunk chunkId
     /// @param[in] chunkId  Update the mChunkTable[] to include this
     /// chunk id
     /// @param[in] chunkVersion  the version assigned by the
-    /// metaserver to this chunk.
+    /// metaserver to this chunk. 
     void ReplayAllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId,
                           int64_t chunkVersion);
 
     /// Replay a chunk version # change.
-    ///
+    /// 
     /// @param[in] fileId  id of the file that has chunk chunkId
     /// @param[in] chunkId  Update the mChunkTable[] with the changed
     /// version # for this chunkId
     /// @param[in] chunkVersion  the version assigned by the
-    /// metaserver to this chunk.
+    /// metaserver to this chunk. 
     void ReplayChangeChunkVers(kfsFileId_t fileId, kfsChunkId_t chunkId,
                                int64_t chunkVersion);
 
@@ -264,7 +257,7 @@ public:
     /// completion of a truncation
     /// @param[in] chunkSize The new size of the chunk
     void ReplayTruncateDone(kfsChunkId_t chunkId, off_t chunkSize);
-
+    
     /// Retrieve the chunks hosted on this chunk server.
     /// @param[out] result  A vector containing info of all chunks
     /// hosted on this server.
@@ -292,7 +285,7 @@ public:
 
     /// Check if a write is pending to a chunk.
     /// @param[in] chunkId  The chunkid for which we are checking for
-    /// pending write(s).
+    /// pending write(s). 
     /// @retval True if a write is pending; false otherwise
     bool IsWritePending(kfsChunkId_t chunkId);
 
@@ -321,7 +314,7 @@ public:
 
     /// Set the status for a given write id
     void SetWriteStatus(int64_t writeId, int status);
-
+    
     /// Is the write id a valid one
     bool IsValidWriteId(int64_t writeId);
 
@@ -333,11 +326,18 @@ public:
     /// return 0 if the chunkId is good; -EBADF otherwise
     int GetChunkChecksums(kfsChunkId_t chunkId, uint32_t **checksums) {
         ChunkInfoHandle_t *cih = NULL;
-
+        
         if (GetChunkInfoHandle(chunkId, &cih) < 0)
             return -EBADF;
         *checksums = cih->chunkInfo.chunkBlockChecksum;
         return 0;
+    }
+
+    void ChunkIOFailed(kfsChunkId_t chunkId, int err) {
+        if (err == -EIO) {
+            NotifyMetaCorruptedChunk(chunkId);
+            StaleChunk(chunkId);
+        }
     }
 
 private:
@@ -346,7 +346,7 @@ private:
     /// take a checkpoint once every 2 mins
     static const int CKPT_TIME_INTERVAL = 120;
 
-    /// space available for allocation
+    /// space available for allocation 
     int64_t	mTotalSpace;
     /// how much is used up by chunks
     int64_t	mUsedSpace;
@@ -355,7 +355,7 @@ private:
     long	mNumChunks;
 
     time_t      mLastCheckpointTime;
-
+    
     /// directories for storing the chunks
     std::vector<std::string> mChunkDirs;
 
@@ -368,7 +368,7 @@ private:
     ChunkManagerTimeoutImpl	*mChunkManagerTimeoutImpl;
 
     /// when taking checkpoints, write one out only if the chunk table
-    /// is dirty.
+    /// is dirty. 
     bool mIsChunkTableDirty;
     /// table that maps chunkIds to their associated state
     CMap	mChunkTable;
@@ -376,7 +376,7 @@ private:
     /// Given a chunk file name, extract out the
     /// fileid/chunkid/chunkversion from it and build a chunkinfo structure
     void MakeChunkInfoFromPathname(const std::string &pathname, off_t filesz, ChunkInfoHandle_t **result);
-
+    
     /// Utility function that given a chunkId, returns the full path
     /// to the chunk filename.
     std::string MakeChunkPathname(kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion);
@@ -446,7 +446,7 @@ private:
     void RestoreV2();
     /// Restore the chunk meta-data from the specified file name.
     void RestoreChunkMeta(const std::string &chunkMetaFn);
-
+    
     /// Update the checksums in the chunk metadata based on the op.
     void UpdateChecksums(ChunkInfoHandle_t *cih, WriteOp *op);
 };
@@ -456,7 +456,7 @@ private:
 class ChunkManagerTimeoutImpl : public ITimeout {
 public:
     ChunkManagerTimeoutImpl(ChunkManager *mgr) : mTimeoutOp(0) {
-        mChunkManager = mgr;
+        mChunkManager = mgr; 
         // set a checkpoint once every min.
         // SetTimeoutInterval(60*1000);
     };

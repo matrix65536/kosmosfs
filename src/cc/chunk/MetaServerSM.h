@@ -50,8 +50,15 @@ public:
     MetaServerSM();
     ~MetaServerSM(); 
 
+    /// In each hello to the metaserver, we send an MD5 sum of the
+    /// binaries.  This should be "acceptable" to the metaserver and
+    /// only then is the chunkserver allowed in.  This provides a
+    /// simple mechanism to identify nodes that didn't receive a
+    /// binary update or are running versions that the metaserver
+    /// doesn't know about and shouldn't be inlcuded in the system.
+    void SetMetaInfo(const ServerLocation &metaLoc, const char *clusterKey, int rackId,
+                     const std::string &md5sum);
 
-    void SetMetaInfo(const ServerLocation &metaLoc, const char *clusterKey, int rackId);
     /// Init function for configuring the metaserver SM.
     /// @param[in] chunkServerPort  Port at which chunk-server is
     /// listening for connections from KFS clients.
@@ -95,6 +102,9 @@ private:
     /// config mishaps: When we connect to a metaserver, we have to
     /// agree on the cluster key.
     std::string mClusterKey;
+
+    /// An MD5 sum computed over the binaries that we send to the metaserver.
+    std::string mMD5Sum;
 
     /// the port that the metaserver tells the clients to connect to us at.
     int mChunkServerPort;

@@ -24,7 +24,7 @@
 // Code for parsing commands sent to the Chunkserver and generating
 // responses that summarize the result of their execution.
 //
-//
+// 
 //----------------------------------------------------------------------------
 
 #include "KfsOps.h"
@@ -92,7 +92,6 @@ int parseHandlerChangeChunkVers(Properties &prop, KfsOp **c);
 int parseHandlerStaleChunks(Properties &prop, KfsOp **c);
 int parseHandlerRetire(Properties &prop, KfsOp **c);
 int parseHandlerPing(Properties &prop, KfsOp **c);
-int parseHandlerDumpChunkMap(Properties &prop, KfsOp **c);
 int parseHandlerStats(Properties &prop, KfsOp **c);
 
 static TimeoutOp timeoutOp(0);
@@ -138,7 +137,6 @@ KFS::InitParseHandlers()
     gParseHandlers["CHUNK_VERS_CHANGE"] = parseHandlerChangeChunkVers;
     gParseHandlers["RETIRE"] = parseHandlerRetire;
     gParseHandlers["PING"] = parseHandlerPing;
-    gParseHandlers["DUMP_CHUNKMAP"] = parseHandlerDumpChunkMap;
     gParseHandlers["STATS"] = parseHandlerStats;
 }
 
@@ -146,7 +144,7 @@ static void
 AddCounter(const char *name, KfsOp_t opName)
 {
     Counter *c;
-
+    
     c = new Counter(name);
     globals().counterManager.AddCounter(c);
     gCounters[opName] = c;
@@ -183,7 +181,7 @@ UpdateCounter(KfsOp_t opName)
 {
     Counter *c;
     OpCounterMapIter iter;
-
+    
     iter = gCounters.find(opName);
     if (iter == gCounters.end())
         return;
@@ -197,7 +195,7 @@ DecrementCounter(KfsOp_t opName)
 {
     Counter *c;
     OpCounterMapIter iter;
-
+    
     iter = gCounters.find(opName);
     if (iter == gCounters.end())
         return;
@@ -208,7 +206,7 @@ DecrementCounter(KfsOp_t opName)
 
 
 static void
-UpdateMsgProcessingTime(const KfsOp *op)
+UpdateMsgProcessingTime(const KfsOp *op) 
 {
     struct timeval timeNow;
     float timeSpent;
@@ -253,7 +251,7 @@ KfsOp::~KfsOp()
 /// contains the data for the request.  It is the caller's
 /// responsibility to delete the memory returned in res.
 /// @retval 0 on success;  -1 if there is an error
-///
+/// 
 int
 KFS::ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res)
 {
@@ -266,7 +264,7 @@ KFS::ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res)
     istringstream ist(cmdBuf);
     ParseHandlerMapIter entry;
     ParseHandler handler;
-
+    
     // get the first line and find the command name
     ist >> cmdStr;
     // trim the command
@@ -274,7 +272,7 @@ KFS::ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res)
     if (cmdEnd != string::npos) {
         cmdStr.erase(cmdEnd);
     }
-
+    
     // find the parse handler and parse the thing
     entry = gParseHandlers.find(cmdStr);
     if (entry == gParseHandlers.end())
@@ -398,7 +396,7 @@ parseHandlerWriteSync(Properties &prop, KfsOp **c)
     parseCommon(prop, seq);
     cid = prop.getValue("Chunk-handle", (kfsChunkId_t) -1);
     chunkVers = prop.getValue("Chunk-version", (int64_t) -1);
-
+    
     ws = new WriteSyncOp(seq, cid, chunkVers);
     ws->numServers = prop.getValue("Num-servers", 0);
     ws->servers = prop.getValue("Servers", "");
@@ -587,18 +585,6 @@ parseHandlerPing(Properties &prop, KfsOp **c)
 }
 
 int
-parseHandlerDumpChunkMap(Properties &prop, KfsOp **c)
-{
-    kfsSeq_t seq;
-    DumpChunkMapOp *po;
-
-    parseCommon(prop, seq);
-
-    po = new DumpChunkMapOp(seq);
-    *c = po;
-    return 0;
-}
-int
 parseHandlerStats(Properties &prop, KfsOp **c)
 {
     kfsSeq_t seq;
@@ -639,8 +625,14 @@ ReadOp::HandleDone(int code, void *data)
     verifyExecutingOnEventProcessor();
 #endif
 
-    if (code == EVENT_DISK_ERROR)
+    if (code == EVENT_DISK_ERROR) {
         status = -1;
+        if (data != NULL) {
+            status = *(int *) data;
+            KFS_LOG_VA_INFO("Disk error: errno = %d, chunkid = %lld", status, chunkId);
+        }
+        gChunkManager.ChunkIOFailed(chunkId, status);
+    }
     else if (code == EVENT_DISK_READ) {
         if (dataBuf == NULL) {
             dataBuf = new IOBuffer();
@@ -680,8 +672,8 @@ ReadOp::HandleDone(int code, void *data)
         return 0;
     }
 
-    if (chunkSize > 0 &&
-        offset + numBytesIO >= (off_t) chunkSize) {
+    if ((chunkSize > 0 && (offset + numBytesIO >= (off_t) chunkSize)) &&
+        (!gLeaseClerk.IsLeaseValid(chunkId))) {
         // If we have read the full chunk, close out the fd.  The
         // observation is that reads are sequential and when we
         // finished a chunk, the client will move to the next one.
@@ -697,7 +689,7 @@ int
 ReadOp::HandleReplicatorDone(int code, void *data)
 {
     // notify the replicator object that the read it had submitted to
-    // the peer has finished.
+    // the peer has finished. 
     return clnt->HandleEvent(code, data);
 }
 
@@ -722,6 +714,12 @@ WriteOp::HandleWriteDone(int code, void *data)
         // eat up everything that was sent
         dataBuf->Consume(numBytes);
         status = -1;
+        if (data != NULL) {
+            status = *(int *) data;
+            KFS_LOG_VA_INFO("Disk error: errno = %d, chunkid = %lld", status, chunkId);
+        }
+        gChunkManager.ChunkIOFailed(chunkId, status);
+
         wpop->HandleEvent(EVENT_CMD_DONE, this);
         return 0;
     }
@@ -731,6 +729,13 @@ WriteOp::HandleWriteDone(int code, void *data)
         SET_HANDLER(this, &WriteOp::HandleSyncDone);
         // queue the sync op only if we are all done with writing to
         // this chunk:
+
+        if ((size_t) numBytesIO != (size_t) numBytes) {
+            // write didn't do everything that was asked; we need to retry
+            KFS_LOG_VA_INFO("Write on chunk did less: asked = %ld, did = %ld; asking clnt to retry",
+                            numBytes, numBytesIO);
+            status = -EAGAIN;
+        }
 
         waitForSyncDone = false;
 
@@ -783,7 +788,7 @@ WriteOp::HandleSyncDone(int code, void *data)
     else {
         wpop->HandleEvent(EVENT_CMD_DONE, this);
     }
-
+    
     return 0;
 }
 
@@ -888,15 +893,17 @@ void
 AllocChunkOp::Execute()
 {
     UpdateCounter(CMD_ALLOC_CHUNK);
+    int res;
 
     // page in the chunk meta-data if needed
     if (!gChunkManager.NeedToReadChunkMetadata(chunkId)) {
         HandleChunkMetaReadDone(0, NULL);
         return;
     }
-
+    
     SET_HANDLER(this, &AllocChunkOp::HandleChunkMetaReadDone);
-    if (gChunkManager.ReadChunkMetadata(chunkId, this) < 0) {
+    if ((res = gChunkManager.ReadChunkMetadata(chunkId, this)) < 0) {
+        KFS_LOG_VA_INFO("Unable read chunk metadata for chunk: %lld; error = %d", chunkId, res);
         status = -EINVAL;
         gLogger.Submit(this);
         return;
@@ -1023,13 +1030,13 @@ ChangeChunkVersOp::HandleChunkMetaReadDone(int code, void *data)
         return 0;
     }
 
-    status = gChunkManager.ChangeChunkVers(fileId, chunkId,
+    status = gChunkManager.ChangeChunkVers(fileId, chunkId, 
                                            chunkVersion);
     if (status < 0) {
         gLogger.Submit(this);
         return 0;
     }
-
+        
     SET_HANDLER(this, &ChangeChunkVersOp::HandleChunkMetaWriteDone);
     status = gChunkManager.WriteChunkMetadata(chunkId, this);
     if (status < 0)
@@ -1093,7 +1100,7 @@ ReadOp::HandleChunkMetaReadDone(int code, void *data)
         return 0;
     }
 
-    SET_HANDLER(this, &ReadOp::HandleDone);
+    SET_HANDLER(this, &ReadOp::HandleDone);    
     status = gChunkManager.ReadChunk(this);
 
     if (status < 0) {
@@ -1133,7 +1140,7 @@ ReadOp::HandleChunkMetaReadDone(int code, void *data)
 
 static bool
 needToForwardWrite(string &serverInfo, uint32_t numServers, int &myPos,
-                   ServerLocation &peerLoc,
+                   ServerLocation &peerLoc, 
                    bool isWriteIdPresent, int64_t &writeId)
 {
     istringstream ist(serverInfo);
@@ -1149,10 +1156,10 @@ needToForwardWrite(string &serverInfo, uint32_t numServers, int &myPos,
         ist >> loc.port;
         if (isWriteIdPresent)
             ist >> id;
-
+            
         if (gChunkServer.IsLocalServer(loc)) {
             // return the position of where this server is present in the list
-            myPos = i;
+            myPos = i; 
             foundLocal = true;
             if (isWriteIdPresent)
                 writeId = id;
@@ -1172,13 +1179,14 @@ void
 WriteIdAllocOp::Execute()
 {
     // check if we need to forward anywhere
-    bool needToForward = false;
+    bool needToForward = false, writeMaster = false;
     int64_t dummy;
-    int myPos;
+    int myPos = 1;
     ServerLocation peerLoc;
 
     if (numServers > 0) {
         needToForward = needToForwardWrite(servers, numServers, myPos, peerLoc, false, dummy);
+        writeMaster = (myPos == 0);
         if (needToForward) {
             status = ForwardToPeer(peerLoc);
             if (status < 0) {
@@ -1187,7 +1195,7 @@ WriteIdAllocOp::Execute()
                     // Now, when the client forces a re-allocation, the
                     // metaserver will do a version bump; when the node that
                     // was dead comes back, we can detect it has missed a write
-                    gLeaseClerk.UnRegisterLease(chunkId);
+                    gLeaseClerk.RelinquishLease(chunkId);
                 }
 
                 // can't forward to peer...so fail the write-id allocation
@@ -1196,21 +1204,34 @@ WriteIdAllocOp::Execute()
             }
         }
     }
+
+
+    if (writeMaster) {
+        // Notify the lease clerk that we are doing write.  This is to
+        // signal the lease clerk to renew the lease for the chunk when appropriate.
+        gLeaseClerk.DoingWrite(chunkId);
+    }
+    
     status = gChunkManager.AllocateWriteId(this);
     if (status == 0)
-        writeIdStr = gChunkServer.GetMyLocation() + " " +
+        writeIdStr = gChunkServer.GetMyLocation() + " " + 
             boost::lexical_cast<string>(writeId);
     // don't need to forward: we are done
     // clnt->HandleEvent(EVENT_CMD_DONE, this);
-    if (!needToForward)
-        gLogger.Submit(this);
+    if (!needToForward) {
+        KFS_LOG_VA_INFO("Write-id alloc: %s", Show().c_str());
+        ReadChunkMetadata();
+    }
 }
 
 int
 WriteIdAllocOp::ForwardToPeer(const ServerLocation &loc)
 {
-    RemoteSyncSMPtr peer = gChunkServer.FindServer(loc);
+    ClientSM *client = static_cast<ClientSM *>(clnt);
+    assert(client != NULL);
 
+    RemoteSyncSMPtr peer = client->FindServer(loc);
+    
     if (!peer) {
         KFS_LOG_VA_DEBUG("Unable to find syncSM to peer: %s", loc.ToString().c_str());
         // flag the error
@@ -1223,12 +1244,12 @@ WriteIdAllocOp::ForwardToPeer(const ServerLocation &loc)
 
     // KFS_LOG_VA_INFO("Sending write to peer: %s",
     // writeFwdOp->Show().c_str());
-    KFS_LOG_VA_DEBUG("Fwd'ing write-id alloc to peer: %s", fwdedOp->Show().c_str());
+    KFS_LOG_VA_INFO("Fwd'ing write-id alloc to peer: %s", fwdedOp->Show().c_str());
 
     SET_HANDLER(this, &WriteIdAllocOp::HandlePeerReply);
 
     peer->Enqueue(fwdedOp);
-
+    
     return 0;
 }
 
@@ -1245,9 +1266,9 @@ WriteIdAllocOp::HandlePeerReply(int code, void *data)
             // Now, when the client forces a re-allocation, the
             // metaserver will do a version bump; when the node that
             // was dead comes back, we can detect it has missed a write
-            gLeaseClerk.UnRegisterLease(chunkId);
+            gLeaseClerk.RelinquishLease(chunkId);
         }
-
+        KFS_LOG_VA_INFO("write-id alloc failed: %s, code = %d", Show().c_str(), status);        
         gLogger.Submit(this);
         return 0;
     }
@@ -1255,18 +1276,41 @@ WriteIdAllocOp::HandlePeerReply(int code, void *data)
     writeIdStr.append(" ");
     writeIdStr.append(op->writeIdStr);
 
-    // Now, we are all done
+    ReadChunkMetadata();
+    return 0;
+}
+
+void
+WriteIdAllocOp::ReadChunkMetadata()
+{
+    int res;
+    // Now, we are all done pending metadata read
     SET_HANDLER(this, &WriteIdAllocOp::HandleDone);
 
-    KFS_LOG_VA_DEBUG("Sending write-id alloc to logger: %s", Show().c_str());
+    // page in the chunk meta-data if needed
+    if (!gChunkManager.NeedToReadChunkMetadata(chunkId)) {
+        HandleDone(0, NULL);
+        return;
+    }
 
-    // return clnt->HandleEvent(EVENT_CMD_DONE, this);
+    // if the read was successful, the call to read will callback handle-done
+    if ((res = gChunkManager.ReadChunkMetadata(chunkId, this)) < 0) {
+        KFS_LOG_VA_INFO("Unable read chunk metadata for chunk: %lld; error = %d", chunkId, res);
+        status = -EINVAL;
+        HandleDone(0, NULL);        
+        return;
+    }
+}
+
+int
+WriteIdAllocOp::HandleDone(int code, void *data)
+{
+    KFS_LOG_VA_INFO("Sending write-id alloc back (status = %d): %s", status, Show().c_str());
     gLogger.Submit(this);
     return 0;
 }
 
-
-void
+void 
 WritePrepareOp::Execute()
 {
     ServerLocation peerLoc;
@@ -1275,7 +1319,7 @@ WritePrepareOp::Execute()
     UpdateCounter(CMD_WRITE_PREPARE);
 
     SET_HANDLER(this, &WritePrepareOp::HandleDone);
-
+        
     // check if we need to forward anywhere
     bool needToForward = false, writeMaster;
 
@@ -1289,8 +1333,18 @@ WritePrepareOp::Execute()
     }
 
     if (!gChunkManager.IsChunkMetadataLoaded(chunkId)) {
-        KFS_LOG_VA_DEBUG("Write prepare failed...checksums are not loaded; so lease expired for %ld",
-                         chunkId);
+
+        if (gLeaseClerk.IsLeaseValid(chunkId)) {
+            // The write-id allocation has failed; we don't want to renew the lease.
+            // Now, when the client forces a re-allocation, the
+            // metaserver will do a version bump; when the node that
+            // was dead comes back, we can detect it has missed a write
+            gLeaseClerk.RelinquishLease(chunkId);
+        }
+        
+        KFS_LOG_VA_INFO("Write prepare failed...checksums are not loaded; so lease expired for %ld",
+                        chunkId);
+
         status = -KFS::ELEASEEXPIRED;
         gLogger.Submit(this);
         return;
@@ -1299,7 +1353,7 @@ WritePrepareOp::Execute()
     if (writeMaster) {
         // if we are the master, check the lease...
         if (!gLeaseClerk.IsLeaseValid(chunkId)) {
-            KFS_LOG_VA_DEBUG("Write prepare failed...lease expired for %ld",
+            KFS_LOG_VA_INFO("Write prepare failed...as lease expired for %ld",
                              chunkId);
             status = -KFS::ELEASEEXPIRED;
             gLogger.Submit(this);
@@ -1339,7 +1393,7 @@ WritePrepareOp::Execute()
                 // Now, when the client forces a re-allocation, the
                 // metaserver will do a version bump; when the node that
                 // was dead comes back, we can detect it has missed a write
-                gLeaseClerk.UnRegisterLease(chunkId);
+                gLeaseClerk.RelinquishLease(chunkId);
             }
 
             // can't forward to peer...so fail the write
@@ -1363,8 +1417,11 @@ WritePrepareOp::Execute()
 
     writeOp->enqueueTime = time(NULL);
 
-    status = gChunkManager.WriteChunk(writeOp);
+    KFS_LOG_VA_INFO("Writing to chunk=%lld, @offset=%lld, nbytes=%lld, checksum=%u",
+                    chunkId, offset, numBytes, checksum);
 
+    status = gChunkManager.WriteChunk(writeOp);
+    
     if (status < 0)
         gLogger.Submit(this);
 }
@@ -1372,10 +1429,13 @@ WritePrepareOp::Execute()
 int
 WritePrepareOp::ForwardToPeer(const ServerLocation &loc, IOBuffer *dataBuf)
 {
-    RemoteSyncSMPtr peer = gChunkServer.FindServer(loc);
+    ClientSM *client = static_cast<ClientSM *>(clnt);
+    assert(client != NULL);
 
+    RemoteSyncSMPtr peer = client->FindServer(loc);
+    
     if (!peer) {
-        KFS_LOG_VA_DEBUG("Unable to find syncSM to peer: %s", loc.ToString().c_str());
+        KFS_LOG_VA_INFO("Unable to find syncSM to peer: %s", loc.ToString().c_str());
         // flag the error
         return -EHOSTUNREACH;
     }
@@ -1387,7 +1447,7 @@ WritePrepareOp::ForwardToPeer(const ServerLocation &loc, IOBuffer *dataBuf)
     KFS_LOG_VA_DEBUG("Fwd'ing write to peer: %s", writeFwdOp->Show().c_str());
 
     peer->Enqueue(writeFwdOp);
-
+    
     return 0;
 }
 
@@ -1397,7 +1457,7 @@ WritePrepareOp::HandleDone(int code, void *data)
     WritePrepareFwdOp *op = static_cast<WritePrepareFwdOp *> (data);
 
 #ifdef DEBUG
-    verifyExecutingOnEventProcessor();
+    verifyExecutingOnEventProcessor();    
 #endif
 
     if ((op != NULL) && (op->status < 0)) {
@@ -1407,7 +1467,7 @@ WritePrepareOp::HandleDone(int code, void *data)
             // Now, when the client forces a re-allocation, the
             // metaserver will do a version bump; when the node that
             // was dead comes back, we can detect it has missed a write
-            gLeaseClerk.UnRegisterLease(chunkId);
+            gLeaseClerk.RelinquishLease(chunkId);
         }
     }
 
@@ -1419,7 +1479,7 @@ WritePrepareOp::HandleDone(int code, void *data)
     return 0;
 }
 
-void
+void 
 WriteSyncOp::Execute()
 {
     ServerLocation peerLoc;
@@ -1428,6 +1488,7 @@ WriteSyncOp::Execute()
 
     UpdateCounter(CMD_WRITE_SYNC);
 
+    KFS_LOG_VA_INFO("Executing write sync: %s", Show().c_str());
     // check if we need to forward anywhere
     bool needToForward = false;
     if (numServers > 0) {
@@ -1438,12 +1499,12 @@ WriteSyncOp::Execute()
 
     writeOp = gChunkManager.CloneWriteOp(writeId);
     if (writeOp == NULL) {
-        KFS_LOG_VA_DEBUG("Write sync failed...unable to find write-id: %ld", writeId);
+        KFS_LOG_VA_INFO("Write sync failed...unable to find write-id: %ld", writeId);
         status = -EINVAL;
         gLogger.Submit(this);
         return;
     }
-
+    
     writeOp->enqueueTime = time(NULL);
 
     if (writeOp->status < 0) {
@@ -1461,8 +1522,9 @@ WriteSyncOp::Execute()
             // the metadata block could be paged out by a previous sync
             needToWriteMetadata = false;
         } else {
-            KFS_LOG_VA_DEBUG("Write sync failed...checksums got paged out?; so lease expired for %ld",
-                             chunkId);
+            KFS_LOG_VA_INFO("Write sync failed...checksums got paged out?; so lease expired for %ld",
+                            chunkId);
+
             status = -KFS::ELEASEEXPIRED;
             gLogger.Submit(this);
             return;
@@ -1472,8 +1534,8 @@ WriteSyncOp::Execute()
     if (writeMaster) {
         // if we are the master, check the lease...
         if (!gLeaseClerk.IsLeaseValid(chunkId)) {
-            KFS_LOG_VA_DEBUG("Write sync failed...lease expired for %ld",
-                             chunkId);
+            KFS_LOG_VA_INFO("Write sync failed...lease expired for %ld",
+                            chunkId);
             status = -KFS::ELEASEEXPIRED;
             gLogger.Submit(this);
             return;
@@ -1489,7 +1551,7 @@ WriteSyncOp::Execute()
         if (status < 0) {
             // write can't be forwarded; so give up the lease, so that
             // we can force re-allocation
-            gLeaseClerk.UnRegisterLease(chunkId);
+            gLeaseClerk.RelinquishLease(chunkId);
             // can't forward to peer...so fail the write
             gLogger.Submit(this);
             return;
@@ -1504,12 +1566,12 @@ WriteSyncOp::Execute()
         HandleDone(0, NULL);
         return;
     }
-
+        
     status = gChunkManager.WriteChunkMetadata(chunkId, this);
     assert(status >= 0);
     if (status < 0)
         HandleDone(0, NULL);
-
+    
     // writeOp->wsop = this;
 
     // XXX: validate id/version?
@@ -1521,10 +1583,13 @@ WriteSyncOp::Execute()
 int
 WriteSyncOp::ForwardToPeer(const ServerLocation &loc)
 {
-    RemoteSyncSMPtr peer = gChunkServer.FindServer(loc);
+    ClientSM *client = static_cast<ClientSM *>(clnt);
+    assert(client != NULL);
 
+    RemoteSyncSMPtr peer = client->FindServer(loc);
+    
     if (!peer) {
-        KFS_LOG_VA_DEBUG("Unable to find syncSM to peer: %s", loc.ToString().c_str());
+        KFS_LOG_VA_INFO("Unable to find syncSM to peer: %s", loc.ToString().c_str());
         // flag the error
         return -EHOSTUNREACH;
     }
@@ -1538,11 +1603,11 @@ WriteSyncOp::ForwardToPeer(const ServerLocation &loc)
     KFS_LOG_VA_DEBUG("Fwd'ing write-sync to peer: %s", fwdedOp->Show().c_str());
 
     peer->Enqueue(fwdedOp);
-
+    
     return 0;
 }
 
-int
+int 
 WriteSyncOp::HandlePeerReply(int code, void *data)
 {
     assert(clnt != NULL);
@@ -1555,19 +1620,20 @@ WriteSyncOp::HandleDone(int code, void *data)
     KfsOp *op = static_cast<KfsOp *> (data);
 
 #ifdef DEBUG
-    verifyExecutingOnEventProcessor();
+    verifyExecutingOnEventProcessor();    
 #endif
 
     if (op && (op->status < 0)) {
         status = op->status;
-        KFS_LOG_VA_DEBUG("Peer (%s) returned: ", op->Show().c_str(), op->status);
-        if (gLeaseClerk.IsLeaseValid(chunkId)) {
-            // The write has failed; we don't want to renew the lease.
-            // Now, when the client forces a re-allocation, the
-            // metaserver will do a version bump; when the node that
-            // was dead comes back, we can detect it has missed a write
-            gLeaseClerk.UnRegisterLease(chunkId);
-        }
+        KFS_LOG_VA_INFO("Peer (%s) returned: %d", op->Show().c_str(), op->status);
+    }
+
+    if ((status < 0) && (gLeaseClerk.IsLeaseValid(chunkId))) {
+        // The write has failed; we don't want to renew the lease.
+        // Now, when the client forces a re-allocation, the
+        // metaserver will do a version bump; when the node that
+        // was dead comes back, we can detect it has missed a write
+        gLeaseClerk.RelinquishLease(chunkId);
     }
 
     numDone++;
@@ -1579,7 +1645,7 @@ WriteSyncOp::HandleDone(int code, void *data)
     return 0;
 }
 
-void
+void 
 WriteOp::Execute()
 {
     UpdateCounter(CMD_WRITE);
@@ -1650,15 +1716,6 @@ PingOp::Execute()
 }
 
 void
-DumpChunkMapOp::Execute()
-{
-    // Dump chunk map
-	gChunkManager.DumpChunkMap();
-	status = 0;
-	gLogger.Submit(this);
-}
-
-void
 StatsOp::Execute()
 {
     ostringstream os;
@@ -1713,7 +1770,7 @@ SizeOp::Response(ostringstream &os)
         os << "Status: " << status << "\r\n\r\n";
         return;
     }
-    os << "Status: " << status << "\r\n";
+    os << "Status: " << status << "\r\n";    
     os << "Size: " << size << "\r\n\r\n";
 }
 
@@ -1726,7 +1783,7 @@ GetChunkMetadataOp::Response(ostringstream &os)
         os << "Status: " << status << "\r\n\r\n";
         return;
     }
-    os << "Status: " << status << "\r\n";
+    os << "Status: " << status << "\r\n";    
 
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Chunk-version: " << chunkVersion << "\r\n";
@@ -1765,7 +1822,7 @@ WriteIdAllocOp::Response(ostringstream &os)
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
     if (status < 0) {
-        os << "Status: " << status << "\r\n\r\n";
+        os << "Status: " << status << "\r\n\r\n";    
         return;
     }
     os << "Status: " << status << "\r\n";
@@ -1783,7 +1840,7 @@ WritePrepareOp::Response(ostringstream &os)
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
     if (status < 0) {
-        os << "Status: " << status << "\r\n\r\n";
+        os << "Status: " << status << "\r\n\r\n";    
         return;
     }
     os << "Status: " << status << "\r\n\r\n";
@@ -1866,7 +1923,7 @@ WriteSyncOp::Response(ostringstream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
-    os << "Status: " << status << "\r\n\r\n";
+    os << "Status: " << status << "\r\n\r\n";    
 }
 
 void
@@ -1921,19 +1978,6 @@ PingOp::Response(ostringstream &os)
     os << "Meta-server-port: " << loc.port << "\r\n";
     os << "Total-space: " << totalSpace << "\r\n";
     os << "Used-space: " << usedSpace << "\r\n\r\n";
-}
-
-void
-DumpChunkMapOp::Response(ostringstream &os)
-{
-	ostringstream v;
-	gChunkManager.DumpChunkMap(v);
-    os << "OK\r\n";
-    os << "Cseq: " << seq << "\r\n";
-    os << "Status: " << status << "\r\n";
-    os << "Content-length: " << v.str().length() << "\r\n\r\n";
-    if (v.str().length() > 0)
-    	os << v.str();
 }
 
 void
@@ -1997,19 +2041,26 @@ ReadChunkMetaOp::HandleDone(int code, void *data)
 {
     int res = -EINVAL;
 
-    if (code == EVENT_DISK_ERROR)
+    if (code == EVENT_DISK_ERROR) {
         status = -1;
+        if (data != NULL) {
+            status = *(int *) data;
+            KFS_LOG_VA_INFO("Disk error: errno = %d, chunkid = %lld", status, chunkId);
+            gChunkManager.ChunkIOFailed(chunkId, status);
+            res = status;
+        }
+    }
     else if (code == EVENT_DISK_READ) {
         IOBuffer *dataBuf = (IOBuffer *) data;
-
+    
         if (dataBuf->BytesConsumable() >= (int) sizeof(DiskChunkInfo_t)) {
             DiskChunkInfo_t dci;
-
+            
             dataBuf->CopyOut((char *) &dci, sizeof(DiskChunkInfo_t));
             res = gChunkManager.SetChunkMetadata(dci);
         }
     }
-
+    
     gChunkManager.ReadChunkMetadataDone(chunkId);
     clnt->HandleEvent(EVENT_CMD_DONE, (void *) &res);
 
@@ -2036,7 +2087,7 @@ WriteOp::~WriteOp()
         if (timeSpent > 5.0) {
             gChunkServer.SendTelemetryReport(CMD_WRITE, timeSpent);
         }
-
+        
         // we don't want write id's to pollute stats
         gettimeofday(&startTime, NULL);
         gCtrWriteDuration.Update(1);
@@ -2083,7 +2134,7 @@ WriteSyncOp::~WriteSyncOp()
         delete writeOp;
 
     gChunkManager.ChunkSize(chunkId, &chunkSize);
-    if ((chunkSize > 0) &&
+    if ((chunkSize > 0) && 
         (chunkSize >= (off_t) KFS::CHUNKSIZE)) {
         // we are done with all the writing to this chunk; so, close it
         gChunkManager.CloseChunk(chunkId);
@@ -2108,6 +2159,27 @@ LeaseRenewOp::HandleDone(int code, void *data)
 
     assert(op == this);
     return op->clnt->HandleEvent(EVENT_CMD_DONE, data);
+}
+
+void
+LeaseRelinquishOp::Request(ostringstream &os)
+{
+    os << "LEASE_RELINQUISH\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Chunk-handle:" << chunkId << "\r\n";
+    os << "Lease-id: " << leaseId << "\r\n";
+    os << "Lease-type: " << leaseType << "\r\n\r\n";
+}
+
+int
+LeaseRelinquishOp::HandleDone(int code, void *data)
+{
+    KfsOp *op = (KfsOp *) data;
+
+    assert(op == this);
+    delete this;
+    return 0;
 }
 
 void
@@ -2149,16 +2221,15 @@ HelloMetaOp::Request(ostringstream &os)
     os << "Cseq: " << seq << "\r\n";
     os << "Chunk-server-name: " << myLocation.hostname << "\r\n";
     os << "Chunk-server-port: " << myLocation.port << "\r\n";
-    os << "Build-version: " << KFS::KFS_BUILD_VERSION_STRING << "\r\n";
-    os << "Source-version: " << KFS::KFS_SOURCE_REVISION_STRING << "\r\n";
     os << "Cluster-key: " << clusterKey << "\r\n";
+    os << "MD5Sum: " << md5sum << "\r\n";
     os << "Rack-id: " << rackId << "\r\n";
     os << "Total-space: " << totalSpace << "\r\n";
     os << "Used-space: " << usedSpace << "\r\n";
 
     // now put in the chunk information
     os << "Num-chunks: " << chunks.size() << "\r\n";
-
+    
     // figure out the content-length first...
     for_each(chunks.begin(), chunks.end(), PrintChunkInfo(chunkInfo));
 
@@ -2173,7 +2244,7 @@ TimeoutOp::Execute()
     gChunkManager.Timeout();
     gLeaseClerk.Timeout();
     // do not delete "this" since it is either a member variable of
-    // the ChunkManagerTimeoutImpl or a static object.
+    // the ChunkManagerTimeoutImpl or a static object.  
     // bump the seq # so we know how many times it got executed
     seq++;
 }
