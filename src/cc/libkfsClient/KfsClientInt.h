@@ -64,6 +64,9 @@ const uint8_t NUM_RETRIES_PER_OP = 3;
 /// recover.  So, introduce a delay of 5 secs between retries.
 const int RETRY_DELAY_SECS = 5;
 
+/// Whenever we have issues with lease failures, we retry the op after a minute
+const int LEASE_RETRY_DELAY_SECS = 60;
+
 /// Directory entries that we may have cached are valid for 30 secs;
 /// after that force a revalidataion.
 const int FILE_CACHE_ENTRY_VALID_TIME = 30;
