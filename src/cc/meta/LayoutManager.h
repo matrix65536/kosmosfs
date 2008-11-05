@@ -49,6 +49,20 @@
 
 namespace KFS
 {
+
+	///
+	/// For disk space utilization balancing, we say that a server
+	/// is "under utilized" if is below XXX% full; we say that a server
+	/// is "over utilized" if it is above YYY% full.  For rebalancing, we
+	/// move data from servers that are over-utilized to servers that are
+	/// under-utilized.  These #'s are intentionally set conservatively; we
+	/// don't want the system to constantly move stuff between nodes when
+	/// there isn't much to be gained by it.
+	///
+
+	const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.3;
+	const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.9;
+
 	/// Model for leases: metaserver assigns write leases to chunkservers;
 	/// clients/chunkservers can grab read lease on a chunk at any time.
 	/// The server will typically renew unexpired leases whenever asked.

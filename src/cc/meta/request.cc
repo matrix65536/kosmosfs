@@ -482,6 +482,8 @@ getDirSummary(fid_t dir, uint64_t &nFiles, uint64_t &nBytes)
 		if ((fa == NULL) || (fa->type == KFS_NONE))
 			continue;
 		if (fa->type == KFS_DIR) {
+			if (fa->id() == dir)
+				continue;
 			res = getDirSummary(fa->id(), nFiles, nBytes);
 			if (res != 0)
 				return res;
