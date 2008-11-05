@@ -70,24 +70,6 @@ const int MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE = 10;
 ///
 const uint32_t CONCURRENT_WRITES_PER_NODE_WATERMARK = 10;
 
-///
-/// For disk space utilization balancing, we say that a server
-/// is "under utilized" if is below 30% full; we say that a server
-/// is "over utilized" if it is above 70% full.  For rebalancing, we
-/// move data from servers that are over-utilized to servers that are
-/// under-utilized.  These #'s are intentionally set conservatively; we
-/// don't want the system to constantly move stuff between nodes when
-/// there isn't much to be gained by it.
-///
-
-const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.3;
-const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.9;
-
-#if 0
-const float MIN_SERVER_SPACE_UTIL_THRESHOLD = 0.5;
-const float MAX_SERVER_SPACE_UTIL_THRESHOLD = 0.6;
-#endif
-
 /// Helper functor that can be used to find a chunkid from a vector
 /// of meta chunk info's.
 

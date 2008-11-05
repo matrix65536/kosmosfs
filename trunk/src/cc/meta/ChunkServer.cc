@@ -889,34 +889,38 @@ void
 ChunkServer::Ping(string &result)
 {
 	ostringstream ost;
-	char marker = ' ';
 	time_t now = time(NULL);
+	bool isOverloaded = false;
 
-	// for retiring nodes, add a '*' so that we can differentiate in the UI
-	// with web-ui, don't need this...
-	// if (mIsRetiring)
-	//	marker = '*';
+	// for nodes taken out of write allocation, send the info back; this allows
+	// the UI to color these nodes differently
+	if (GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD)
+		isOverloaded = true;
 
 	if (mTotalSpace < (1L << 30)) {
-		ost << "s=" << mLocation.hostname << marker << ", p=" << mLocation.port 
+		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
 	    		<< ", total=" << convertToMB(mTotalSpace) 
 			<< "(MB), used=" << convertToMB(mUsedSpace)
 			<< "(MB), util=" << GetSpaceUtilization() * 100.0 
 			<< "%, nblocks=" << mNumChunks 
 			<< ", lastheard=" << now - mLastHeard << " (sec)"
 			<< ", ncorrupt=" << mNumCorruptChunks
-			<< ", nchunksToMove=" << mChunksToMove.size()
-			<< "\t";
+			<< ", nchunksToMove=" << mChunksToMove.size();
+		if (isOverloaded)
+			ost << ", overloaded=1";
+		ost << "\t";
 	} else {
-		ost << "s=" << mLocation.hostname << marker << ", p=" << mLocation.port 
+		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
 	    		<< ", total=" << convertToGB(mTotalSpace) 
 			<< "(GB), used=" << convertToGB(mUsedSpace)
 			<< "(GB), util=" << GetSpaceUtilization() * 100.0 
 			<< "%, nblocks=" << mNumChunks 
 			<< ", lastheard=" << now - mLastHeard << " (sec)"
 			<< ", ncorrupt=" << mNumCorruptChunks
-			<< ", nchunksToMove=" << mChunksToMove.size()
-			<< "\t";
+			<< ", nchunksToMove=" << mChunksToMove.size();
+		if (isOverloaded)
+			ost << ", overloaded=1";
+		ost << "\t";
 	}
 	result += ost.str();
 }
