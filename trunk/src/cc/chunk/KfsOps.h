@@ -88,6 +88,7 @@ enum KfsOp_t {
     // Monitoring ops
     CMD_PING,
     CMD_STATS,
+    CMD_DUMP_CHUNKMAP,
     // Internally generated ops
     CMD_CHECKPOINT,
     CMD_WRITE,
@@ -763,6 +764,17 @@ struct PingOp : public KfsOp {
     void Execute();
     std::string Show() const {
         return "monitoring ping";
+    }
+};
+
+// used to dump chunk map
+struct DumpChunkMapOp : public KfsOp {
+    DumpChunkMapOp(kfsSeq_t s) :
+       KfsOp(CMD_DUMP_CHUNKMAP, s) { }
+    void Response(std::ostringstream &os);
+    void Execute();
+    std::string Show() const {
+       return "dumping chunk map";
     }
 };
 

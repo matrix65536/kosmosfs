@@ -92,6 +92,7 @@ int parseHandlerChangeChunkVers(Properties &prop, KfsOp **c);
 int parseHandlerStaleChunks(Properties &prop, KfsOp **c);
 int parseHandlerRetire(Properties &prop, KfsOp **c);
 int parseHandlerPing(Properties &prop, KfsOp **c);
+int parseHandlerDumpChunkMap(Properties &prop, KfsOp **c);
 int parseHandlerStats(Properties &prop, KfsOp **c);
 
 static TimeoutOp timeoutOp(0);
@@ -137,6 +138,7 @@ KFS::InitParseHandlers()
     gParseHandlers["CHUNK_VERS_CHANGE"] = parseHandlerChangeChunkVers;
     gParseHandlers["RETIRE"] = parseHandlerRetire;
     gParseHandlers["PING"] = parseHandlerPing;
+    gParseHandlers["DUMP_CHUNKMAP"] = parseHandlerDumpChunkMap;
     gParseHandlers["STATS"] = parseHandlerStats;
 }
 
@@ -580,6 +582,19 @@ parseHandlerPing(Properties &prop, KfsOp **c)
     parseCommon(prop, seq);
 
     po = new PingOp(seq);
+    *c = po;
+    return 0;
+}
+
+int
+parseHandlerDumpChunkMap(Properties &prop, KfsOp **c)
+{
+    kfsSeq_t seq;
+    DumpChunkMapOp *po;
+
+    parseCommon(prop, seq);
+
+    po = new DumpChunkMapOp(seq);
     *c = po;
     return 0;
 }
@@ -1716,6 +1731,15 @@ PingOp::Execute()
 }
 
 void
+DumpChunkMapOp::Execute()
+{
+   // Dump chunk map
+   gChunkManager.DumpChunkMap();
+   status = 0;
+   gLogger.Submit(this);
+}
+
+void
 StatsOp::Execute()
 {
     ostringstream os;
@@ -1978,6 +2002,19 @@ PingOp::Response(ostringstream &os)
     os << "Meta-server-port: " << loc.port << "\r\n";
     os << "Total-space: " << totalSpace << "\r\n";
     os << "Used-space: " << usedSpace << "\r\n\r\n";
+}
+
+void
+DumpChunkMapOp::Response(ostringstream &os)
+{
+    ostringstream v;
+    gChunkManager.DumpChunkMap(v);
+    os << "OK\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Status: " << status << "\r\n";
+    os << "Content-length: " << v.str().length() << "\r\n\r\n";
+    if (v.str().length() > 0)
+       os << v.str();
 }
 
 void
