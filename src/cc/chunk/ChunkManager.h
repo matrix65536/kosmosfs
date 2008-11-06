@@ -118,6 +118,13 @@ public:
     /// @retval status code
     int		DeleteChunk(kfsChunkId_t chunkId);
 
+    /// Dump chunk map with information about chunkID and chunkSize    
+    void    DumpChunkMap();
+
+    /// Dump chunk map with information about chunkID and chunkSize
+    /// to a string stream
+    void    DumpChunkMap(std::ostringstream &ofs);
+
     /// A previously created chunk is stale; move it to stale chunks
     /// dir; space can be reclaimed later
     ///

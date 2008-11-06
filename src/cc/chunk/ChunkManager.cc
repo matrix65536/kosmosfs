@@ -178,6 +178,39 @@ ChunkManager::DeleteChunk(kfsChunkId_t chunkId)
     return 0;
 }
 
+void
+ChunkManager::DumpChunkMap()
+{
+    ChunkInfoHandle_t *cih;
+    ofstream ofs;
+
+    ofs.open("chunkdump.txt");
+    // Dump chunk map in the format of
+    // chunkID fileID chunkSize
+    for (CMI tableEntry = mChunkTable.begin(); tableEntry != mChunkTable.end();
+         ++tableEntry) {
+        cih = tableEntry->second;
+        ofs << cih->chunkInfo.chunkId << " " << cih->chunkInfo.fileId << " " << cih->chunkInfo.chunkSize << endl;
+    }
+
+    ofs.flush();
+    ofs.close();
+}
+
+void
+ChunkManager::DumpChunkMap(ostringstream &ofs)
+{
+   ChunkInfoHandle_t *cih;
+
+   // Dump chunk map in the format of
+   // chunkID fileID chunkSize
+   for (CMI tableEntry = mChunkTable.begin(); tableEntry != mChunkTable.end();
+       ++tableEntry) {
+       cih = tableEntry->second;
+       ofs << cih->chunkInfo.chunkId << " " << cih->chunkInfo.fileId << " " << cih->chunkInfo.chunkSize << endl;
+   }
+}
+
 int
 ChunkManager::WriteChunkMetadata(kfsChunkId_t chunkId, KfsOp *cb)
 {
