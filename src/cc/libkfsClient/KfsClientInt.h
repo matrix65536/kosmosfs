@@ -382,6 +382,13 @@ public:
                     bool computeFilesize = true);
 
     ///
+    /// Do a du on the metaserver side for pathname and return the #
+    /// of files/bytes in the directory tree starting at pathname.
+    /// @retval 0 if readdirplus is successful; -errno otherwise
+    ///
+    int GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t &numBytes);
+
+    ///
     /// Stat a file and get its attributes.
     /// @param[in] pathname	The full pathname such as /.../foo
     /// @param[out] result	The attributes that we get back from server

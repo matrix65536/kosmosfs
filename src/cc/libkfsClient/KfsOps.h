@@ -51,6 +51,7 @@ enum KfsOp_t {
     CMD_RMDIR,
     CMD_READDIR,
     CMD_READDIRPLUS,
+    CMD_GETDIRSUMMARY,
     CMD_CREATE,
     CMD_REMOVE,
     CMD_RENAME,
@@ -303,6 +304,27 @@ struct ReaddirPlusOp : public KfsOp {
         std::ostringstream os;
 
         os << "readdirplus: fid = " << fid;
+        return os.str();
+    }
+};
+
+struct GetDirSummaryOp : public KfsOp {
+    kfsFileId_t fid; // fid of the directory
+    uint64_t numFiles; // output
+    uint64_t numBytes; // output
+    GetDirSummaryOp(kfsSeq_t s, kfsFileId_t f):
+        KfsOp(CMD_GETDIRSUMMARY, s), fid(f), numFiles(0), numBytes(0)
+    {
+
+    }
+    void Request(std::ostringstream &os);
+    // This will only extract out the default+num-entries.  The actual
+    // dir. entries are in the content-length portion of things
+    void ParseResponseHeader(char *buf, int len);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "getdirsummary: fid = " << fid;
         return os.str();
     }
 };

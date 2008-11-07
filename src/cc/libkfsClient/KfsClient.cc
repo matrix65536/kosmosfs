@@ -218,6 +218,12 @@ KfsClient::ReaddirPlus(const char *pathname, std::vector<KfsFileAttr> &result)
 }
 
 int 
+KfsClient::GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t &numBytes)
+{
+    return mImpl->GetDirSummary(pathname, numFiles, numBytes);
+}
+
+int 
 KfsClient::Stat(const char *pathname, struct stat &result, bool computeFilesize)
 {
     return mImpl->Stat(pathname, result, computeFilesize);
@@ -920,6 +926,41 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
     sort(result.begin(), result.end());
 
     return res;
+}
+
+///
+/// Do du on the metaserver side; much faster than recursive traversal.
+///
+/// @param[in] pathname	The full pathname such as /.../dir
+/// @param[out] numFiles # of files in the directory tree
+/// @param[out] numBytes # of bytes used by the directory tree
+/// @retval 0 if getdirsummary is successful; -errno otherwise
+int
+KfsClientImpl::GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t &numBytes)
+{
+    MutexLock l(&mMutex);
+
+    int fte = LookupFileTableEntry(pathname);
+    if (fte < 0)	 // open the directory for reading
+	fte = Open(pathname, O_RDONLY);
+    if (fte < 0)
+	   return fte;
+
+    FileAttr *fa = FdAttr(fte);
+    if (!fa->isDirectory)
+	return -ENOTDIR;
+
+    kfsFileId_t dirFid = fa->fileId;
+
+    GetDirSummaryOp op(nextSeq(), dirFid);
+    (void)DoMetaOpWithRetry(&op);
+    int res = op.status;
+    if (res < 0) {
+	return res;
+    }
+    numFiles = op.numFiles;
+    numBytes = op.numBytes;
+    return 0;
 }
 
 int
@@ -2487,7 +2528,7 @@ KfsClientImpl::GetLease(kfsChunkId_t chunkId)
 
 	KFS_LOG_DEBUG("Server says lease is busy...waiting");
 	// Server says the lease is busy...so wait
-	Sleep(KFS::LEASE_INTERVAL_SECS);
+	Sleep(LEASE_RETRY_DELAY_SECS);
     }
     return res;
 }
