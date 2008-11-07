@@ -1889,7 +1889,7 @@ LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
 
 	if (req->status != 0) {
 		// Replication failed...we will try again later
-		KFS_LOG_VA_DEBUG("%s: re-replication for chunk %lld failed, code = %d",
+		KFS_LOG_VA_INFO("%s: re-replication for chunk %lld failed, code = %d",
 			req->server->GetServerLocation().ToString().c_str(),
 			req->chunkId, req->status);
 		mFailedReplicationStats->Update(1);

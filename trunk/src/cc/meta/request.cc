@@ -497,7 +497,9 @@ getDirSummary(fid_t dir, uint64_t &nFiles, uint64_t &nBytes)
 			// chunks upto the last one are full and use that value
 			// as an approximation of the file size.
 			if (fa->chunkcount > 0)
-				nBytes += (fa->chunkcount - 1) * CHUNKSIZE;
+				nBytes += ((fa->chunkcount - 1) * CHUNKSIZE);
+			else
+				nBytes += CHUNKSIZE;
 
 		}
 	}

@@ -59,8 +59,8 @@ const int MAX_RPC_HEADER_LEN = 1024; //!< Max length of header in RPC req/respon
 const short int NUM_REPLICAS_PER_FILE = 3; //!< default degree of replication
 const short int MAX_REPLICAS_PER_FILE = 64; //!< max. replicas per chunk of file
 
-//!< Default lease interval of 1 min
-const int LEASE_INTERVAL_SECS = 60;
+//!< Default lease interval of 5 mins
+const int LEASE_INTERVAL_SECS = 300;
 
 //!< Error codes for KFS specific errors
 // version # being presented by client doesn't match what the server has

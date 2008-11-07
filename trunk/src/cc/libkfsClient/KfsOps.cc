@@ -143,6 +143,15 @@ ReaddirPlusOp::Request(ostringstream &os)
 }
 
 void
+GetDirSummaryOp::Request(ostringstream &os)
+{
+    os << "GETDIRSUMMARY " << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Directory File-handle: " << fid << "\r\n\r\n";
+}
+
+void
 RemoveOp::Request(ostringstream &os)
 {
     os << "REMOVE " << "\r\n";
@@ -437,6 +446,17 @@ ReaddirOp::ParseResponseHeader(char *buf, int len)
 
     ParseResponseHeaderCommon(resp, prop);
     numEntries = prop.getValue("Num-Entries", 0);
+}
+
+void
+GetDirSummaryOp::ParseResponseHeader(char *buf, int len)
+{
+    string resp(buf, len);
+    Properties prop;
+
+    ParseResponseHeaderCommon(resp, prop);
+    numFiles = prop.getValue("Num-files", 0);
+    numBytes = prop.getValue("Num-bytes", 0);
 }
 
 void
