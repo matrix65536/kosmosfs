@@ -2007,14 +2007,16 @@ PingOp::Response(ostringstream &os)
 void
 DumpChunkMapOp::Response(ostringstream &os)
 {
-    ostringstream v;
-    gChunkManager.DumpChunkMap(v);
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
-    os << "Status: " << status << "\r\n";
+    os << "Status: " << status << "\r\n\r\n";
+	/*
+    ostringstream v;
+    gChunkManager.DumpChunkMap(v);
     os << "Content-length: " << v.str().length() << "\r\n\r\n";
     if (v.str().length() > 0)
        os << v.str();
+	*/
 }
 
 void
