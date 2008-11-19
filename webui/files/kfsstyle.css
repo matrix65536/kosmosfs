@@ -70,6 +70,10 @@ background-color:#FF3300
 background-color:#FF9966
 }
 
+.status-table tbody tr.overloaded td, .network-status-table tbody tr.overloaded td {
+background-color:#6666CC
+}
+
 .status-table tbody tr.notstarted td, .network-status-table tbody tr.notstarted td {
 background-color:#FFFF66
 }

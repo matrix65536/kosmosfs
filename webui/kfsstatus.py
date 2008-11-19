@@ -36,6 +36,7 @@ downServers = {}
 retiringServers = {}
 serversByRack = {}
 numReallyDownServers = 0
+nodesWithDiskErrors = 0
 metaserverPort = 20000
 docRoot = '.'
 
@@ -67,6 +68,13 @@ class DownServer:
         if hasattr(self, 'p'):
             setattr(self, 'port', self.p)
             delattr(self, 'p')
+
+        if hasattr(self, 'overloaded'):
+            delattr(self, 'overloaded')
+            setattr(self, 'overloaded', 1)
+        else:
+            setattr(self, 'overloaded', 0)            
+
         self.stillDown = 0
 
     def __cmp__(self, other):
@@ -127,11 +135,18 @@ class UpServer:
     def __init__(self, info):
         if isinstance(info, str):
             serverInfo = info.split(',')
-            # order here is host, port, total, used, util, nblocks, last heard
+            # order here is host, port, total, used, util, nblocks, last heard, nblks corrupt
             for i in xrange(len(serverInfo)):
                 s = serverInfo[i].split('=')
                 setattr(self, s[0].strip(), s[1].strip())
 
+            if hasattr(self, 'ncorrupt'):
+                n = int(self.ncorrupt)
+                self.ncorrupt = n
+                if self.ncorrupt > 0:
+                    global nodesWithDiskErrors
+                    nodesWithDiskErrors = nodesWithDiskErrors + 1
+                    
             if hasattr(self, 's'):
                 setattr(self, 'host', self.s)
                 delattr(self, 's')
@@ -180,12 +195,20 @@ class UpServer:
         print >> buffer, '''<td align="right">''', self.lastheard, '''</td>'''
         print >> buffer, '''</tr>'''
 
+    def printHTMLNodesWithDiskErrors(self, buffer):        
+        if hasattr(self, 'ncorrupt'):
+            if self.ncorrupt > 0:
+                print >> buffer, '''<tr><td align="center">''', self.host, '''</td>'''
+                print >> buffer, '''<td>''', self.ncorrupt, '''</td>'''                
+                print >> buffer, '''</tr>'''
+                
 class RackNode:
     def __init__(self, host, rackId):
         self.host = host
         self.rackId = rackId
         self.wasStarted = 0
         self.isDown = 0
+        self.overloaded = 0
 
     def printHTML(self, buffer, count):
         if count % 2 == 0:
@@ -196,6 +219,9 @@ class RackNode:
         if self.isDown:
             trclass = "class=dead"
 
+        if self.overloaded == 1:
+            trclass = "class=overloaded"
+            
         if not self.wasStarted:
             trclass = "class=notstarted"
             
@@ -276,9 +302,13 @@ def updateServerState(rackId, host, server):
         # we really need a find_if()
         for r in serversByRack[rackId]:
             if r.host == host:
+                if isinstance(r, UpServer):
+                    r.overloaded = server.overloaded
                 r.wasStarted = 1
                 if hasattr(server, 'stillDown'):
                     r.isDown = server.stillDown
+                    if r.isDown:
+                        r.overloaded = 0
 
 def splitServersByRack():
     global upServers, downServers, serversByRack
@@ -359,7 +389,7 @@ def systemStatus(buffer):
     <tr> <td> Started at </td><td>:</td><td> ''', systemInfo.startedAt, ''' </td></tr>
     <tr> <td> Total space </td><td>:</td><td> ''', systemInfo.totalSpace, ''' </td></tr>
     <tr> <td> Used space </td><td>:</td><td> ''', systemInfo.usedSpace, '''</td></tr>
-    <tr> <td> Number of alive nodes</td><td>:</td><td> ''', len(upServers) - numReallyDownServers, '''</td></tr>
+    <tr> <td> Number of alive nodes</td><td>:</td><td> ''', len(upServers), '''</td></tr>
     <tr> <td> Number of dead nodes</td><td>:</td><td>''', numReallyDownServers, '''</td></tr>
     <tr> <td> Number of retiring nodes </td><td>:</td><td>''', len(retiringServers), '''</td></tr>
     </tbody>
@@ -418,6 +448,23 @@ def systemStatus(buffer):
         print >> buffer, '''
         </tbody>        
         </table></div>'''
+
+    global nodesWithDiskErrors
+    if nodesWithDiskErrors > 0:
+        print >> buffer, '''<div class="floatleft">
+        <table class="status-table" cellspacing="0" cellpadding="0.1em" summary="Status of nodes with disk errors">                
+        <caption> <a name="NodesWithDiskErrors">Nodes With Disk Errors</a></caption>
+     <thead>
+        <tr><th> Chunkserver </th> <th> Number of Errors </th> </tr>     
+     </thead>
+     <tbody>
+        '''
+        for v in upServers:
+            v.printHTMLNodesWithDiskErrors(buffer)
+        print >> buffer, '''
+        </tbody>        
+        </table></div>'''
+        
 
     print >> buffer, '''
     </div>
