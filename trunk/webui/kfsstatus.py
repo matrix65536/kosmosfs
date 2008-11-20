@@ -69,11 +69,6 @@ class DownServer:
             setattr(self, 'port', self.p)
             delattr(self, 'p')
 
-        if hasattr(self, 'overloaded'):
-            delattr(self, 'overloaded')
-            setattr(self, 'overloaded', 1)
-        else:
-            setattr(self, 'overloaded', 0)            
 
         self.stillDown = 0
 
@@ -154,6 +149,12 @@ class UpServer:
             if hasattr(self, 'p'):
                 setattr(self, 'port', self.p)
                 delattr(self, 'p')
+
+            if hasattr(self, 'overloaded'):
+                delattr(self, 'overloaded')
+                setattr(self, 'overloaded', 1)
+            else:
+                setattr(self, 'overloaded', 0)            
 
             self.down = 0
             self.retiring = 0
@@ -302,7 +303,7 @@ def updateServerState(rackId, host, server):
         # we really need a find_if()
         for r in serversByRack[rackId]:
             if r.host == host:
-                if isinstance(r, UpServer):
+                if isinstance(server, UpServer):
                     r.overloaded = server.overloaded
                 r.wasStarted = 1
                 if hasattr(server, 'stillDown'):
