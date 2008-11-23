@@ -379,6 +379,13 @@ LayoutManager::ServerDown(ChunkServer *server)
 	rackIter = find_if(mRacks.begin(), mRacks.end(), RackMatcher(server->GetRack()));
 	if (rackIter != mRacks.end()) {
 		rackIter->removeServer(server);
+		if (rackIter->getServers().size() == 0) {
+			// the entire rack of servers is gone
+			// so, take the rack out
+			KFS_LOG_VA_INFO("All servers in rack %d are down; taking out the rack", 
+					server->GetRack());
+			mRacks.erase(rackIter);
+		}
 	}
 
 	/// Fail all the ops that were sent/waiting for response from
@@ -507,7 +514,24 @@ LayoutManager::FindCandidateRacks(vector<int> &result, const set<int> &excludes)
 
 	if (numRacksToChoose == 0)
 		return;
+	
+	for (uint32_t i = 0; i < mRacks.size(); i++) {
+		// paranoia: each candidate rack better have at least one node
+		if (!excludes.empty()) {
+			iter = excludes.find(mRacks[i].id());
+			if (iter != excludes.end())
+				continue;
+		}
+		if (mRacks[i].getServers().size() == 0) {
+			// there are no nodes in this rack
+			numRacksToChoose--;
+		}
+	}
 
+	if (numRacksToChoose == 0)
+		return;
+
+	count = 0;
 	// choose a rack proportional to the # of nodes that rack
 	while (count < numRacksToChoose) {
 		nodeId = rand() % mChunkServers.size(); 
@@ -1498,7 +1522,7 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 				(j < clli.chunkServers.size()); j++) {
 			if ((clli.chunkServers[j]->GetReplicationReadLoad() >= 
 				MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE) ||
-				(!clli.chunkServers[j]->IsResponsiveServer()))
+				(!(clli.chunkServers[j]->IsResponsiveServer())))
 				continue;
 			dataServer = clli.chunkServers[j];
 		}
