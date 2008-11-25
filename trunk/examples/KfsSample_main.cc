@@ -38,6 +38,7 @@ extern "C" {
 #include <string.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <fcntl.h>
 }
 
 #include "libkfsClient/KfsClient.h"
@@ -45,8 +46,9 @@ extern "C" {
 using std::cout;
 using std::endl;
 using std::ifstream;
+using namespace KFS;
 
-KfsClient *gKfsClient;
+KfsClientPtr gKfsClient;
 
 // Make the directory hierarchy in KFS defined by path.
 bool doMkdirs(const char *path);
@@ -91,11 +93,10 @@ main(int argc, char **argv)
     // Get a handle to the KFS client object.  This is our entry into
     // the KFS namespace.
     //
-    gKfsClient = KfsClient::Instance();
-    gKfsClient->Init(serverHost, port);
-    if (!gKfsClient->IsInitialized()) {
-	cout << "kfs client failed to initialize...exiting" << endl;
-        exit(0);
+    gKfsClient = getKfsClientFactory()->GetClient(serverHost, port);
+    if (!gKfsClient) {
+        cout << "kfs client failed to initialize...exiting" << endl;
+        exit(-1);
     }
 
     // Now that the client is init'ed, do some file-I/O
@@ -107,19 +108,19 @@ main(int argc, char **argv)
     }
 
     // What we just created better be a directory
-    if (!gKfsClient->isDirectory(basedir)) {
+    if (!gKfsClient->IsDirectory(basedir.c_str())) {
         cout << "KFS doesn't think: " << basedir << " is a dir!" << endl;
         exit(-1);
     }
 
     // Create a simple file with default replication (at most 3)
-    string tempFn = new String(basedir + "/foo.1");
+    string tempFn(basedir + "/foo.1");
     int fd;
 
     // fd is our file-handle to the file we are creating; this
     // file handle should be used in subsequent I/O calls on
     // the file.
-    if ((fd = gKfsClient->Create(path)) < 0) {
+    if ((fd = gKfsClient->Create(tempFn.c_str())) < 0) {
         cout << "Create failed: " << ErrorCodeToStr(fd) << endl;
         exit(-1);
     }
@@ -134,7 +135,7 @@ main(int argc, char **argv)
     }
 
     cout << "Read dir returned: ";
-    for (int i = 0; i < entries.size(); i++) {
+    for (uint32_t i = 0; i < entries.size(); i++) {
         cout << entries[i] << endl;
     }
 
@@ -149,7 +150,7 @@ main(int argc, char **argv)
     char *d1 = new char[numBytes];
     memcpy(d1, dataBuf, numBytes);
 
-    int res = gKfsClient->Write(fd, buf, numBytes);
+    res = gKfsClient->Write(fd, dataBuf, numBytes);
     if (res != numBytes) {
         cout << "Was able to write only: " << res << " instead of " << numBytes << endl;
     }
@@ -161,7 +162,7 @@ main(int argc, char **argv)
     gKfsClient->Close(fd);
             
     // Determine the file-size
-    gKfsClient->Stat(path.c_str(), statInfo);
+    gKfsClient->Stat(tempFn.c_str(), statInfo);
     long sz = statInfo.st_size;
 
     if (sz != numBytes) {
@@ -172,7 +173,7 @@ main(int argc, char **argv)
     string npath = basedir + "/foo.2";
     gKfsClient->Rename(tempFn.c_str(), npath.c_str());
 
-    if (gKfsClient->Exists(tempFn)) {
+    if (gKfsClient->Exists(tempFn.c_str())) {
         cout << tempFn << " still exists after rename!" << endl;
         exit(-1);
     }
@@ -227,7 +228,7 @@ main(int argc, char **argv)
     gKfsClient->Remove(npath.c_str());
 
     // remove the dir
-    if ((res = gKfsClient->Rmdir(basedir.c_str()) < 0) {
+    if ((res = gKfsClient->Rmdir(basedir.c_str())) < 0) {
         cout << "Unable to remove: " << basedir << " : " << ErrorCodeToStr(res) << endl;
     } else {
         cout << "Testts passed!" << endl;
