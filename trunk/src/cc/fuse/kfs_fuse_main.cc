@@ -96,31 +96,40 @@ static int
 fuse_open(const char *path, struct fuse_file_info *finfo)
 {
 	int res = client->Open(path, finfo->flags);
-	if (res >= 0)
-		return 0;
-	return res;
+	if (res < 0)
+		return res;
+	finfo->fh = res;
+	return 0;
+}
+
+static int
+fuse_release(const char *path, struct fuse_file_info *finfo)
+{
+	int res = finfo->fh;
+	client->Close(res);
+	finfo->fh = -1;
+	return 0;
 }
 
 static int
 fuse_create(const char *path, mode_t mode, struct fuse_file_info *finfo)
 {
-	int res = client->Create(path);
-	if (res >= 0)
-		return 0;
-	return res;
+	int res = client->Open(path, finfo->flags);
+	if (res < 0)
+		return res;
+	finfo->fh = res;
+	return 0;
 }
 
 static int
 fuse_read(const char *path, char *buf, size_t nread, off_t off,
 		struct fuse_file_info *finfo)
 {
-	int fd = client->Open(path, O_RDONLY);
+	int fd = finfo->fh;
 	if (fd < 0)
 		return fd;
-	int status = client->Seek(fd, off, SEEK_SET);
-	if (status == 0)
-		status = client->Read(fd, buf, nread);
-	client->Close(fd);
+	client->Seek(fd, off);
+	int status = client->Read(fd, buf, nread);
 	return status;
 }
 
@@ -128,20 +137,19 @@ static int
 fuse_write(const char *path, const char *buf, size_t nwrite, off_t off,
 		struct fuse_file_info *finfo)
 {
-	int fd = client->Open(path, O_WRONLY);
+	int fd = finfo->fh;
 	if (fd < 0)
 		return fd;
-	int status = client->Seek(fd, off, SEEK_SET);
-	if (status == 0)
-		status = client->Write(fd, buf, nwrite);
-	client->Close(fd);
+	client->Seek(fd, off);
+	int status = client->Write(fd, buf, nwrite);
 	return status;
 }
 
 static int
 fuse_flush(const char *path, struct fuse_file_info *finfo)
 {
-	int fd = client->Fileno(path);
+	int fd = finfo->fh;
+	//int fd = client->Fileno(path);
 	if (fd < 0)
 		return fd;
 	return client->Sync(fd);
@@ -150,7 +158,8 @@ fuse_flush(const char *path, struct fuse_file_info *finfo)
 static int
 fuse_fsync(const char *path, int flags, struct fuse_file_info *finfo)
 {
-	int fd = client->Open(path, O_RDONLY);
+	int fd = finfo->fh;
+	//int fd = client->Fileno(path);
 	if (fd < 0)
 		return fd;
 	return client->Sync(fd);
@@ -197,7 +206,7 @@ struct fuse_operations ops = {
 	fuse_write,
 	NULL,			/* statfs */
 	fuse_flush,		/* flush */
-	NULL,			/* release */
+	fuse_release,		/* release */
 	fuse_fsync,		/* fsync */
 	NULL,			/* setxattr */
 	NULL,			/* getxattr */
