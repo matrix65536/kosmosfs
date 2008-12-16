@@ -106,7 +106,7 @@ updateSeed(UniqueID &id, seqid_t seed)
 
 /*!
  * \brief replay a file create
- * format: create/dir/<parentID>/name/<name>/id/<myID>
+ * format: create/dir/<parentID>/name/<name>/id/<myID>{/ctime/<time>}
  */
 static bool
 replay_create(deque <string> &c)
@@ -115,17 +115,25 @@ replay_create(deque <string> &c)
 	string myname;
 	int status = 0;
 	int16_t numReplicas;
+	struct timeval ctime;
 
 	bool ok = pop_parent(parent, c);
 	ok = pop_name(myname, "name", c, ok);
 	ok = pop_fid(me, "id", c, ok);
 	ok = pop_short(numReplicas, "numReplicas", c, ok);
+	// if the log has the ctime, pass it thru
+	bool gottime = pop_time(ctime, "ctime", c, ok);
 	if (ok) {
 		// for all creates that were successful during normal operation,
 		// when we replay it should work; so, exclusive = false
 		status = metatree.create(parent, myname, &me, numReplicas, false);
 		if (status == 0)
 			updateSeed(fileID, me);
+		if (gottime) {
+			MetaFattr *fa = metatree.getFattr(me);
+			if (fa != NULL)
+				fa->mtime = fa->ctime = fa->crtime = ctime;
+		}
 	}
 	KFS_LOG_VA_DEBUG("Replay create: name=%s, id=%lld", myname.c_str(), me);
 	return (ok && status == 0);
@@ -133,7 +141,7 @@ replay_create(deque <string> &c)
 
 /*!
  * \brief replay mkdir
- * format: mkdir/dir/<parentID>/name/<name>/id/<myID>
+ * format: mkdir/dir/<parentID>/name/<name>/id/<myID>{/ctime/<time>}
  */
 static bool
 replay_mkdir(deque <string> &c)
@@ -141,13 +149,22 @@ replay_mkdir(deque <string> &c)
 	fid_t parent, me;
 	string myname;
 	int status = 0;
+	struct timeval ctime;
+
 	bool ok = pop_parent(parent, c);
 	ok = pop_name(myname, "name", c, ok);
 	ok = pop_fid(me, "id", c, ok);
+	// if the log has the ctime, pass it thru
+	bool gottime = pop_time(ctime, "ctime", c, ok);
 	if (ok) {
 		status = metatree.mkdir(parent, myname, &me);
 		if (status == 0)
 			updateSeed(fileID, me);
+		if (gottime) {
+			MetaFattr *fa = metatree.getFattr(me);
+			if (fa != NULL)
+				fa->mtime = fa->ctime = fa->crtime = ctime;
+		}
 	}
 	KFS_LOG_VA_DEBUG("Replay mkdir: name=%s, id=%lld", myname.c_str(), me);
 	return (ok && status == 0);
@@ -217,7 +234,7 @@ replay_rename(deque <string> &c)
 /*!
  * \brief replay allocate
  * format: allocate/file/<fileID>/offset/<offset>/chunkId/<chunkID>/
- * chunkVersion/<chunkVersion>
+ * chunkVersion/<chunkVersion>/{mtime/<time>}
  */
 static bool
 replay_allocate(deque <string> &c)
@@ -228,12 +245,15 @@ replay_allocate(deque <string> &c)
 	seq_t chunkVersion, logChunkVersion;
 	int status = 0;
 	MetaFattr *fa;
+	struct timeval mtime;
 
 	c.pop_front();
 	bool ok = pop_fid(fid, "file", c, true);
 	ok = pop_fid(offset, "offset", c, ok);
 	ok = pop_fid(logChunkId, "chunkId", c, ok);
 	ok = pop_fid(logChunkVersion, "chunkVersion", c, ok);
+	// if the log has the mtime, pass it thru
+	bool gottime = pop_time(mtime, "mtime", c, ok);
 
 	// during normal operation, if a file that has a valid 
 	// lease is removed, we move the file to the dumpster and log it.
@@ -249,6 +269,10 @@ replay_allocate(deque <string> &c)
 		return ok;
 
 	if (ok) {
+		// if the log has the mtime, set it up in the FA
+		if (gottime) 
+			fa->mtime = mtime;
+
 		cid = logChunkId;
 		status = metatree.allocateChunkId(fid, offset, &cid, 
 						&chunkVersion, NULL);
@@ -287,6 +311,10 @@ replay_allocate(deque <string> &c)
 					updateSeed(chunkID, cid);
 				}
 			}
+			// assign updates the mtime; so, set it to what is in
+			// the log
+			if (gottime) 
+				fa->mtime = mtime;
 		}
 	}
 	return (ok && status == 0);
@@ -294,7 +322,7 @@ replay_allocate(deque <string> &c)
 
 /*!
  * \brief replay truncate
- * format: truncate/file/<fileID>/offset/<offset>
+ * format: truncate/file/<fileID>/offset/<offset>{/mtime/<time>}
  */
 static bool
 replay_truncate(deque <string> &c)
@@ -302,15 +330,24 @@ replay_truncate(deque <string> &c)
 	fid_t fid;
 	chunkOff_t offset;
 	int status = 0;
+	struct timeval mtime;
 
 	c.pop_front();
 	bool ok = pop_fid(fid, "file", c, true);
 	ok = pop_fid(offset, "offset", c, ok);
+	// if the log has the mtime, pass it thru
+	bool gottime = pop_time(mtime, "mtime", c, ok);
 	if (ok) {
 		chunkOff_t allocOffset;
 
 		// an allocation should not occur during replay
 		status = metatree.truncate(fid, offset, &allocOffset);
+
+		if ((status == 0)  && gottime) {
+			MetaFattr *fa = metatree.getFattr(fid);
+			if (fa != NULL) 
+				fa->mtime = mtime;
+		}
 	}
 	return (ok && status == 0);
 }

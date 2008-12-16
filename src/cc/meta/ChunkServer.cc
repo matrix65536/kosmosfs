@@ -801,6 +801,12 @@ public:
 
         	// Send it on its merry way
         	conn->Write(os.str().c_str(), os.str().length());
+
+		if (cr->op == META_CHUNK_REPLICATE) {
+			MetaChunkReplicate *mcr = static_cast <MetaChunkReplicate *> (cr);
+			KFS_LOG_VA_INFO("Dispatched re-replication request: %s",
+					mcr->Show().c_str());
+		}
 		// Notify the server the op is dispatched
 		server->Dispatched(r);
 	}

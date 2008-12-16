@@ -83,8 +83,8 @@ MetaDentry::match(Meta *m)
 	return (d != NULL && d->compareName(name) == 0);
 }
 
-static string
-showtime(struct timeval t)
+string
+KFS::showtime(struct timeval t)
 {
 	std::ostringstream n(std::ostringstream::out);
 	n << t.tv_sec << "/" << t.tv_usec;

@@ -214,5 +214,9 @@ extern UniqueID chunkID;  //!< Instance for generating unique chunkId
 //a replica failure.
 extern seq_t chunkVersionInc;
 
+// return a string representation of the timeval. the string is written out
+// to logs/checkpoints
+string showtime(struct timeval t);
+
 }
 #endif	// !defined(KFS_META_H)
