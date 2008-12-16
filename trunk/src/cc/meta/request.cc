@@ -1143,8 +1143,13 @@ MetaLookupPath::log(ofstream &file) const
 int
 MetaCreate::log(ofstream &file) const
 {
+	// use the log entry time as a proxy for when the file was created
+	struct timeval t;
+	gettimeofday(&t, NULL);
+
 	file << "create/dir/" << dir << "/name/" << name <<
-		"/id/" << fid << "/numReplicas/" << (int) numReplicas << '\n';
+		"/id/" << fid << "/numReplicas/" << (int) numReplicas << 
+		"/ctime/" << showtime(t) << '\n';
 	return file.fail() ? -EIO : 0;
 }
 
@@ -1154,8 +1159,11 @@ MetaCreate::log(ofstream &file) const
 int
 MetaMkdir::log(ofstream &file) const
 {
+	struct timeval t;
+	gettimeofday(&t, NULL);
+
 	file << "mkdir/dir/" << dir << "/name/" << name <<
-		"/id/" << fid << '\n';
+		"/id/" << fid << "/ctime/" << showtime(t) << '\n';
 	return file.fail() ? -EIO : 0;
 }
 
@@ -1230,9 +1238,15 @@ MetaGetDirSummary::log(ofstream &file) const
 int
 MetaAllocate::log(ofstream &file) const
 {
+	// use the log entry time as a proxy for when the block was created/file
+	// was modified
+	struct timeval t;
+	gettimeofday(&t, NULL);
+
 	file << "allocate/file/" << fid << "/offset/" << offset
 	     << "/chunkId/" << chunkId
-	     << "/chunkVersion/" << chunkVersion << '\n';
+	     << "/chunkVersion/" << chunkVersion 
+	     << "/mtime/" << showtime(t) << '\n';
 	return file.fail() ? -EIO : 0;
 }
 
@@ -1242,7 +1256,12 @@ MetaAllocate::log(ofstream &file) const
 int
 MetaTruncate::log(ofstream &file) const
 {
-	file << "truncate/file/" << fid << "/offset/" << offset << '\n';
+	// use the log entry time as a proxy for when the file was modified
+	struct timeval t;
+	gettimeofday(&t, NULL);
+
+	file << "truncate/file/" << fid << "/offset/" << offset 
+	     << "/mtime/" << showtime(t) << '\n';
 	return file.fail() ? -EIO : 0;
 }
 
