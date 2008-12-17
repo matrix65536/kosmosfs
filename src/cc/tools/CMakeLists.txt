@@ -11,6 +11,7 @@ set (lib_srcs
     KfsRm.cc
     KfsRmdir.cc
     KfsPwd.cc
+    KfsFstat.cc
     utils.cc
 )
 
