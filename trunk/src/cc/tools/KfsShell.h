@@ -51,6 +51,7 @@ namespace KFS
         int handleCd(const std::vector<std::string> &args);
         int handleChangeReplication(const std::vector<std::string> &args);
         int handleCopy(const std::vector<std::string> &args);
+        int handleFstat(const std::vector<std::string> &args);
         int handleLs(const std::vector<std::string> &args);
         int handleMkdirs(const std::vector<std::string> &args);
         int handleMv(const std::vector<std::string> &args);
@@ -58,7 +59,6 @@ namespace KFS
         int handlePing(const std::vector<std::string> &args);
         int handleRm(const std::vector<std::string> &args);    
         int handlePwd(const std::vector<std::string> &args);
-
         // utility functions
         int doMkdirs(const char *path);
         int doRmdir(const char *dirname);

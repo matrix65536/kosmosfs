@@ -128,6 +128,7 @@ void printCmds()
     cout << "mv" << endl;
     cout << "rm" << endl;
     cout << "rmdir" << endl;
+    cout << "stat" << endl;
     cout << "pwd" << endl;
 }
 
@@ -148,6 +149,7 @@ void setupHandlers()
     handlers["rmdir"] = handleRmdir;
     // handlers["ping"] = handlePing;
     handlers["rm"] = handleRm;
+    handlers["stat"] = handleFstat;
     handlers["pwd"] = handlePwd;
     handlers["help"] = handleHelp;
 }
