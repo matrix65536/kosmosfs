@@ -843,6 +843,7 @@ private:
                           uint32_t *checksums);
 
     bool VerifyDataChecksums(int fte, const vector<uint32_t> &checksums);
+    bool VerifyChecksum(ReadOp* op, TcpSocket* sock);
 };
 
 

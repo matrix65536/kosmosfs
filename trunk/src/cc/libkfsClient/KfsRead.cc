@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/10/02
 // Author: Sriram Rao
@@ -355,6 +355,7 @@ KfsClientImpl::DoSmallReadFromServer(int fd, char *buf, size_t numBytes)
     assert(buf + op.numBytes <= buf + numBytes);
 
     (void)DoOpCommon(&op, mFileTable[fd]->currPos.preferredServer);
+    VerifyChecksum(&op, mFileTable[fd]->currPos.preferredServer);
     ssize_t numIO = (op.status >= 0) ? op.contentLength : op.status;
     op.ReleaseContentBuf();
 
@@ -635,33 +636,41 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
             op = ops[next];
             if (op->checksums.size() == 0)
                 continue;
-
-            for (size_t pos = 0; pos < op->contentLength; pos += CHECKSUM_BLOCKSIZE) {
-                size_t len = min(CHECKSUM_BLOCKSIZE, (uint32_t) (op->contentLength - pos));
-                uint32_t cksum = ComputeBlockChecksum(op->contentBuf + pos, len);
-                uint32_t cksumIndex = pos / CHECKSUM_BLOCKSIZE;
-                if (op->checksums.size() < cksumIndex) {
-                    // didn't get all the checksums
-                    KFS_LOG_VA_DEBUG("Didn't get checksum for offset: %lld",
-                                     op->offset + pos);
-                    continue;
-                }
-
-                uint32_t serverCksum = op->checksums[cksumIndex];
-                if (serverCksum != cksum) {
-                    struct sockaddr_in saddr;
-                    char ipname[INET_ADDRSTRLEN];
-
-                    sock->GetPeerName((struct sockaddr *) &saddr);
-                    inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN);
-
-                    KFS_LOG_VA_INFO("Checksum mismatch from %s starting @pos = %lld: got = %d, computed = %d for %s",
-                                    ipname, op->offset + pos, serverCksum, cksum, op->Show().c_str());
-                    op->status = -KFS::EBADCKSUM;
-                    mTelemetryReporter.publish(saddr.sin_addr, -1.0, "CHECKSUM_MISMATCH");
-                }
-            }
+            VerifyChecksum(op, sock);
         }
     }
     return 0;
+}
+
+bool
+KfsClientImpl::VerifyChecksum(ReadOp* op, TcpSocket* sock)
+{
+    for (size_t pos = 0; pos < op->contentLength; pos += CHECKSUM_BLOCKSIZE) {
+        size_t len = min(CHECKSUM_BLOCKSIZE, (uint32_t) (op->contentLength - pos));
+        uint32_t cksum = ComputeBlockChecksum(op->contentBuf + pos, len);
+        uint32_t cksumIndex = pos / CHECKSUM_BLOCKSIZE;
+        if (op->checksums.size() < cksumIndex) {
+            // didn't get all the checksums
+            KFS_LOG_VA_DEBUG("Didn't get checksum for offset: %lld",
+                             op->offset + pos);
+            continue;
+        }
+
+        uint32_t serverCksum = op->checksums[cksumIndex];
+        if (serverCksum != cksum) {
+            if (sock) {
+                struct sockaddr_in saddr;
+                char ipname[INET_ADDRSTRLEN];
+
+                sock->GetPeerName((struct sockaddr *) &saddr);
+                inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN);
+
+                KFS_LOG_VA_INFO("Checksum mismatch from %s starting @pos = %lld: got = %d, computed = %d for %s",
+                                ipname, op->offset + pos, serverCksum, cksum, op->Show().c_str());
+                mTelemetryReporter.publish(saddr.sin_addr, -1.0, "CHECKSUM_MISMATCH");
+            }
+            op->status = -KFS::EBADCKSUM;
+        }
+    }
+    return (op->status >= 0);
 }
