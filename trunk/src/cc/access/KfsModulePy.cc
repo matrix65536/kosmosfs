@@ -514,9 +514,10 @@ kfs_seek(PyObject *pself, PyObject *args)
 {
 	kfs_File *self = (kfs_File *)pself;
 	kfs_Client *cl = (kfs_Client *)self->pclient;
-	int off, whence = SEEK_SET;
+	off_t off;
+	int whence = SEEK_SET;
 
-	if (!PyArg_ParseTuple(args, "i|i", &off, &whence))
+	if (!PyArg_ParseTuple(args, "L|i", &off, &whence))
 		return NULL;
 
 	if (self->fd == -1) {
@@ -524,7 +525,7 @@ kfs_seek(PyObject *pself, PyObject *args)
 		return NULL;
 	}
 
-	int s = cl->client->Seek(self->fd, (off_t)off, whence);
+	off_t s = cl->client->Seek(self->fd, (off_t)off, whence);
 	if (s < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-s));
 		return NULL;
