@@ -253,17 +253,6 @@ bool TcpSocket::IsGood()
     if (mSockFd < 0)
         return false;
 
-#if 0
-    char c;
-    
-    // the socket could've been closed by the system because the peer
-    // died.  so, tell if the socket is good, peek to see if any data
-    // can be read; read returns 0 if the socket has been
-    // closed. otherwise, will get -1 with errno=EAGAIN.
-    
-    if (Peek(&c, 1) == 0)
-        return false;
-#endif
     return true;
 }
 

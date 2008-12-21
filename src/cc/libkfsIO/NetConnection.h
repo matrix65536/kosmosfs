@@ -66,8 +66,9 @@ public:
         mDoingNonblockingConnect(false),
         mCallbackObj(c), 
         mSock(sock), mInBuffer(NULL), mOutBuffer(NULL), 
-        mNumBytesOut(0), mLastFlushResult(0) { 
+        mNumBytesOut(0), mLastFlushResult(0), mInactivityTimeoutSecs(-1) { 
         mPollVectorIndex = -1;
+        mLastActivityTime = time(0);
     } 
 
     /// @param[in] sock TcpSocket on which I/O can be done
@@ -79,11 +80,12 @@ public:
         mDoingNonblockingConnect(false),
         mCallbackObj(c), mSock(sock), 
         mInBuffer(NULL), mOutBuffer(NULL), 
-        mNumBytesOut(0), mLastFlushResult(0) 
+        mNumBytesOut(0), mLastFlushResult(0), mInactivityTimeoutSecs(-1)
     {
         mPollVectorIndex = -1;
         if (listenOnly)
             mEnableReadIfOverloaded = true;
+        mLastActivityTime = time(0);
     }
 
     ~NetConnection() {
@@ -101,6 +103,12 @@ public:
 
     void EnableReadIfOverloaded() {
         mEnableReadIfOverloaded = true;
+    }
+
+    /// If there is no activity on this socket for nsecs, then notify
+    /// the owning object; maybe time to close the connection
+    void SetInactivityTimeout(int nsecs) {
+        mInactivityTimeoutSecs = nsecs;
     }
 
     int GetFd() { return mSock->GetFd(); }
@@ -135,6 +143,7 @@ public:
     void Write(IOBufferDataPtr &ioBufData) {
         mOutBuffer->Append(ioBufData);
         mNumBytesOut += ioBufData->BytesConsumable();
+        mLastActivityTime = time(0);
     }
 
     void Write(IOBuffer *ioBuf, int numBytes) {
@@ -184,9 +193,13 @@ private:
     IOBuffer		*mInBuffer;
     /// Buffer that contains data that should be sent out on the socket.
     IOBuffer		*mOutBuffer;
+
+    /// When was the last activity on this connection
+    time_t		mLastActivityTime;
     /// # of bytes from the out buffer that should be sent out.
     int			mNumBytesOut;
     int			mLastFlushResult;
+    int			mInactivityTimeoutSecs;
 };
 
 typedef boost::shared_ptr<NetConnection> NetConnectionPtr;

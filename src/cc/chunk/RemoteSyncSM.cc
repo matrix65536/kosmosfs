@@ -90,6 +90,10 @@ RemoteSyncSM::Connect()
 
     mNetConnection.reset(new NetConnection(sock, this));
     mNetConnection->SetDoingNonblockingConnect();
+    
+    // If there is no activity on this socket for 30 minutes, we want
+    // to be notified, so that we can close connection.
+    mNetConnection->SetInactivityTimeout(30 * 60);
     // Add this to the poll vector
     globals().netManager.AddConnection(mNetConnection);
 
@@ -101,20 +105,6 @@ RemoteSyncSM::Enqueue(KfsOp *op)
 {
     ostringstream os;
 
-    // for the most part, the difference between sent - recd will be
-    // <= 0: response recd will have a later time than the request
-    // sent; should a server become non-responsive, then the value
-    // will start becoming positive---there is an outstanding request
-    // for which we haven't received a reply.  if that takes too long,
-    // we close the connection and fail the outstanding ops; we then
-    // start a new connection and try to push ops down.
-    if ((mLastRequestSent - mLastResponseRecd)  > INACTIVE_SERVER_TIMEOUT) {
-        KFS_LOG_VA_INFO("Timeout: Closing connection to peer: %s", mLocation.ToString().c_str());
-        mNetConnection->Close();
-        FailAllOps();
-        mLastRequestSent = mLastResponseRecd = time(0);
-    }
-        
     if (!mNetConnection) {
         mLastRequestSent = mLastResponseRecd = time(0);
         if (!Connect()) {
@@ -142,47 +132,6 @@ RemoteSyncSM::Enqueue(KfsOp *op)
     mNetConnection->StartFlush();
 }
 
-#if 0
-void
-RemoteSyncSM::Enqueue(KfsOp *op)
-{
-    mPendingOps.enqueue(op);
-    // gChunkServer.ToggleNetThreadKicking(true);
-    globals().netKicker.Kick();    
-}
-
-void
-RemoteSyncSM::Dispatch()
-{
-    KfsOp *op;
-
-    while ((op = mPendingOps.dequeue_nowait()) != NULL) {
-        ostringstream os;
-        
-        if (!mNetConnection) {
-            KFS_LOG_VA_INFO("No connection to peer %s; retrying connect", mLocation.ToString().c_str());
-            if (!Connect()) {
-                mDispatchedOps.push_back(op);
-                FailAllOps();
-                return;
-            }
-        }
-
-        op->Request(os);
-        mNetConnection->Write(os.str().c_str(), os.str().length());
-        if (op->op == CMD_WRITE_PREPARE_FWD) {
-            // send the data as well
-            WritePrepareFwdOp *wpfo = static_cast<WritePrepareFwdOp *>(op);        
-            mNetConnection->Write(wpfo->dataBuf, wpfo->dataBuf->BytesConsumable());
-            // fire'n'forget
-            op->status = 0;
-            KFS::SubmitOpResponse(op);            
-        }
-        else
-            mDispatchedOps.push_back(op);            
-    }
-}
-#endif
 int
 RemoteSyncSM::HandleEvent(int code, void *data)
 {
@@ -191,6 +140,7 @@ RemoteSyncSM::HandleEvent(int code, void *data)
     // take a ref to prevent the object from being deleted
     // while we are still in this function.
     RemoteSyncSMPtr self = shared_from_this();
+    const char *reason = "error";
 
 #ifdef DEBUG
     verifyExecutingOnNetProcessor();
@@ -216,8 +166,13 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 	// and such.
 	break;
 
+        
+    case EVENT_INACTIVITY_TIMEOUT:
+    	reason = "inactivity timeout";
     case EVENT_NET_ERROR:
-	KFS_LOG_VA_INFO("Closing connection to peer: %s due to error", mLocation.ToString().c_str());
+        // If there is an error or there is no activity on the socket
+        // for N mins, we close the connection. 
+	KFS_LOG_VA_INFO("Closing connection to peer: %s due to %s", mLocation.ToString().c_str(), reason);
 
 	if (mNetConnection)
 	    mNetConnection->Close();

@@ -71,8 +71,16 @@ IOBufferData::IOBufferData(IOBufferDataPtr &other, char *s, char *e) :
 void
 IOBufferData::Init(uint32_t bufsz)
 {
-    mData.reset(new char [bufsz]);
-    mStart = mData.get();
+    // we'd like to align the memory to 16-byte boundaries; so
+    // allocate an additional align bytes and expose only the
+    // aligned part
+    int align = 16;
+    off_t offset;
+    
+    mData.reset(new char [bufsz + align]);
+    offset = (off_t) (mData.get());
+    // adjust start to be suitably aligned
+    mStart = (char *) (align + ((offset - 1) & ~(align - 1)));
     mEnd = mStart + bufsz;
     mProducer = mConsumer = mStart;
 }
