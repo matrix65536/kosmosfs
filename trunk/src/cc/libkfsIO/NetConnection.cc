@@ -58,6 +58,8 @@ void NetConnection::HandleReadEvent(bool isSystemOverloaded)
         if (mInBuffer == NULL) {
             mInBuffer = new IOBuffer();
         }
+        mLastActivityTime = time(0);
+
         // XXX: Need to control how much we read...
         nread = mInBuffer->Read(mSock->GetFd());
         if (nread == 0) {
@@ -87,6 +89,7 @@ void NetConnection::HandleWriteEvent()
     if (!IsWriteReady())
     	return;
 
+    mLastActivityTime = time(0);
     // XXX: Need to pay attention to mNumBytesOut---that is, write out
     // only as much as is asked for.
     nwrote = mOutBuffer->Write(mSock->GetFd());
@@ -107,8 +110,19 @@ void NetConnection::HandleErrorEvent()
 
 bool NetConnection::IsReadReady(bool isSystemOverloaded)
 {
+    if (mInactivityTimeoutSecs > 0) {
+        time_t now = time(0);
+
+        if (now - mLastActivityTime > mInactivityTimeoutSecs) {
+            KFS_LOG_DEBUG("No activity on socket...returning error");
+            mCallbackObj->HandleEvent(EVENT_INACTIVITY_TIMEOUT, NULL);
+            return false;
+        }
+    }
+
     if (!isSystemOverloaded)
         return true;
+
     // under load, this instance variable controls poll state
     return mEnableReadIfOverloaded;
 }
@@ -117,7 +131,7 @@ bool NetConnection::IsWriteReady()
 {
     if (mDoingNonblockingConnect)
         return true;
-
+    
     if (mOutBuffer == NULL)
     	return false;
 
@@ -129,6 +143,10 @@ int NetConnection::GetNumBytesToWrite()
     // force addition to the poll vector
     if (mDoingNonblockingConnect)
         return 1;
+
+    if (!IsGood())
+        // if the socket has been closed, don't add to poll loop
+        return 0;
 
     if (mOutBuffer == NULL)
     	return 0;
