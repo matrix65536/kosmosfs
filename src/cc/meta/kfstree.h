@@ -218,6 +218,8 @@ public:
 	int height() { return hgt; }		//!< return tree height
 	void printleaves();			//!< print debugging info
 	MetaFattr *getFattr(fid_t fid);		//!< return attributes
+	MetaDentry *getDentry(fid_t fid);	//!< return dentry attributes
+	std::string getPathname(fid_t fid);	//!< return full pathname for a given file id
 
 	int create(fid_t dir, const string &fname, fid_t *newFid, 
 			int16_t numReplicas, bool exclusive);

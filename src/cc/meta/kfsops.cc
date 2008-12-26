@@ -326,6 +326,63 @@ Tree::getDentry(fid_t dir, const string &fname)
 	return (d == v.end()) ? NULL : *d;
 }
 
+
+/*
+ * Map from file id to its directory entry.  In the current instantation, this is SLOW: 
+ * we iterate over the leaves until we find the dentry.  This method is needed
+ * for KFS fsck, where we want to map from a fid -> name to reconstruct the
+ * pathname for the file for which we want to print info (such as, missing
+ * block, has fewer replicas etc.
+ * \param[in] fid	the object's file id
+ * \return		pointer to the attributes
+ */
+MetaDentry *
+Tree::getDentry(fid_t fid)
+{
+	LeafIter li(metatree.firstLeaf(), 0);
+	Node *p = li.parent();
+	Meta *m = li.current();
+	MetaDentry *d = NULL;
+	while (m != NULL) {
+		if (m->id() == fid) {
+			d = dynamic_cast<MetaDentry *>(m);
+			if (d != NULL)
+				break;
+		}
+		
+		li.next();
+		p = li.parent();
+		m = (p == NULL) ? NULL : li.current();
+	}
+	return d;
+}
+
+/*
+ * Given a file-id, returns its fully qualified pathname.  This involves
+ * recursively traversing the metatree until the root directory.
+ */
+string
+Tree::getPathname(fid_t fid)
+{
+	MetaDentry *d;
+	string s = "";
+	while (1) {
+		d = getDentry(fid);
+		if (d == NULL)
+			return "";
+		if (s == "")
+			s = d->getName();
+		else
+			s = d->getName() + "/" + s;
+		if (d->id() == ROOTFID) {
+			return s;
+		}
+		fid = d->getDir();
+	}
+	return "";
+
+}
+
 /*!
  * \brief look up a file name and return its attributes
  * \param[in] dir	file id of the parent directory
