@@ -105,6 +105,16 @@ ChunkServer::MainLoop(int clientAcceptPort)
 
     memcpy(&ipaddr, hent->h_addr, hent->h_length);
 
+    // Warn user if resolved address is the local loopback address which may
+    // cause duplicate chunk server issues.
+    if ( (ipaddr.s_addr >> 0 & 0xFF) == 127) {
+        KFS_LOG_VA_INFO("gethostname returned: %s", hostname);
+        KFS_LOG_VA_INFO("hostname resolved to: %s", inet_ntoa(ipaddr));
+        KFS_LOG_WARN("WARNING: IP resolved to 127.x.x.x address - "
+                     "check 'hosts' line in /etc/nsswitch.conf to make sure that 'dns'"
+                     " is before 'files'");
+    }
+
     mLocation.Reset(inet_ntoa(ipaddr), clientAcceptPort);
 
     gClientManager.StartAcceptor(clientAcceptPort);
