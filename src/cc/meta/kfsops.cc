@@ -3,7 +3,7 @@
  *
  * \file kfsops.cc
  * \brief KFS file system operations.
- * \author Blake Lewis and Sriram Rao 
+ * \author Blake Lewis and Sriram Rao
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.
@@ -127,7 +127,7 @@ Tree::link(fid_t dir, const string fname, FileType type, fid_t myID,
  * \return		status code (zero on success)
  */
 int
-Tree::create(fid_t dir, const string &fname, fid_t *newFid, 
+Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 		int16_t numReplicas, bool exclusive)
 {
 	if (!legalname(fname)) {
@@ -136,7 +136,7 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 	}
 
 	if (numReplicas <= 0) {
-		KFS_LOG_VA_DEBUG("Bad # of replicas (%d) for %s", 
+		KFS_LOG_VA_DEBUG("Bad # of replicas (%d) for %s",
 				numReplicas, fname.c_str());
 		return -EINVAL;
 	}
@@ -328,7 +328,7 @@ Tree::getDentry(fid_t dir, const string &fname)
 
 
 /*
- * Map from file id to its directory entry.  In the current instantation, this is SLOW: 
+ * Map from file id to its directory entry.  In the current instantation, this is SLOW:
  * we iterate over the leaves until we find the dentry.  This method is needed
  * for KFS fsck, where we want to map from a fid -> name to reconstruct the
  * pathname for the file for which we want to print info (such as, missing
@@ -349,7 +349,7 @@ Tree::getDentry(fid_t fid)
 			if (d != NULL)
 				break;
 		}
-		
+
 		li.next();
 		p = li.parent();
 		m = (p == NULL) ? NULL : li.current();
@@ -372,11 +372,11 @@ Tree::getPathname(fid_t fid)
 			return "";
 		if (s == "")
 			s = d->getName();
+		else if (d->id() == ROOTFID) {
+			return "/" + s;
+		}
 		else
 			s = d->getName() + "/" + s;
-		if (d->id() == ROOTFID) {
-			return s;
-		}
 		fid = d->getDir();
 	}
 	return "";
@@ -492,7 +492,7 @@ class ChunkIdMatch {
 public:
 	ChunkIdMatch(seq_t c) : myid(c) { }
 	bool operator() (MetaChunkInfo *m) {
-		return m->chunkId == myid;	
+		return m->chunkId == myid;
 	}
 };
 
@@ -606,7 +606,7 @@ Tree::assignChunkId(fid_t file, chunkOff_t offset,
 		return 0;
 	}
 
-	MetaChunkInfo *m = new MetaChunkInfo(file, offset, 
+	MetaChunkInfo *m = new MetaChunkInfo(file, offset,
 					chunkId, chunkVersion);
 	if (insert(m)) {
 		// insert failed
@@ -656,7 +656,7 @@ Tree::truncate(fid_t file, chunkOff_t offset, chunkOff_t *allocOffset)
 
 	m = lower_bound(chunkInfo.begin(), chunkInfo.end(),
 			&last, ChunkInfo_compare);
-        
+
         //
         // If there is no chunk corresponding to the offset to which
         // the file should be truncated, allocate one at that point.
@@ -666,7 +666,7 @@ Tree::truncate(fid_t file, chunkOff_t offset, chunkOff_t *allocOffset)
         // 2. There is a hole in the file and the offset to truncate
         // to corresponds to the hole.
         //
-	if ((m == chunkInfo.end()) || 
+	if ((m == chunkInfo.end()) ||
 	    ((*m)->offset != lastChunkStartOffset)) {
 		// Allocate a chunk at this offset
 		*allocOffset = lastChunkStartOffset;
@@ -720,7 +720,7 @@ Tree::is_descendant(fid_t src, fid_t dst)
  * \return		status code
  */
 int
-Tree::rename(fid_t parent, const string &oldname, string &newname, 
+Tree::rename(fid_t parent, const string &oldname, string &newname,
 		bool overwrite)
 {
 	int status;
@@ -756,7 +756,7 @@ Tree::rename(fid_t parent, const string &oldname, string &newname,
 	MetaFattr *dfattr = lookup(ddir, dname);
 	bool dexists = (dfattr != NULL);
 	FileType t = sfattr->type;
-	
+
 	if ((!overwrite) && dexists)
 		return -EEXIST;
 
@@ -881,7 +881,7 @@ Tree::cleanupDumpster()
 		// Someone nuked the dumpster
 		makeDumpsterDir();
 	}
-		
+
 	fid_t dir = fa->id();
 
 	vector <MetaDentry *> v;
