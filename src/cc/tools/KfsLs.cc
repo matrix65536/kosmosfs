@@ -49,7 +49,7 @@ using namespace KFS;
 static int dirList(string kfsdirname, bool longMode, bool humanReadable);
 static int doDirList(string kfsdirname);
 static int doDirListPlusAttr(string kfsdirname, bool humanReadable);
-static void printFileInfo(const string &filename, time_t mtime, size_t filesize, bool humanReadable);
+static void printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable);
 static void getTimeString(time_t time, char *buf, int bufLen = 256);
 
 
@@ -166,7 +166,7 @@ doDirListPlusAttr(string kfsdirname, bool humanReadable)
 }
 
 void
-printFileInfo(const string &filename, time_t mtime, size_t filesize, bool humanReadable)
+printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable)
 {
     char timeBuf[256];
 
