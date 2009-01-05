@@ -241,9 +241,13 @@ def mergeDownUpNodes():
     ''' in the set of down-nodes, mark those that are still down in red'''
     global upServers, downServers, numReallyDownServers
     reallyDown = [d for d in downServers if nodeIsNotUp(d)]
-    numReallyDownServers = len(reallyDown)
+    numReallyDownServers = 0
+    uniqueServers = set()
     for d in reallyDown:
         d.setStillDown()
+        s = '%s:%s' % (d.host, d.port)
+        uniqueServers.add(s)
+    numReallyDownServers = len(uniqueServers)
 
 def mergeRetiringUpNodes():
     ''' merge retiring nodes with up nodes'''
