@@ -115,6 +115,13 @@ RemoteSyncSM::Enqueue(KfsOp *op)
         }
     }
 
+    if (!mNetConnection->IsGood()) {
+        KFS_LOG_VA_INFO("Lost the connection to peer %s; failing ops", mLocation.ToString().c_str());
+        mDispatchedOps.push_back(op);
+        FailAllOps();
+        return;
+    }
+
     op->Request(os);
     mNetConnection->Write(os.str().c_str(), os.str().length());
     if (op->op == CMD_WRITE_PREPARE_FWD) {

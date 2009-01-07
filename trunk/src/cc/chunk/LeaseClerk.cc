@@ -134,8 +134,6 @@ LeaseClerk::LeaseRenewed(kfsChunkId_t chunkId)
     KFS_LOG_VA_INFO("lease renewed for chunk = %ld, lease = %ld", chunkId, lease.leaseId);
 
     lease.expires = now + LEASE_INTERVAL_SECS;
-    if (lease.expires < now)
-        lease.expires = now + 1;
 
     lease.leaseRenewSent = false;
     mLeases[chunkId] = lease;

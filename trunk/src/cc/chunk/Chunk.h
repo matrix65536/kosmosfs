@@ -102,15 +102,13 @@ struct ChunkInfo_t {
                     chunkBlockChecksum(NULL)
     {
         // memset(chunkBlockChecksum, 0, sizeof(chunkBlockChecksum));
-        // memset(filename, 0, MAX_FILENAME_LEN);
     }
     ~ChunkInfo_t() {
         delete [] chunkBlockChecksum;
     }
     ChunkInfo_t(const ChunkInfo_t &other) :
         fileId(other.fileId), chunkId(other.chunkId), chunkVersion(other.chunkVersion),
-        chunkSize(other.chunkSize), chunkBlockChecksum(NULL) {
-        
+        chunkSize(other.chunkSize), chunkBlockChecksum(NULL), dirname(other.dirname) {
     }
     ChunkInfo_t& operator= (const ChunkInfo_t &other) 
     {
@@ -118,19 +116,26 @@ struct ChunkInfo_t {
         chunkId = other.chunkId;
         chunkVersion = other.chunkVersion;
         chunkSize = other.chunkSize;
+        dirname = other.dirname;
         SetChecksums(other.chunkBlockChecksum);
+
         return *this;
     }
 
-    void setFilename(const char *other) {
-        // strncpy(filename, other, MAX_FILENAME_LEN);
-    }
     void Init(kfsFileId_t f, kfsChunkId_t c, off_t v) {
         fileId = f;
         chunkId = c;
         chunkVersion = v;
         chunkBlockChecksum = new uint32_t[MAX_CHUNK_CHECKSUM_BLOCKS];
         memset(chunkBlockChecksum, 0, MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
+    }
+
+    void SetDirname(const std::string &path) {
+        dirname = path;
+    }
+    
+    std::string GetDirname() {
+        return dirname;
     }
 
     bool AreChecksumsLoaded() {
@@ -224,7 +229,10 @@ struct ChunkInfo_t {
     // -- track the # of reads
     // ...
     uint32_t numReads;
-    // char filename[MAX_FILENAME_LEN];
+    // Record the directory on which the chunk is stored.  For JBOD
+    // settings, we will have one directory per drive; stash the
+    // directory so that we can find the chunk file on disk.
+    std::string dirname;
 };
 
 }
