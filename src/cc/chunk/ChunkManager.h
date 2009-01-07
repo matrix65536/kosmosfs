@@ -87,6 +87,13 @@ typedef std::tr1::unordered_map<kfsChunkId_t, ChunkInfoHandle_t *>::const_iterat
 /// Periodically write out the chunk manager state to disk
 class ChunkManagerTimeoutImpl;
 
+struct ChunkDirInfo_t {
+    ChunkDirInfo_t() : usedSpace(0), availableSpace(0) { }
+    std::string dirname;
+    int64_t usedSpace;
+    int64_t availableSpace;
+};
+
 /// The chunk manager writes out chunks as individual files on disk.
 /// The location of the chunk directory is defined by chunkBaseDir.
 /// The file names of chunks is a string representation of the chunk
@@ -264,7 +271,7 @@ public:
     /// completion of a truncation
     /// @param[in] chunkSize The new size of the chunk
     void ReplayTruncateDone(kfsChunkId_t chunkId, off_t chunkSize);
-    
+
     /// Retrieve the chunks hosted on this chunk server.
     /// @param[out] result  A vector containing info of all chunks
     /// hosted on this server.
@@ -274,7 +281,7 @@ public:
     /// chunks are stored in a single directory, we use statvfs to
     /// determine the total space avail; we report the min of statvfs
     /// value and the configured mTotalSpace.
-    int64_t GetTotalSpace() const;
+    int64_t GetTotalSpace();
     int64_t GetUsedSpace() const { return mUsedSpace; };
     long GetNumChunks() const { return mNumChunks; };
 
@@ -364,7 +371,11 @@ private:
     time_t      mLastCheckpointTime;
     
     /// directories for storing the chunks
-    std::vector<std::string> mChunkDirs;
+    std::vector<ChunkDirInfo_t> mChunkDirs;
+
+    /// index of the last directory/drive that we used for placing a
+    /// chunk
+    int mLastDriveChosen;
 
     /// See the comments in KfsOps.cc near WritePreapreOp related to write handling
     int64_t mWriteId;
@@ -383,14 +394,22 @@ private:
     /// Given a chunk file name, extract out the
     /// fileid/chunkid/chunkversion from it and build a chunkinfo structure
     void MakeChunkInfoFromPathname(const std::string &pathname, off_t filesz, ChunkInfoHandle_t **result);
-    
+
+    /// Of the various directories this chunkserver is configured with, find the directory to store a chunk file.  
+    /// This method does a "directory allocation".
+    std::string GetDirForChunk();
+
     /// Utility function that given a chunkId, returns the full path
     /// to the chunk filename.
-    std::string MakeChunkPathname(kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion);
+    std::string MakeChunkPathname(ChunkInfoHandle_t *cih);
+    std::string MakeChunkPathname(const std::string &chunkdir, kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion);
 
     /// Utility function that given a chunkId, returns the full path
     /// to the chunk filename in the "stalechunks" dir
-    std::string MakeStaleChunkPathname(kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion);
+    std::string MakeStaleChunkPathname(ChunkInfoHandle_t *cih);
+
+    /// update the used space in the directory where the chunk resides by nbytes.
+    void UpdateDirSpace(ChunkInfoHandle_t *cih, off_t nbytes);
 
     /// Utility function that sets up a disk connection for an
     /// I/O operation on a chunk.
@@ -434,6 +453,12 @@ private:
     /// send us traffic for this chunk.
     void NotifyMetaCorruptedChunk(kfsChunkId_t chunkId);
 
+    /// For some reason, dirname is not accessable (for instance, the
+    /// drive may have failed); in this case, notify metaserver that
+    /// all the blocks on that dir are lost and the metaserver can
+    /// then re-replicate.
+    void NotifyMetaChunksLost(const std::string &dirname);
+
     /// Get all the chunk filenames into a single array.
     /// @retval on success, # of entries in the array;
     ///         on failures, -1
@@ -442,15 +467,11 @@ private:
     void GetChunkPathEntries(std::vector<std::string> &pathnames);
 
     /// Helper function to move a chunk to the stale dir
-    void MarkChunkStale(kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion);
+    void MarkChunkStale(ChunkInfoHandle_t *cih);
 
-    /// Code paths for restoring chunk-meta data.  This is older
-    /// version where there is a checkpoint file that contains the
-    /// chunk meta data.  On a restart, we restore the data from the
-    /// checkpoint and then upgrade to V2.
-    void RestoreV1();
-    /// This version has the "<chunkId>.meta" file; one per chunk
-    void RestoreV2();
+
+    /// Scan the chunk dirs and rebuild the list of chunks that are hosted on this server
+    void Restore();
     /// Restore the chunk meta-data from the specified file name.
     void RestoreChunkMeta(const std::string &chunkMetaFn);
     

@@ -51,6 +51,7 @@ extern "C" {
 #include <sstream>
 #include <algorithm>
 #include <string>
+#include <set>
 
 #include <boost/lexical_cast.hpp>
 
@@ -66,6 +67,7 @@ using std::endl;
 using std::find_if;
 using std::string;
 using std::vector;
+using std::set;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -87,6 +89,7 @@ ChunkManager::ChunkManager()
     // we want a timeout once in 10 secs
     // mChunkManagerTimeoutImpl->SetTimeoutInterval(10 * 1000);
     mIsChunkTableDirty = false;
+    mLastDriveChosen = -1;
 }
 
 ChunkManager::~ChunkManager()
@@ -106,7 +109,14 @@ void
 ChunkManager::Init(const vector<string> &chunkDirs, int64_t totalSpace)
 {
     mTotalSpace = totalSpace;
-    mChunkDirs = chunkDirs;
+    for (uint32_t i = 0; i < chunkDirs.size(); i++) {
+        ChunkDirInfo_t c;
+
+        c.dirname = chunkDirs[i];
+        mChunkDirs.push_back(c);
+    }
+    // force a stat of the dirs and update space usage counts
+    GetTotalSpace();
 }
 
 int
@@ -114,20 +124,27 @@ ChunkManager::AllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId,
                          kfsSeq_t chunkVersion,
                          bool isBeingReplicated)
 {
-    string s;
+    string s, chunkdir;
     int fd;
     ChunkInfoHandle_t *cih;
     CMI tableEntry = mChunkTable.find(chunkId);
 
     mIsChunkTableDirty = true;
 
-    s = MakeChunkPathname(fileId, chunkId, chunkVersion);
-
     if (tableEntry != mChunkTable.end()) {
         cih = tableEntry->second;
         ChangeChunkVers(cih->chunkInfo.fileId, cih->chunkInfo.chunkId, chunkVersion);
         return 0;
     }
+
+    // Find the directory to use
+    chunkdir = GetDirForChunk();
+    if (chunkdir == "") {
+        KFS_LOG_VA_INFO("No directory has space to host chunk %ld", chunkId);
+        return -ENOSPC;
+    }
+        
+    s = MakeChunkPathname(chunkdir, fileId, chunkId, chunkVersion);
     
     KFS_LOG_VA_INFO("Creating chunk: %s", s.c_str());
 
@@ -143,6 +160,7 @@ ChunkManager::AllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId,
 
     cih = new ChunkInfoHandle_t();
     cih->chunkInfo.Init(fileId, chunkId, chunkVersion);
+    cih->chunkInfo.SetDirname(chunkdir);
     cih->isBeingReplicated = isBeingReplicated;
     mChunkTable[chunkId] = cih;
     return 0;
@@ -162,7 +180,7 @@ ChunkManager::DeleteChunk(kfsChunkId_t chunkId)
 
     cih = tableEntry->second;
 
-    s = MakeChunkPathname(cih->chunkInfo.fileId, cih->chunkInfo.chunkId, cih->chunkInfo.chunkVersion);
+    s = MakeChunkPathname(cih);
     unlink(s.c_str());
 
     KFS_LOG_VA_DEBUG("Deleting chunk: %s", s.c_str());
@@ -171,6 +189,8 @@ ChunkManager::DeleteChunk(kfsChunkId_t chunkId)
     assert(mNumChunks >= 0);
     if (mNumChunks < 0)
         mNumChunks = 0;
+
+    UpdateDirSpace(cih, -cih->chunkInfo.chunkSize);
 
     mUsedSpace -= cih->chunkInfo.chunkSize;
     mChunkTable.erase(chunkId);
@@ -308,13 +328,13 @@ ChunkManager::SetChunkMetadata(const DiskChunkInfo_t &dci)
 }
 
 void
-ChunkManager::MarkChunkStale(kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion)
+ChunkManager::MarkChunkStale(ChunkInfoHandle_t *cih)
 {
-    string s = MakeChunkPathname(fid, chunkId, chunkVersion);
-    string staleChunkPathname = MakeStaleChunkPathname(fid, chunkId, chunkVersion);
+    string s = MakeChunkPathname(cih);
+    string staleChunkPathname = MakeStaleChunkPathname(cih);
     
     rename(s.c_str(), staleChunkPathname.c_str());
-    KFS_LOG_VA_INFO("Moving chunk %ld to staleChunks dir", chunkId);            
+    KFS_LOG_VA_INFO("Moving chunk %ld to staleChunks dir", cih->chunkInfo.chunkId);            
 }
 
 int
@@ -330,13 +350,15 @@ ChunkManager::StaleChunk(kfsChunkId_t chunkId)
 
     cih = tableEntry->second;
 
-    MarkChunkStale(cih->chunkInfo.fileId, cih->chunkInfo.chunkId, cih->chunkInfo.chunkVersion);
+    MarkChunkStale(cih);
 
     mNumChunks--;
     assert(mNumChunks >= 0);
     if (mNumChunks < 0)
         mNumChunks = 0;
 
+    UpdateDirSpace(cih, -cih->chunkInfo.chunkSize);
+    
     mUsedSpace -= cih->chunkInfo.chunkSize;
     mChunkTable.erase(chunkId);
     delete cih;
@@ -362,7 +384,7 @@ ChunkManager::TruncateChunk(kfsChunkId_t chunkId, off_t chunkSize)
     mIsChunkTableDirty = true;
 
     cih = tableEntry->second;
-    chunkPathname = MakeChunkPathname(cih->chunkInfo.fileId, cih->chunkInfo.chunkId, cih->chunkInfo.chunkVersion);
+    chunkPathname = MakeChunkPathname(cih);
     
     res = truncate(chunkPathname.c_str(), chunkSize);
     if (res < 0) {
@@ -370,9 +392,13 @@ ChunkManager::TruncateChunk(kfsChunkId_t chunkId, off_t chunkSize)
         return -res;
     }
 
+    UpdateDirSpace(cih, -cih->chunkInfo.chunkSize);
+
     mUsedSpace -= cih->chunkInfo.chunkSize;
     mUsedSpace += chunkSize;
     cih->chunkInfo.chunkSize = chunkSize;
+
+    UpdateDirSpace(cih, cih->chunkInfo.chunkSize);
 
     lastChecksumBlock = OffsetToChecksumBlockNum(chunkSize);
 
@@ -396,7 +422,7 @@ ChunkManager::ChangeChunkVers(kfsFileId_t fileId,
     }
 
     cih = tableEntry->second;
-    oldname = MakeChunkPathname(cih->chunkInfo.fileId, cih->chunkInfo.chunkId, cih->chunkInfo.chunkVersion);
+    oldname = MakeChunkPathname(cih);
 
     mIsChunkTableDirty = true;
 
@@ -409,7 +435,7 @@ ChunkManager::ChangeChunkVers(kfsFileId_t fileId,
 
     cih->chunkInfo.chunkVersion = chunkVersion;
 
-    newname = MakeChunkPathname(cih->chunkInfo.fileId, cih->chunkInfo.chunkId, cih->chunkInfo.chunkVersion);
+    newname = MakeChunkPathname(cih);
 
     rename(oldname.c_str(), newname.c_str());
 
@@ -430,9 +456,8 @@ ChunkManager::ReplicationDone(kfsChunkId_t chunkId)
     cih = tableEntry->second;
 
 #ifdef DEBUG
-    string chunkPathname = MakeChunkPathname(cih->chunkInfo.fileId, cih->chunkInfo.chunkId, cih->chunkInfo.chunkVersion);
-    KFS_LOG_VA_DEBUG("Replication for chunk %s is complete...",
-                     chunkPathname.c_str());
+    string chunkPathname = MakeChunkPathname(cih);
+    KFS_LOG_VA_DEBUG("Replication for chunk %s is complete...", chunkPathname.c_str());
 #endif
 
     mIsChunkTableDirty = true;
@@ -446,35 +471,68 @@ ChunkManager::Start()
     globals().netManager.RegisterTimeoutHandler(mChunkManagerTimeoutImpl);
 }
 
-/*
-string
-ChunkManager::MakeChunkPathname(const char *chunkId)
+void
+ChunkManager::UpdateDirSpace(ChunkInfoHandle_t *cih, off_t nbytes)
 {
-    kfsChunkId_t c = atoll(chunkId);
-    return MakeChunkPathname(c);
+    for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
+        if (mChunkDirs[i].dirname == cih->chunkInfo.GetDirname()) {
+            mChunkDirs[i].usedSpace += nbytes;
+            if (mChunkDirs[i].usedSpace < 0)
+                mChunkDirs[i].usedSpace = 0;
+        }
+    }
 }
-*/
 
 string
-ChunkManager::MakeChunkPathname(kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion)
+ChunkManager::GetDirForChunk()
 {
-    assert(mChunkDirs.size() > 0);
+    if (mChunkDirs.size() == 1)
+        return mChunkDirs[0].dirname;
 
+    // round robin over the drives, picking one that has space; this
+    // has the effect of spreading the load over all the drives.
+    int32_t dirToUse;
+    bool found = false;
+    for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
+        dirToUse = (mLastDriveChosen + i + 1) % mChunkDirs.size();
+        if (mChunkDirs[dirToUse].availableSpace > (off_t) CHUNKSIZE) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found)
+        return "";
+    mLastDriveChosen = dirToUse;
+    return mChunkDirs[dirToUse].dirname;
+}
+
+string
+ChunkManager::MakeChunkPathname(ChunkInfoHandle_t *cih)
+{
     ostringstream os;
-    uint32_t chunkSubdir = chunkId % mChunkDirs.size();
 
-    os << mChunkDirs[chunkSubdir] << '/' << fid << '.' << chunkId << '.' << chunkVersion;
+    os << cih->chunkInfo.GetDirname() << '/' << cih->chunkInfo.fileId << '.' << cih->chunkInfo.chunkId 
+       << '.' << cih->chunkInfo.chunkVersion;
     return os.str();
 }
 
 string
-ChunkManager::MakeStaleChunkPathname(kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion)
+ChunkManager::MakeChunkPathname(const string &chunkdir, kfsFileId_t fid, kfsChunkId_t chunkId, kfsSeq_t chunkVersion)
 {
     ostringstream os;
-    uint32_t chunkSubdir = chunkId % mChunkDirs.size();
-    string staleChunkDir = GetStaleChunkPath(mChunkDirs[chunkSubdir]);
 
-    os << staleChunkDir << '/' << fid << '.' << chunkId << '.' << chunkVersion;
+    os << chunkdir << '/' << fid << '.' << chunkId << '.' << chunkVersion;
+    return os.str();
+}
+
+string
+ChunkManager::MakeStaleChunkPathname(ChunkInfoHandle_t *cih)
+{
+    ostringstream os;
+    string staleChunkDir = GetStaleChunkPath(cih->chunkInfo.GetDirname());
+
+    os << staleChunkDir << '/' << cih->chunkInfo.fileId << '.' << cih->chunkInfo.chunkId << '.' << cih->chunkInfo.chunkVersion;
 
     return os.str();
 }
@@ -490,9 +548,10 @@ ChunkManager::MakeChunkInfoFromPathname(const string &pathname, off_t filesz, Ch
         return;
     }
     
-    string chunkFn;
+    string chunkFn, dirname;
     vector<string> component;
 
+    dirname.assign(pathname, 0, slash);
     chunkFn.assign(pathname, slash + 1, string::npos);
     split(component, chunkFn, '.');
     assert(component.size() == 3);
@@ -503,6 +562,7 @@ ChunkManager::MakeChunkInfoFromPathname(const string &pathname, off_t filesz, Ch
     cih->chunkInfo.chunkVersion = atoll(component[2].c_str());
     if (filesz >= (off_t) KFS_CHUNK_HEADER_SIZE)
         cih->chunkInfo.chunkSize = filesz - KFS_CHUNK_HEADER_SIZE;
+    cih->chunkInfo.SetDirname(dirname);
     *result = cih;
     /*
     KFS_LOG_VA_DEBUG("From %s restored: %d, %d, %d", chunkFn.c_str(), 
@@ -526,7 +586,7 @@ ChunkManager::OpenChunk(kfsChunkId_t chunkId,
     }
     cih = tableEntry->second;
 
-    fn = MakeChunkPathname(cih->chunkInfo.fileId, cih->chunkInfo.chunkId, cih->chunkInfo.chunkVersion);
+    fn = MakeChunkPathname(cih);
 
     if ((!cih->dataFH) || (cih->dataFH->mFd < 0)) {
         fd = open(fn.c_str(), openFlags, S_IRUSR|S_IWUSR);
@@ -800,8 +860,11 @@ ChunkManager::UpdateChecksums(ChunkInfoHandle_t *cih, WriteOp *op)
 
     if (cih->chunkInfo.chunkSize < endOffset) {
 
+        UpdateDirSpace(cih, endOffset - cih->chunkInfo.chunkSize);
+
 	mUsedSpace += endOffset - cih->chunkInfo.chunkSize;
         cih->chunkInfo.chunkSize = endOffset;
+
     }
     assert(0 <= mUsedSpace && mUsedSpace <= mTotalSpace);
 }
@@ -880,8 +943,6 @@ ChunkManager::ReadChunkDone(ReadOp *op)
     StaleChunk(op->chunkId);
 }
 
-
-
 void
 ChunkManager::NotifyMetaCorruptedChunk(kfsChunkId_t chunkId)
 {
@@ -900,6 +961,42 @@ ChunkManager::NotifyMetaCorruptedChunk(kfsChunkId_t chunkId)
     CorruptChunkOp *ccop = new CorruptChunkOp(0, cih->chunkInfo.fileId, 
                                               chunkId);
     gMetaServerSM.EnqueueOp(ccop);
+}
+
+//
+// directory with dirname is unaccessable; maybe drive failed.  so,
+// notify metaserver of lost blocks.  the metaserver will then
+// re-replicate.
+//
+void
+ChunkManager::NotifyMetaChunksLost(const string &dirname)
+{
+    ChunkInfoHandle_t *cih;
+    CMI iter = mChunkTable.begin();
+    
+    while (iter != mChunkTable.end()) {
+        cih = iter->second;
+
+        if (cih->chunkInfo.GetDirname() != dirname) {
+            ++iter;
+            continue;
+        }
+
+        KFS_LOG_VA_INFO("Notifying metaserver of lost chunk (%ld) in file %lld in dir %s",
+                        cih->chunkInfo.fileId, cih->chunkInfo.chunkId, dirname.c_str());
+
+        // This op will get deleted when we get an ack from the metaserver
+        CorruptChunkOp *ccop = new CorruptChunkOp(0, cih->chunkInfo.fileId, 
+                                                  cih->chunkInfo.chunkId);
+        gMetaServerSM.EnqueueOp(ccop);
+
+        // get rid of chunkid from our list
+        CMI prev = iter;
+        ++iter;
+        mChunkTable.erase(cih->chunkInfo.chunkId);
+        delete cih;
+    }
+    
 }
 
 void
@@ -1041,9 +1138,9 @@ ChunkManager::GetChunkDirsEntries(struct dirent ***namelist)
 
     *namelist = NULL;
     for (i = 0; i < mChunkDirs.size(); i++) {
-        res = scandir(mChunkDirs[i].c_str(), &entries, 0, alphasort);
+        res = scandir(mChunkDirs[i].dirname.c_str(), &entries, 0, alphasort);
         if (res < 0) {
-            KFS_LOG_VA_INFO("Unable to open %s", mChunkDirs[i].c_str());
+            KFS_LOG_VA_INFO("Unable to open %s", mChunkDirs[i].dirname.c_str());
             for (i = 0; i < dirEntries.size(); i++) {
                 entries = dirEntries[i];
                 for (int j = 0; j < dirEntriesCount[i]; j++)
@@ -1080,13 +1177,13 @@ ChunkManager::GetChunkPathEntries(vector<string> &pathnames)
     int res;
 
     for (i = 0; i < mChunkDirs.size(); i++) {
-        res = scandir(mChunkDirs[i].c_str(), &entries, 0, alphasort);
+        res = scandir(mChunkDirs[i].dirname.c_str(), &entries, 0, alphasort);
         if (res < 0) {
-            KFS_LOG_VA_INFO("Unable to open %s", mChunkDirs[i].c_str());
+            KFS_LOG_VA_INFO("Unable to open %s", mChunkDirs[i].dirname.c_str());
             continue;
         }
         for (int j = 0; j < res; j++) {
-            string s = mChunkDirs[i] + "/" + entries[j]->d_name;
+            string s = mChunkDirs[i].dirname + "/" + entries[j]->d_name;
             pathnames.push_back(s);
             free(entries[j]);
         }
@@ -1101,7 +1198,7 @@ ChunkManager::Restart()
 
     version = gLogger.GetVersionFromCkpt();
     if (version == gLogger.GetLoggerVersionNum()) {
-        RestoreV2();
+        Restore();
     } else {
         std::cout << "Unsupported version...copy out the data and copy it back in...." << std::endl;
         exit(-1);
@@ -1112,7 +1209,7 @@ ChunkManager::Restart()
 }
 
 void
-ChunkManager::RestoreV2()
+ChunkManager::Restore()
 {
     // sort all the chunk names alphabetically in each of the
     // directories
@@ -1138,150 +1235,13 @@ ChunkManager::RestoreV2()
     }
 }
 
-#if 0
-//
-// Restart from a checkpoint. Validate that the files in the
-// checkpoint exist in the chunks directory.
-//
-void
-ChunkManager::RestoreV1()
-{
-    ChunkInfoHandle_t *cih;
-    string chunkIdStr, chunkPathname;
-    ChunkInfo_t entry;
-    int i, res, numChunkFiles;
-    bool found;
-    struct stat buf;
-    struct dirent **namelist;
-    CMI iter = mChunkTable.begin();
-    vector<kfsChunkId_t> orphans;
-    vector<kfsChunkId_t>::size_type j;
-
-    // sort all the chunk names alphabetically in each of the
-    // directories
-    numChunkFiles = GetChunkDirsEntries(&namelist);
-    if (numChunkFiles < 0)
-        return;
-
-    gLogger.Restore();
-
-    // Now, validate: for each entry in the chunk table, verify that
-    // the backing file exists. also, if there any "zombies" lying
-    // around---that is, the file exists, but there is no associated
-    // entry in the chunk table, nuke the backing file.
-
-    for (iter = mChunkTable.begin(); iter != mChunkTable.end(); ++iter) {
-        entry = iter->second->chunkInfo;
-
-        chunkIdStr = boost::lexical_cast<std::string>(entry.chunkId);
-
-        found = false;
-        for (i = 0; i < numChunkFiles; ++i) {
-            if (namelist[i] &&
-                (chunkIdStr == namelist[i]->d_name)) {
-                free(namelist[i]);
-                namelist[i] = NULL;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            KFS_LOG_VA_INFO("Orphaned chunk as the file doesn't exist: %s",
-                             chunkIdStr.c_str());
-            orphans.push_back(entry.chunkId);
-            continue;
-        }
-
-        chunkPathname = MakeChunkPathname(entry.chunkId);
-        res = stat(chunkPathname.c_str(), &buf);
-        if (res < 0)
-            continue;
-
-        // stat buf's st_size is of type off_t.  Typecast to avoid compiler warnings.
-        if (buf.st_size != (off_t) entry.chunkSize) {
-            KFS_LOG_VA_INFO("Truncating file: %s to size: %zd",
-                             chunkPathname.c_str(), entry.chunkSize);
-            if (truncate(chunkPathname.c_str(), entry.chunkSize) < 0) {
-                perror("Truncate");
-            }
-        }
-    }
-    
-    if (orphans.size() > 0) {
-        // Take a checkpoint after we are done replay
-        mIsChunkTableDirty = true;
-    }
-
-    // Get rid of the orphans---valid entries but no backing file
-    for (j = 0; j < orphans.size(); ++j) {
-
-        KFS_LOG_VA_DEBUG("Found orphan entry: %ld", orphans[j]);
-
-        iter = mChunkTable.find(orphans[j]);
-        if (iter != mChunkTable.end()) {
-            cih = iter->second;
-            mUsedSpace -= cih->chunkInfo.chunkSize;
-            mChunkTable.erase(orphans[j]);
-            delete cih;
-
-            mNumChunks--;
-            assert(mNumChunks >= 0);
-            if (mNumChunks < 0)
-                mNumChunks = 0;
-        }
-    }
-
-    // Get rid of zombies---backing file exists, but no entry in logs/ckpt
-    for (i = 0; i < numChunkFiles; ++i) {
-        if (namelist[i] == NULL)
-            // entry was found (above)
-            continue;
-        if ((strcmp(namelist[i]->d_name, ".") == 0) ||
-            (strcmp(namelist[i]->d_name, "..") == 0)) {
-            free(namelist[i]);
-            namelist[i] = NULL;
-            continue;
-        }
-
-        // zombie
-        chunkPathname = MakeChunkPathname(namelist[i]->d_name);
-
-        // there could be directories here...such as lost+found etc...
-        res = stat(chunkPathname.c_str(), &buf);
-        if ((res == 0) && (S_ISREG(buf.st_mode))) {
-            // let us figure out why we are seeing zombies...
-            // KFS_LOG_VA_FATAL("Found zombie entry...");
-
-            unlink(chunkPathname.c_str());
-            KFS_LOG_VA_DEBUG("Found zombie entry: %s", chunkPathname.c_str());
-        }
-
-        free(namelist[i]);
-        namelist[i] = NULL;
-    }
-
-    free(namelist);
-    if (mIsChunkTableDirty) {
-        Checkpoint();
-    }
-
-#ifdef DEBUG
-    assert((mUsedSpace >= 0) && (mUsedSpace <= mTotalSpace));
-    // if there are no chunks, used space better be 0
-    if (mChunkTable.size() == 0) {
-        assert(mUsedSpace == 0);
-        assert(mNumChunks == 0);
-    }
-#endif
-}
-#endif
-
 void
 ChunkManager::AddMapping(ChunkInfoHandle_t *cih)
 {
     mNumChunks++;
     mChunkTable[cih->chunkInfo.chunkId] = cih;
     mUsedSpace += cih->chunkInfo.chunkSize;
+    UpdateDirSpace(cih, cih->chunkInfo.chunkSize);
 }
 
 void
@@ -1706,46 +1666,71 @@ KFS::GetStaleChunkPath(const string &partition)
 }
 
 int64_t
-ChunkManager::GetTotalSpace() const
+ChunkManager::GetTotalSpace() 
 {
-
-    int64_t availableSpace;
-    if (mChunkDirs.size() > 1) {
-        return mTotalSpace;
-    }
-
-    // report the space based on availability
-#if defined(__APPLE__) || defined(__sun__) || (!defined(__i386__))
-    struct statvfs result;
-
-    if (statvfs(mChunkDirs[0].c_str(), &result) < 0) {
-        KFS_LOG_VA_DEBUG("statvfs failed...returning %ld", mTotalSpace);
-        return mTotalSpace;
-    }
-#else
-    // we are on i386 on linux
-    struct statvfs64 result;
-
-    if (statvfs64(mChunkDirs[0].c_str(), &result) < 0) {
-        KFS_LOG_VA_DEBUG("statvfs failed...returning %ld", mTotalSpace);
-        return mTotalSpace;
-    }
-
-#endif
-
-    if (result.f_frsize == 0)
-        return mTotalSpace;
-
 #if defined(__APPLE__)
+    for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
+        mChunkDirs[i].availableSpace = mTotalSpace;
+    }
     return mTotalSpace;
 #endif
 
-    // result.* is how much is available on disk; mUsedSpace is how
-    // much we used up with chunks; so, the total storage available on
-    // the drive is the sum of the two.  if we don't add mUsedSpace,
-    // then all the chunks we write will get use the space on disk and
-    // won't get acounted for in terms of drive space.
-    availableSpace = result.f_bavail * result.f_frsize + mUsedSpace;
+    int64_t availableSpace = 0;
+    set<unsigned long> seenDrives;
+
+
+    for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
+        // report the space based on availability
+#if defined(__APPLE__) || defined(__sun__) || (!defined(__i386__))
+        struct statvfs result;
+
+        if (statvfs(mChunkDirs[i].dirname.c_str(), &result) < 0) {
+            int err = errno;
+            KFS_LOG_VA_INFO("statvfs failed on %s with error: %d", mChunkDirs[i].dirname.c_str(), err);
+            mChunkDirs[i].availableSpace = 0;
+            if (err == EIO) {
+                // We can't stat the directory.
+                // Notify metaserver that all blocks on this
+                // drive are lost
+                NotifyMetaChunksLost(mChunkDirs[i].dirname);
+            }
+            continue;
+        }
+#else
+        // we are on i386 on linux
+        struct statvfs64 result;
+
+        if (statvfs64(mChunkDirs[i].dirname.c_str(), &result) < 0) {
+            int err = errno;
+            KFS_LOG_VA_INFO("statvfs failed on %s with error: %d", mChunkDirs[i].dirname.c_str(), err);
+            mChunkDirs[i].availableSpace = 0;
+            if (err == EIO) {
+                // We can't stat the directory.
+                // Notify metaserver that all blocks on this
+                // drive are lost
+                NotifyMetaChunksLost(mChunkDirs[i].dirname);
+            }
+            continue;
+        }
+#endif
+
+        if (seenDrives.find(result.f_fsid) != seenDrives.end()) {
+            // if we have seen the drive where this directory is, then
+            // we have already accounted for how much is free on the drive
+            availableSpace += mChunkDirs[i].usedSpace;
+            mChunkDirs[i].availableSpace = result.f_bavail * result.f_frsize + mChunkDirs[i].usedSpace;
+        } else {
+            // result.* is how much is available on disk; mUsedSpace is how
+            // much we used up with chunks; so, the total storage available on
+            // the drive is the sum of the two.  if we don't add mUsedSpace,
+            // then all the chunks we write will get to use the space on disk and
+            // won't get acounted for in terms of drive space.
+            mChunkDirs[i].availableSpace = result.f_bavail * result.f_frsize + mChunkDirs[i].usedSpace;
+            availableSpace += result.f_bavail * result.f_frsize + mChunkDirs[i].usedSpace;
+            seenDrives.insert(result.f_fsid);
+        }
+        KFS_LOG_VA_DEBUG("Dir: %s has space %ld", mChunkDirs[i].dirname.c_str(), mChunkDirs[i].availableSpace);
+    }
     // we got all the info...so report true value
     return min(availableSpace, mTotalSpace);
 }
