@@ -556,6 +556,13 @@ ChunkManager::MakeChunkInfoFromPathname(const string &pathname, off_t filesz, Ch
     split(component, chunkFn, '.');
     assert(component.size() == 3);
 
+    chunkId_t chunkId = atoll(component[1].c_str());
+    if (GetChunkInfoHandle(chunkId, &cih) == 0) {
+        KFS_LOG_VA_INFO("Duplicate chunk (%lld) with path: %s", chunkId, pathname.c_str());
+        *result = NULL;
+        return;
+    }
+
     cih = new ChunkInfoHandle_t();    
     cih->chunkInfo.fileId = atoll(component[0].c_str());
     cih->chunkInfo.chunkId = atoll(component[1].c_str());
@@ -1232,6 +1239,10 @@ ChunkManager::Restore()
         MakeChunkInfoFromPathname(s, buf.st_size, &cih);
         if (cih != NULL)
             AddMapping(cih);
+        else {
+            KFS_LOG_VA_INFO("Deleting possibly duplicate file %s", s.c_str());
+            unlink(s.c_str());
+        }
     }
 }
 

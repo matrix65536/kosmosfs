@@ -74,7 +74,7 @@ ChunkServer::Init()
     imreq.imr_multiaddr.s_addr = inet_addr("226.0.0.1");
     imreq.imr_interface.s_addr = INADDR_ANY; // use DEFAULT interface
 
-    mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
+    // mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
 }
 
 void
