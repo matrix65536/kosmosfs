@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 #
+# $Id: //depot/main/platform/kosmosfs/scripts.solaris/kfsfsck.py#0 $
+#
 # Copyright 2008 Quantcast Corp.
 #
 # This file is part of Kosmos File System (KFS).
@@ -262,8 +264,9 @@ def dumpMetaServerChunkMap(metaServer, dumpMetaFile, defaultMetaFile, defaultChe
     # Get latest checkpoint file
     # Gzip latest file and copy it locally
     print "Compressing latest checkpoint %s on %s" % (defaultCheckPoint, metaServer.node)
-    command = "mkdir ./checkpointdir"
-    os.system(command)
+    if not os.path.exists("./checkpointdir"):
+        command = "mkdir ./checkpointdir"
+        os.system(command)
     command = "ssh -o StrictHostKeyChecking=no %s gzip -c %s > ./checkpointdir/latest.gz" % (metaServer.node, defaultCheckPoint)
     os.system(command)
 
@@ -308,20 +311,8 @@ def dumpMetaServerChunkMap(metaServer, dumpMetaFile, defaultMetaFile, defaultChe
     command = "ln -s %s chunkmap.txt" % (dumpMetaFile)
     os.system(command)
         
-
+ 
 def usage():
-    print "Usage : ./kfsfsck --file machines.cfg [--machines machines] [--verbose] \n"
-    print "Example : ./kfsfsck -f machines.cfg"
-    print "          Would ask metaserver to dump chunk map, get it locally "
-    print "          and does basic replica checking displaying stats about "
-    print "          Chunks"
-    print "                "
-    print "          -f : kfs cluster config file"
-    print "          -m : chunk server machine list"
-    print "          -v : verbose mode"
-
-
-def usageFull():
     print "Usage : ./kfsfsck --file machines.cfg [--machines machines] [--verbose] [--replicacheck --builddir builddir --networkdef networkdef [--checksize] [--lostfound] [--delete]]\n"
     print "Example : ./kfsfsck -f machines.cfg"
     print "          Would ask metaserver to dump chunk map, get it locally "
