@@ -40,12 +40,12 @@ nodesWithDiskErrors = 0
 metaserverPort = 20000
 docRoot = '.'
 
-class ServerLocation():
+class ServerLocation:
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
         self.status = 0
 
-class SystemInfo():
+class SystemInfo:
     def __init__(self):
         self.startedAt = ""
         self.totalSpace = 0
