@@ -495,7 +495,10 @@ ChunkManager::GetDirForChunk()
     bool found = false;
     for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
         dirToUse = (mLastDriveChosen + i + 1) % mChunkDirs.size();
-        if (mChunkDirs[dirToUse].availableSpace > (off_t) CHUNKSIZE) {
+        if ((mChunkDirs[dirToUse].availableSpace == 0) ||
+            ((mChunkDirs[dirToUse].availableSpace - mChunkDirs[dirToUse].usedSpace) < (off_t) CHUNKSIZE)) {
+            continue;
+        } else {
             found = true;
             break;
         }
