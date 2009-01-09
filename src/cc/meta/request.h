@@ -1097,7 +1097,7 @@ extern void printleaves();
 extern void ChangeIncarnationNumber(MetaRequest *r);
 extern void RegisterCounters();
 extern void setClusterKey(const char *key);
-extern void setMD5Sum(const char *md5sum);
+extern void setMD5SumFn(const char *md5sumFn);
 extern void setWORMMode(bool value);
 
 }

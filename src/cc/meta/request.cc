@@ -40,6 +40,7 @@
 using std::map;
 using std::string;
 using std::istringstream;
+using std::ifstream;
 using std::min;
 
 using namespace KFS;
@@ -99,7 +100,7 @@ OpCounterMap gCounters;
 
 // see the comments in setClusterKey()
 string gClusterKey;
-string gMD5Sum;
+string gMD5SumFn;
 bool gWormMode = false;
 
 static bool
@@ -203,16 +204,18 @@ KFS::setClusterKey(const char *key)
 }
 
 /*
- * Set the acceptable MD5Sum for binaries for this cluster.  All chunkservers connecting to
- * the metaserver should provide this MD5Sum in the hello message.  This allows
- * us to tell if there is any chunkserver that missed a binary update and should
- * not be allowed to join the cluster.
- * @param[in] md5sum  The desired MD5Sum 
+ * A way of doing admission control on chunkservers is to ensure that they run
+ * an "approved" binary.  The approved list is defined by the MD5Sum of the
+ * binary in an MD5Sum file.  All chunkservers connecting to 
+ * the metaserver should provide their md5sum in the hello message.  If the
+ * md5sum is in the approved list, then the chunkserver is admitted to the
+ * system.
+ * @param[in] md5sumFn  The filename with the list of MD5Sums
 */
 void
-KFS::setMD5Sum(const char *md5sum)
+KFS::setMD5SumFn(const char *md5sumFn)
 {
-	gMD5Sum = md5sum;
+	gMD5SumFn = md5sumFn;
 }
 
 /*
@@ -1916,6 +1919,42 @@ parseHandlerExecuteRebalancePlan(Properties &prop, MetaRequest **r)
 }
 
 /*!
+ * \brief Validate that the md5 sent by a chunkserver matches one of the
+ * acceptable md5's.
+ */
+static int
+isValidMD5Sum(const string &md5sum)
+{
+	if (!file_exists(gMD5SumFn)) {
+		KFS_LOG_VA_INFO("MD5Sum file %s doesn't exist; no admission control", gMD5SumFn.c_str());
+		return 1;
+	}
+	ifstream ifs;
+	const int MAXLINE = 512;
+	char line[MAXLINE];
+
+	ifs.open(gMD5SumFn.c_str());
+
+	if (ifs.fail()) {
+		KFS_LOG_VA_INFO("Unable to open MD5Sum file %s; no admission control", gMD5SumFn.c_str());
+		return 1;
+	}
+
+	while (!ifs.eof()) {
+		ifs.getline(line, MAXLINE);
+		string key = line;
+		// remove trailing white space
+		string::size_type spc = key.find(' ');
+		if (spc != string::npos)
+			key.erase(spc);
+		if (key == md5sum)
+			return 1;
+	}
+
+	return 0;
+}
+
+/*!
  * \brief Parse out the headers from a HELLO message.  The message
  * body contains the id's of the chunks hosted on the server.
  */
@@ -1940,9 +1979,9 @@ parseHandlerHello(Properties &prop, MetaRequest **r)
 		hello->status = -EBADCLUSTERKEY;
 	}
 	key = prop.getValue("MD5Sum", "");
-	if (key != gMD5Sum) {
-		KFS_LOG_VA_INFO("MD5sum mismatch: we have %s, chunkserver sent us %s",
-				gMD5Sum.c_str(), key.c_str());
+	if (!isValidMD5Sum(key)) {
+		KFS_LOG_VA_INFO("MD5sum mismatch from chunkserver %s:%d: it sent us %s",
+				hello->location.hostname.c_str(), hello->location.port, key.c_str());
 		hello->status = -EBADCLUSTERKEY;
 	}
 	hello->totalSpace = prop.getValue("Total-space", (long long) 0);

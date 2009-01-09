@@ -154,9 +154,9 @@ ReadMetaServerProperties(char *fileName)
 	cout << "Setting cluster key to: " << clusterKey << endl;
 	setClusterKey(clusterKey);
 
-	const char *md5sum = gProp.getValue("metaServer.md5sum", "");
-	cout << "Setting md5sum to: " << md5sum << endl;
-	setMD5Sum(md5sum);
+	const char *md5sumFn = gProp.getValue("metaServer.md5sumFilename", "");
+	cout << "Setting md5sumFilename to: " << md5sumFn << endl;
+	setMD5SumFn(md5sumFn);
 
 	// min # of chunkservers that should connect to exit recovery mode
 	gMinChunkservers = gProp.getValue("metaServer.minChunkservers", 1);
