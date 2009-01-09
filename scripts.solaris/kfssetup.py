@@ -26,6 +26,7 @@
 
 import os,sys,os.path,getopt
 import socket,threading,popen2
+import md5
 from ConfigParser import ConfigParser
 
 # Use the python config parser to parse out machines setup
@@ -62,6 +63,7 @@ unitsScale = {'g' : 1 << 30, 'm' : 1 << 20, 'k' : 1 << 10, 'b' : 1}
 tarProg = 'gtar'
 maxConcurrent = 25
 chunkserversOnly = 0
+md5String = ""
 
 def setupMeta(section, config, outputFn, packageFn):
     """ Setup the metaserver binaries/config files on a node. """
@@ -88,6 +90,8 @@ def setupMeta(section, config, outputFn, packageFn):
     if config.has_option(section, 'numservers'):
         print >> fh, "metaServer.minChunkservers = %s" % config.get(section, 'numservers')
 
+    if config.has_option(section, 'md5sumfilename'):
+        print >> fh, "metaServer.md5sumFilename = %s" % config.get(section, 'md5sumfilename')
     fh.close()
 
     if config.has_option(section, 'webuiConfFile'):
@@ -121,6 +125,7 @@ def setupChunkConfig(section, config, outputFn):
     print >> fh, "chunkServer.clientPort = %d" % config.getint(section, 'baseport')
     print >> fh, "chunkServer.clusterKey = %s" % config.get('metaserver', 'clusterkey')
     print >> fh, "chunkServer.rackId = %d" % (rackId)
+    print >> fh, "chunkServer.md5sum = %s" % (md5String)
 
     space = config.get(section, 'space')
     s = space.split()
@@ -174,21 +179,38 @@ def copyDir(srcDir, dstDir):
     cmd = "cp -r %s %s" % (srcDir, dstDir)
     os.system(cmd)
 
+def computeMD5(datadir, digest):
+    """Update the MD5 digest using the MD5 of all the files in a directory"""
+    files = os.listdir(datadir)
+    for f in sorted(files):
+        path = os.path.join(datadir, f)
+        if os.path.isdir(path):
+            continue
+        fh = open(path, 'r')
+        while 1:
+            buf = fh.read(4096)
+            if buf == "":
+                break
+            digest.update(buf)
     
 def getFiles(buildDir, webuidir):
     """ Copy files from buildDir/bin, buildDir/lib and . to ./bin, ./lib, and ./scripts
     respectively."""
-
+    global md5String
     cmd = "mkdir -p ./scripts; cp ./* scripts; chmod u+w scripts/*"
     os.system(cmd)
     s = "%s/bin" % buildDir
     if (os.path.exists(s + "/amd64")):
         s += "/amd64"
     copyDir(s, './bin')
+    digest = md5.new()
+    computeMD5('./bin', digest)
     s = "%s/lib" % buildDir
     if (os.path.exists(s + "/amd64")):
         s += "/amd64"
     copyDir(s, './lib')
+    computeMD5('./lib', digest)
+    md5String = digest.hexdigest()
     copyDir(webuidir, './webui')
 
 def cleanup(fn):

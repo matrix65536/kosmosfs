@@ -29,6 +29,7 @@ installServer()
     if [ -d $serverDir ] && [ -f $serverDir/bin/$serverBinary ] ;
 	then
 	    echo "$serverBinary exists...skipping"
+	    return 0
     fi
 
     if [ ! -d $serverDir ]; 

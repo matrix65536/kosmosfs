@@ -54,6 +54,14 @@ startServer()
     bin/$server $config $SERVER_LOG_FILE > /dev/null 2>&1 &
     echo $! > $SERVER_PID_FILE
 
+    # no need to start cleaner on chunkservers
+    if [ "$server" = "chunkserver" ];
+	then
+	RETVAL=$?
+	echo
+	return $RETVAL
+    fi
+
     if [ ! -e $CLEANER_PID_FILE ];
 	then
 	echo "Starting cleaner..."
