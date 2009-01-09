@@ -110,6 +110,7 @@ SET(Fuse_INCLUDE_DIR "")
 # include dirs
 include_directories( ${Boost_INCLUDE_DIRS} ${Log4cpp_INCLUDE_DIR} src/cc)
 
+
 # get the subdirs we want
 add_subdirectory (src/cc/common)
 add_subdirectory (src/cc/meta)
@@ -118,6 +119,8 @@ add_subdirectory (src/cc/libkfsClient)
 add_subdirectory (src/cc/libkfsIO)
 add_subdirectory (src/cc/tools)
 add_subdirectory (src/cc/tests)
+add_subdirectory (src/cc/emulator)
+#add_subdirectory (src/cc/telemetry)
 
 IF (NOT ${JAVA_INCLUDE_PATH} STREQUAL "")
    message(STATUS "Found JNI...building kfs_access")
