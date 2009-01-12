@@ -454,9 +454,8 @@ int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
     // setup the telemetry stuff...
     struct ip_mreq imreq;
     string srvIp = "10.2.0.10";
-    // string srvIp = "10.10.1.61";
-    int srvPort = 12000;
-    int multicastPort = 13000;
+    // int srvPort = 12000;
+    //int multicastPort = 13000;
 
     imreq.imr_multiaddr.s_addr = inet_addr("226.0.0.1");
     imreq.imr_interface.s_addr = INADDR_ANY; // use DEFAULT interface
@@ -1278,7 +1277,7 @@ KfsClientImpl::Sync(int fd)
 {
     MutexLock l(&mMutex);
 
-    if (!valid_fd(fd))
+    if ((!valid_fd(fd)) || (mFileTable[fd] == NULL))
 	return -EBADF;
 
     if (mFileTable[fd]->buffer.dirty) {
