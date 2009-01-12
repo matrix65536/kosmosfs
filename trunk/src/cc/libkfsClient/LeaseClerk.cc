@@ -126,8 +126,6 @@ LeaseClerk::LeaseRelinquished(kfsChunkId_t chunkId)
     if (!IsLeaseValid(chunkId))
         return;
 
-    // is a valid lease; so, notify metaserver
-    time_t now = time(0);
     LeaseMapIter iter = mLeases.find(chunkId);
     LeaseInfo_t lease = iter->second;
 
