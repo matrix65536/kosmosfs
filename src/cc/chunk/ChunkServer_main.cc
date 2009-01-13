@@ -28,6 +28,9 @@ extern "C" {
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/mman.h>
+#include <openssl/hmac.h>
+#include <openssl/md5.h>
 }
 
 #include <string>
@@ -62,7 +65,7 @@ int gChunkServerRackId;
 int gChunkServerCleanupOnStart;
 
 int ReadChunkServerProperties(char *fileName);
-
+static void computeMD5(const char *pathname);
 
 int
 main(int argc, char **argv)
@@ -96,6 +99,11 @@ main(int argc, char **argv)
     // would like to limit to 200MB outstanding
     // globals().netManager.SetBacklogLimit(200 * 1024 * 1024);
 
+    // compute the MD5 of the binary
+    computeMD5(argv[0]);
+
+    cout << "md5sum that send to metaserver: " << gMD5Sum << endl;
+
     gChunkServer.Init();
     gChunkManager.Init(gChunkDirs, gTotalSpace);
     gLogger.Init(gLogDir);
@@ -112,6 +120,33 @@ main(int argc, char **argv)
     gChunkServer.MainLoop(gChunkServerClientPort);
 
     return 0;
+}
+
+static void
+computeMD5(const char *pathname)
+{
+    MD5_CTX ctx;
+    struct stat s;
+    int fd;
+    unsigned char md5sum[MD5_DIGEST_LENGTH];
+
+    if (stat(pathname, &s) != 0)
+	return;
+    
+    fd = open(pathname, O_RDONLY);
+    MD5_Init(&ctx);
+    unsigned char *buf = (unsigned char *) mmap(0, s.st_size, PROT_EXEC, MAP_SHARED, fd, 0);
+    if (buf != NULL) {
+        MD5(buf, s.st_size, md5sum);
+        munmap(buf, s.st_size);
+        char md5digest[2 * MD5_DIGEST_LENGTH + 1];
+        md5digest[2 * MD5_DIGEST_LENGTH] = '\0';
+        for (uint32_t i = 0; i < MD5_DIGEST_LENGTH; i++)
+            sprintf(md5digest + i * 2, "%02x", md5sum[i]);
+        gMD5Sum = md5digest;
+        cout << "md5sum calculated from binary: " << gMD5Sum << endl;
+    }
+    close(fd);
 }
 
 static bool
@@ -213,9 +248,10 @@ ReadChunkServerProperties(char *fileName)
 
     gClusterKey = gProp.getValue("chunkServer.clusterKey", "");
     cout << "using cluster key = " << gClusterKey << endl;
-
-    gMD5Sum = gProp.getValue("chunkServer.md5sum", "");
-    cout << "md5sum that send to metaserver: " << gMD5Sum << endl;
+    
+    if (gMD5Sum == "") {
+        gMD5Sum = gProp.getValue("chunkServer.md5sum", "");
+    }
 
     logLevel = gProp.getValue("chunkServer.loglevel", defLogLevel);
     if (logLevel == "INFO")
