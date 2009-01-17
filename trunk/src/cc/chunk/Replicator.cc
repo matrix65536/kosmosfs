@@ -131,14 +131,14 @@ Replicator::Read()
         return;
     }
 
+    SET_HANDLER(this, &Replicator::HandleReadDone);
+
     mReadOp.seq = mPeer->NextSeqnum();
     mReadOp.status = 0;
     mReadOp.offset = mOffset;
     // read an MB 
     mReadOp.numBytes = 1 << 20;
     mPeer->Enqueue(&mReadOp);
-    
-    SET_HANDLER(this, &Replicator::HandleReadDone);
 }
 
 int
