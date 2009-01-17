@@ -153,8 +153,15 @@ static bool
 make_if_needed(const char *dirname)
 {
     struct stat s;
+    int res = stat(dirname, &s);
 
-    if (stat(dirname, &s) == 0 && S_ISDIR(s.st_mode))
+    if (res < 0) {
+        // stat failed; maybe the drive is down.  Keep going
+        cout << "Stat on dir: " << dirname  << " failed.  Moving on..." << endl;
+        return true;
+    }
+
+    if ((res == 0) && S_ISDIR(s.st_mode))
 	return true;
 
     return mkdir(dirname, 0755) == 0;
