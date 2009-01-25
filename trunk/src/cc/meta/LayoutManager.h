@@ -369,6 +369,10 @@ namespace KFS
 		/// Dump out the chunk location map to a string stream.
 		void DumpChunkToServerMap(ostringstream &os);
 
+		/// Dump out the list of chunks that are currently replication
+		/// candidates.
+		void DumpChunkReplicationCandidates(ostringstream &os);
+
                 /// Ask each of the chunkserver's to dispatch pending RPCs
 		void Dispatch();
 
@@ -466,6 +470,13 @@ namespace KFS
 		/// we'd like to turn off rebalancing.  We can enable it a
 		/// suitable time.
 		bool mIsRebalancingEnabled;
+
+		/// For the purposes of rebalancing, what is the range we want 
+		/// a node to be in.  If a node is outside the range, it is
+		/// either underloaded (in which case, it can take blocks) or it
+		/// is overloaded (in which case, it can give up blocks).
+		double mMaxRebalanceSpaceUtilThreshold;
+		double mMinRebalanceSpaceUtilThreshold;
 
 		/// Set when a rebalancing plan is being excuted.
 		bool mIsExecutingRebalancePlan;

@@ -129,6 +129,7 @@ Logger::finishLog()
 	time_t t = time(NULL);
 
 	file << "time/" << ctime(&t);
+	file.flush();
 	file.close();
 	link_latest(logname, LASTLOG);
 	if (file.fail())
