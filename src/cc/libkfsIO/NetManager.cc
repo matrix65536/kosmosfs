@@ -92,11 +92,32 @@ NetManager::UnRegisterTimeoutHandler(ITimeout *handler)
          ++iter) {
         tm = *iter;
         if (tm == handler) {
-            mTimeoutHandlers.erase(iter);
+            mUnregisteredTimeoutHandlers.push_back(tm);
             return;
         }
     }
 }
+
+void
+NetManager::RemoveUnregisteredTimeoutHandlers()
+{
+    list<ITimeout *>::iterator iter1, iter2;
+    ITimeout *i1, *i2;
+
+    for (iter1 = mUnregisteredTimeoutHandlers.begin(); iter1 != mUnregisteredTimeoutHandlers.end(); ++iter1) {
+        for (iter2 = mTimeoutHandlers.begin(); iter2 != mTimeoutHandlers.end(); ++iter2) {
+            i1 = *iter1;
+            i2 = *iter2;
+            if (i1 == i2) {
+                mTimeoutHandlers.erase(iter2);
+                break;
+            }
+        }
+    }
+    mUnregisteredTimeoutHandlers.clear();
+}
+
+
 
 void
 NetManager::MainLoop()
@@ -200,8 +221,20 @@ NetManager::MainLoop()
             globals().netKicker.Drain();
             globals().diskManager.ReapCompletedIOs();
         }
+
+        RemoveUnregisteredTimeoutHandlers();
+        //
+        // This call can cause a handler to unregister itself.  Doing
+        // that while we are iterating thru this list is fatal.
+        // Hence, when a handler unregisters itself, we put that
+        // handler into a separate list.  After we called all the
+        // handlers, we cleanout the unregistered handlers.
+        //
+
         for_each (mTimeoutHandlers.begin(), mTimeoutHandlers.end(), 
                   mem_fun(&ITimeout::TimerExpired));
+
+        RemoveUnregisteredTimeoutHandlers();
 
         iter = mConnections.begin();
         while (iter != mConnections.end()) {

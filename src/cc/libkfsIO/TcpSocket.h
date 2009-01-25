@@ -116,6 +116,8 @@ public:
     bool IsGood();
 
     int GetPeerName(struct sockaddr *peerAddr);
+    /// Return the peer's IP address as a string
+    std::string GetPeerName();
 
     /// Sends at-most the specified # of bytes.  
     /// @retval Returns the result of calling send().

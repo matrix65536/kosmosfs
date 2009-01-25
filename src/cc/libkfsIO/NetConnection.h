@@ -113,6 +113,8 @@ public:
 
     int GetFd() { return mSock->GetFd(); }
 
+    std::string GetPeerName() { return mSock->GetPeerName(); }
+
     /// Callback for handling a read.  That is, select() thinks that
     /// data is available for reading. So, do something.  If system is
     /// overloaded and we don't have a special pass, leave the data in
