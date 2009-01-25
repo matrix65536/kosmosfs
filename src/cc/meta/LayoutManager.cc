@@ -82,9 +82,16 @@ public:
 	}
 };
 
+
+/// The rebalancing thresholds should be set in the emulator to get desired
+/// behavior.
+
 LayoutManager::LayoutManager() :
 	mLeaseId(1), mNumOngoingReplications(0),
-	mIsRebalancingEnabled(false), mIsExecutingRebalancePlan(false),
+	mIsRebalancingEnabled(false), 
+	mMaxRebalanceSpaceUtilThreshold(0.0),
+	mMinRebalanceSpaceUtilThreshold(0.0),
+	mIsExecutingRebalancePlan(false),
 	mLastChunkRebalanced(1), mLastChunkReplicated(1),
 	mRecoveryStartTime(0), mMinChunkserversToExitRecovery(1)
 {
@@ -182,7 +189,7 @@ LayoutManager::AddNewServer(MetaHello *r)
 				// get the chunksize for the last chunk of fid
 				// stored on this server
 				MetaFattr *fa = metatree.getFattr(r->chunks[i].fileId);
-				if (fa->filesize < 0) {
+				if ((fa->filesize < 0) || (fa->filesize < (off_t) (fa->chunkcount * CHUNKSIZE))) {
 					MetaChunkInfo *lastChunk = v.back();
 					if (lastChunk->chunkId == r->chunks[i].chunkId)
 						s->GetChunkSize(r->chunks[i].fileId,
@@ -339,6 +346,16 @@ public:
 	}
 };
 
+class PrintChunkServerInfo {
+	ofstream &ofs;
+public:
+	PrintChunkServerInfo(ofstream &o) : ofs(o) { }
+	void operator() (ChunkServerPtr &c) {
+		ofs << c->ServerID() << ' ' << c->GetRack() << ' '
+			<< c->GetTotalSpace() << ' ' << c->GetUsedSpace() << endl;
+	}
+};
+
 //
 // Dump out the chunk block map to a file.  The output can be used in emulation
 // modes where we setup the block map and experiment.
@@ -348,12 +365,34 @@ LayoutManager::DumpChunkToServerMap()
 {
 	ofstream ofs;
 
+	//
+	// to make offline rebalancing/re-replication easier, dump out where the
+	// servers are and how much space each has.
+	//
+	ofs.open("network.def");
+	for_each(mChunkServers.begin(), mChunkServers.end(),
+		PrintChunkServerInfo(ofs));
+	ofs.flush();
+	ofs.close();
+
+
 	ofs.open("chunkmap.txt");
 
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
 		MapDumper(ofs));
 	ofs.flush();
 	ofs.close();
+}
+
+void
+LayoutManager::DumpChunkReplicationCandidates(ostringstream &os)
+{
+	chunkId_t chunkId;
+	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin();
+		citer != mChunkReplicationCandidates.end(); ++citer) {
+		chunkId = *citer;
+		os << chunkId << ' ';
+	}
 }
 
 // Dump chunk block map to response stream
@@ -2053,10 +2092,11 @@ LayoutManager::IsChunkHostedOnServer(const vector<ChunkServerPtr> &hosters,
 }
 
 class LoadedServerPred {
+	double maxServerSpaceUtilThreshold;
 public:
-	LoadedServerPred() { }
+	LoadedServerPred(double m) : maxServerSpaceUtilThreshold(m) { }
 	bool operator()(const ChunkServerPtr &s) const {
-		return s->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD;
+		return s->GetSpaceUtilization() > maxServerSpaceUtilThreshold;
 	}
 };
 
@@ -2076,7 +2116,7 @@ LayoutManager::FindIntraRackRebalanceCandidates(vector<ChunkServerPtr> &candidat
 		vector<ChunkServerPtr> servers;
 
 		if (clli.chunkServers[i]->GetSpaceUtilization() <
-			MAX_SERVER_SPACE_UTIL_THRESHOLD) {
+			mMaxRebalanceSpaceUtilThreshold) {
 			continue;
 		}
 		//we have a loaded server; find another non-loaded
@@ -2170,9 +2210,9 @@ LayoutManager::RebalanceServers()
 	for (uint32_t i = 0; i < servers.size(); i++) {
 		if (servers[i]->IsRetiring())
 			continue;
-		if (servers[i]->GetSpaceUtilization() < MIN_SERVER_SPACE_UTIL_THRESHOLD)
+		if (servers[i]->GetSpaceUtilization() < mMinRebalanceSpaceUtilThreshold)
 			nonloadedServers.push_back(servers[i]);
-		else if (servers[i]->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD)
+		else if (servers[i]->GetSpaceUtilization() > mMaxRebalanceSpaceUtilThreshold) 
 			loadedServers.push_back(servers[i]);
 	}
 
@@ -2200,8 +2240,10 @@ LayoutManager::RebalanceServers()
 		if (allbusy)
 			break;
 
-		if (numBlocksMoved > 200)
+		if (numBlocksMoved > 200) {
+			allbusy = true;
 			break;
+		}
 
 		chunkId_t chunkId = iter->first;
 		ChunkPlacementInfo &clli = iter->second;
@@ -2210,7 +2252,7 @@ LayoutManager::RebalanceServers()
 		// chunk could be moved around if it is hosted on a loaded server
 		vector<ChunkServerPtr>::const_iterator csp;
 		csp = find_if(clli.chunkServers.begin(), clli.chunkServers.end(),
-				LoadedServerPred());
+				LoadedServerPred(mMaxRebalanceSpaceUtilThreshold));
 		if (csp == clli.chunkServers.end())
 			continue;
 

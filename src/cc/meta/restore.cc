@@ -139,6 +139,7 @@ restore_fattr(deque <string> &c)
 	FileType type;
 	fid_t fid;
 	long long chunkcount;
+	off_t filesize = -1;
 	struct timeval mtime, ctime, crtime;
 	int16_t numReplicas;
 
@@ -151,6 +152,9 @@ restore_fattr(deque <string> &c)
 	ok = pop_time(crtime, "crtime", c, ok);
 	if (!ok)
 		return false;
+	// filesize is optional; if it isn't there, we can re-compute
+	// by asking the chunkservers
+	bool gotfilesize = pop_offset(filesize, "filesize", c, true);
 
 	if (numReplicas < minReplicasPerFile)
 		numReplicas = minReplicasPerFile;
@@ -161,6 +165,8 @@ restore_fattr(deque <string> &c)
 	// and the checkpoint contains the newly added chunk.
 	MetaFattr *f = new MetaFattr(type, fid, mtime, ctime, crtime, 
 					0, numReplicas);
+	if (gotfilesize)
+		f->filesize = filesize;
 	return (metatree.insert(f) == 0);
 }
 

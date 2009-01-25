@@ -99,8 +99,9 @@ MetaFattr::show() const
 	return "fattr/" + fname[type] + "/id/" + toString(id()) +
 		"/chunkcount/" + toString(chunkcount) 
 		+ "/numReplicas/" + toString(numReplicas) 
-		+ "/mtime/" + showtime(mtime) +
-		"/ctime/" + showtime(ctime) + "/crtime/" + showtime(crtime);
+		+ "/mtime/" + showtime(mtime) 
+		+ "/ctime/" + showtime(ctime) + "/crtime/" + showtime(crtime) 
+		+ "/filesize/" + toString(filesize);
 }
 
 void

@@ -82,6 +82,7 @@ static int parseHandlerHello(Properties &prop, MetaRequest **r);
 static int parseHandlerPing(Properties &prop, MetaRequest **r);
 static int parseHandlerStats(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r);
+static int parseHandlerDumpChunkReplicationCandidates(Properties &prop, MetaRequest **r);
 static int parseHandlerOpenFiles(Properties &prop, MetaRequest **r);
 static int parseHandlerToggleWORM(Properties &prop, MetaRequest **r);
 static int parseHandlerUpServers(Properties &prop, MetaRequest **r);
@@ -918,6 +919,8 @@ handle_chunk_size_done(MetaRequest *r)
 			fa->filesize = (fa->chunkcount - 1) * CHUNKSIZE +
 					req->chunkSize;
 		}
+		// stash the value away so that we can log it.
+		req->filesize = fa->filesize;
 	}
 	req->status = 0;
 }
@@ -964,6 +967,18 @@ handle_dump_chunkToServerMap(MetaRequest *r)
 	req->status = 0;
 
 	gLayoutManager.DumpChunkToServerMap();
+}
+
+static void
+handle_dump_chunkReplicationCandidates(MetaRequest *r)
+{
+	MetaDumpChunkReplicationCandidates *req = static_cast <MetaDumpChunkReplicationCandidates *>(r);
+	ostringstream os;
+
+	req->status = 0;
+
+	gLayoutManager.DumpChunkReplicationCandidates(os);
+	req->blocks = os.str();
 }
 
 static void
@@ -1036,6 +1051,7 @@ setup_handlers()
 	handler[META_PING] = handle_ping;
 	handler[META_STATS] = handle_stats;
 	handler[META_DUMP_CHUNKTOSERVERMAP] = handle_dump_chunkToServerMap;
+	handler[META_DUMP_CHUNKREPLICATIONCANDIDATES] = handle_dump_chunkReplicationCandidates;
 	handler[META_OPEN_FILES] = handle_open_files;
 	handler[META_UPSERVERS] = handle_upservers;
 
@@ -1072,6 +1088,7 @@ setup_handlers()
 	gParseHandlers["TOGGLE_WORM"] = parseHandlerToggleWORM;
 	gParseHandlers["STATS"] = parseHandlerStats;
 	gParseHandlers["DUMP_CHUNKTOSERVERMAP"] = parseHandlerDumpChunkToServerMap;
+	gParseHandlers["DUMP_CHUNKREPLICATIONCANDIDATES"] = parseHandlerDumpChunkReplicationCandidates;
 	gParseHandlers["OPEN_FILES"] = parseHandlerOpenFiles;
 }
 
@@ -1446,12 +1463,16 @@ MetaChunkReplicate::log(ofstream &file) const
 
 /*!
  * \brief When asking a chunkserver for a chunk's size, there is
- * nothing to log.
+ * write out the estimate of the file's size.
  */
 int
 MetaChunkSize::log(ofstream &file) const
 {
-	return 0;
+	if (filesize < 0)
+		return 0;
+
+	file << "size/file/" << fid << "/filesize/" << filesize << '\n';
+	return file.fail() ? -EIO : 0;
 }
 
 /*!
@@ -1490,6 +1511,14 @@ MetaDumpChunkToServerMap::log(ofstream &file) const
 	return 0;
 }
 
+/*!
+ * \brief for a dump chunk replication candidates request, there is nothing to log
+ */
+int
+MetaDumpChunkReplicationCandidates::log(ofstream &file) const
+{
+	return 0;
+}
 
 /*!
  * \brief for an open files request, there is nothing to log
@@ -2131,6 +2160,18 @@ parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r)
 }
 
 /*!
+ * \brief Parse out a dump chunk replication candidates request.
+ */
+int
+parseHandlerDumpChunkReplicationCandidates(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+
+	*r = new MetaDumpChunkReplicationCandidates(seq);
+	return 0;
+}
+
+/*!
  * \brief Parse out the headers from a STATS message.
  */
 int
@@ -2530,6 +2571,17 @@ MetaDumpChunkToServerMap::response(ostringstream &os)
 	if (v.str().length() > 0)
 	    os << v.str();
 	*/
+}
+
+void
+MetaDumpChunkReplicationCandidates::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n";
+	os << "Content-length: " << blocks.length() << "\r\n\r\n";
+	if (blocks.length() > 0)
+		os << blocks;
 }
 
 void

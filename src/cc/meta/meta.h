@@ -139,8 +139,8 @@ public:
 	struct timeval ctime;	//!< attribute change time
 	struct timeval crtime;	//!< creation time
 	long long chunkcount;	//!< number of constituent chunks
-	//!< size of file: is only a hint; if we don't the size, the client will
-	//!< compute the size whenever needed.  this is not saved to disk
+	//!< size of file: is only a hint; if we don't have the size, the client will
+	//!< compute the size whenever needed.  
 	off_t filesize;		
 
 	MetaFattr(FileType t, fid_t id, int16_t n):

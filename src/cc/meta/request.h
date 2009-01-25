@@ -106,6 +106,7 @@ enum MetaOp {
 	META_PING, //!< Print out chunkserves and their configs
 	META_STATS, //!< Print out whatever statistics/counters we have
 	META_DUMP_CHUNKTOSERVERMAP, //! < Dump out the chunk -> location map
+	META_DUMP_CHUNKREPLICATIONCANDIDATES, //! < Dump out the list of chunks being re-replicated
 	META_OPEN_FILES, //!< Print out open files---for which there is a valid read/write lease
 	META_UPSERVERS //!< Print out live chunk servers
 
@@ -781,9 +782,10 @@ struct MetaChunkSize: public MetaChunkRequest {
 			//!< find the entry we need.
 	chunkId_t chunkId; //!< input: the chunk whose size we need
 	off_t chunkSize; //!< output: the chunk size
+	off_t filesize; //!< for logging purposes: the size of the file
 	MetaChunkSize(seq_t n, ChunkServer *s, fid_t f, chunkId_t c) :
-		MetaChunkRequest(META_CHUNK_SIZE, n, false, NULL, s),
-		fid(f), chunkId(c), chunkSize(-1) { }
+		MetaChunkRequest(META_CHUNK_SIZE, n, true, NULL, s),
+		fid(f), chunkId(c), chunkSize(-1), filesize(-1) { }
 	//!< generate the request string that should be sent out
 	void request(ostringstream &os);
 	int log(ofstream &file) const;
@@ -935,6 +937,25 @@ struct MetaDumpChunkToServerMap: public MetaRequest {
 		return "dump chunk2server map";
 	}
 };
+
+/*!
+ * \brief For debugging purposes, dump out the set of blocks that are currently
+ * being re-replicated.
+ */
+struct MetaDumpChunkReplicationCandidates: public MetaRequest {
+	MetaDumpChunkReplicationCandidates(seq_t s):
+		MetaRequest(META_DUMP_CHUNKREPLICATIONCANDIDATES, s, false) { }
+	// list of blocks that are being re-replicated
+	std::string blocks;
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		return "dump chunk replication candidates";
+	}
+};
+
+
 
 /*!
  * \brief For monitoring purposes, a client/tool can send a OPEN FILES

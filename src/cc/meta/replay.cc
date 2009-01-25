@@ -353,6 +353,27 @@ replay_truncate(deque <string> &c)
 }
 
 /*!
+ * \brief replay size
+ * format: size/file/<fileID>/filesize/<filesize>
+ */
+static bool
+replay_size(deque <string> &c)
+{
+	fid_t fid;
+	off_t filesize;
+
+	c.pop_front();
+	bool ok = pop_fid(fid, "file", c, true);
+	ok = pop_offset(filesize, "filesize", c, ok);
+	if (ok) {
+		MetaFattr *fa = metatree.getFattr(fid);
+		if (fa != NULL) 
+			fa->filesize = filesize;
+	}
+	return true;
+}
+
+/*!
  * \brief restore time
  * format: time/<time>
  */
@@ -375,6 +396,7 @@ init_map(DiskEntry &e)
 	e.add_parser("rename", replay_rename);
 	e.add_parser("allocate", replay_allocate);
 	e.add_parser("truncate", replay_truncate);
+	e.add_parser("size", replay_size);
 	e.add_parser("chunkVersionInc", restore_chunkVersionInc);
 	e.add_parser("time", restore_time);
 }
