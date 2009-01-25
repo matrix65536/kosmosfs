@@ -37,6 +37,7 @@
 using std::min;
 using std::max;
 using std::vector;
+using std::string;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -215,6 +216,16 @@ int TcpSocket::GetPeerName(struct sockaddr *peerAddr)
         return -1;
     }
     return 0;
+}
+
+string TcpSocket::GetPeerName()
+{
+    struct sockaddr_in saddr;
+    char ipname[INET_ADDRSTRLEN];
+
+    GetPeerName((struct sockaddr*) &saddr);
+    inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN);
+    return ipname;
 }
 
 int TcpSocket::Send(const char *buf, int bufLen)

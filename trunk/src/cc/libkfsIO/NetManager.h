@@ -111,6 +111,9 @@ private:
     /// Handlers that are notified whenever a call to select()
     /// returns.  To the handlers, the notification is a timeout signal.
     std::list<ITimeout *>	mTimeoutHandlers;
+    /// see the comments in NetManager.cc in the MainLoop()
+    std::list<ITimeout *>	mUnregisteredTimeoutHandlers;
+    void		RemoveUnregisteredTimeoutHandlers();
 };
 
 }
