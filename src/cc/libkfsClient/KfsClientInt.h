@@ -105,6 +105,8 @@ struct ChunkBuffer {
     void allocate() {
         if (buf) 
             return;
+        // XXX: align this to 16-byte boundary
+        // see IOBuffer.cc code
         buf = new char[BUF_SIZE];
     }
     int chunkno;		// which chunk
@@ -262,7 +264,7 @@ struct FilePosition {
     int GetPreferredServerAddr(struct sockaddr_in &saddr) {
         if (preferredServer == NULL)
             return -1;
-        return preferredServer->GetPeerName((struct sockaddr *) &saddr);
+        return preferredServer->GetPeerName((struct sockaddr *) &saddr, sizeof(struct sockaddr_in));
     }
 };
 
