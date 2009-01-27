@@ -66,6 +66,9 @@ namespace KFS
 
         /// Op has finished execution.  Send a response to the client.
         void		SendResponse(MetaRequest *op);
+
+	/// log out client ip addr. for debugging purposes
+	std::string	mClientIP;
     };
 
 }

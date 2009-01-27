@@ -63,9 +63,9 @@ void
 ClientSM::SendResponse(MetaRequest *op)
 {
 	ostringstream os;
-	string clientIP = mNetConnection->GetPeerName();
 
 	op->response(os);
+	mClientIP = mNetConnection->GetPeerName();
 
 	if (op->op == META_ALLOCATE) {
 		MetaAllocate *alloc = static_cast<MetaAllocate *>(op);
@@ -75,11 +75,11 @@ ClientSM::SendResponse(MetaRequest *op)
 		for (uint32_t i = 0; i < alloc->servers.size(); i++) {
 			os << alloc->servers[i]->ServerID() << ' ';
 		}
-		KFS_LOG_VA_INFO("Client = %s, Allocate: %s", clientIP.c_str(), o.str().c_str());
+		KFS_LOG_VA_INFO("Client = %s, Allocate: %s", mClientIP.c_str(), o.str().c_str());
 	}
 
-	KFS_LOG_VA_DEBUG("Client = %s, Command %s, Status: %d", 
-			clientIP.c_str(), op->Show().c_str(), op->status);
+	KFS_LOG_VA_INFO("Client = %s, Command %s, Status: %d", 
+			mClientIP.c_str(), op->Show().c_str(), op->status);
 
 	mNetConnection->Write(os.str().c_str(), os.str().length());
 }
