@@ -98,9 +98,9 @@ ClientSM::SendResponse(KfsOp *op)
     if (op->op == CMD_READ) {
         // need to send out the data read
         rop = static_cast<ReadOp *> (op);
+        KFS_LOG_VA_INFO("Client: %s, Read done: %s, status = %d", clientIP.c_str(), 
+                        rop->Show().c_str(), rop->status);
         if (op->status >= 0) {
-            KFS_LOG_VA_INFO("Client: %s, Read done: %s, status = %d", clientIP.c_str(), 
-                            rop->Show().c_str(), rop->status);
             assert(rop->dataBuf->BytesConsumable() == rop->status);
             mNetConnection->Write(rop->dataBuf, rop->numBytesIO);
         }

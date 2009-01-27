@@ -79,6 +79,27 @@ struct DiskChunkInfo_t {
     void SetChecksums(const uint32_t *checksums) {
         memcpy(chunkBlockChecksum, checksums, MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
     }
+
+    int Validate(kfsChunkId_t cid) const {
+        if (metaMagic != CHUNK_META_MAGIC) {
+            KFS_LOG_VA_INFO("Magic # mismatch (got: %x, expect: %x)", 
+                            metaMagic, CHUNK_META_MAGIC);
+            return -KFS::EBADCKSUM;
+        }
+        if (metaVersion != CHUNK_META_VERSION) {
+            KFS_LOG_VA_INFO("Version # mismatch (got: %x, expect: %x)", 
+                            metaVersion, CHUNK_META_VERSION);
+            return -KFS::EBADCKSUM;
+        }
+
+        if (chunkId != cid) {
+            KFS_LOG_VA_INFO("Chunkid mismatch (got: %ld, expect: %ld)", 
+                            chunkId, cid);
+            return -KFS::EBADCKSUM;
+        }
+        return 0;
+    }
+
     int metaMagic;
     int metaVersion;
 

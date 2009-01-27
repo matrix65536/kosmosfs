@@ -317,9 +317,17 @@ ChunkManager::ReadChunkMetadataDone(kfsChunkId_t chunkId)
 }
 
 int
-ChunkManager::SetChunkMetadata(const DiskChunkInfo_t &dci)
+ChunkManager::SetChunkMetadata(const DiskChunkInfo_t &dci, kfsChunkId_t chunkId)
 {
     ChunkInfoHandle_t *cih;
+    int res;
+
+    if ((res = dci.Validate(chunkId)) < 0) {
+        KFS_LOG_VA_ERROR("chunk metadata validation mismatch on chunk %ld", chunkId);
+        NotifyMetaCorruptedChunk(chunkId);
+        StaleChunk(chunkId);
+        return res;
+    }
 
     if (GetChunkInfoHandle(dci.chunkId, &cih) < 0)
         return -EBADF;
@@ -966,8 +974,6 @@ ChunkManager::ReadChunkDone(ReadOp *op)
         AdjustDataRead(op);
         return;
     }
-
-    // die ("checksum mismatch");
 
     KFS_LOG_VA_ERROR("Checksum mismatch for chunk=%ld, offset=%ld, bytes = %ld: expect: %u, computed: %u ",
                   op->chunkId, op->offset, op->numBytesIO,

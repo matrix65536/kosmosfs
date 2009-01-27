@@ -184,8 +184,8 @@ public:
 
     /// We read the chunk metadata out of disk; we update the chunk
     /// table with this info.
-    /// @retval 0 if successful (i.e., valid chunkid); -EINVAL otherwise
-    int		SetChunkMetadata(const DiskChunkInfo_t &dci);
+    /// @retval 0 if successful (i.e., valid chunkid); -EBADCKSUM otherwise
+    int		SetChunkMetadata(const DiskChunkInfo_t &dci, kfsChunkId_t chunkId);
     bool	IsChunkMetadataLoaded(kfsChunkId_t chunkId) {
         ChunkInfoHandle_t *cih = NULL;
         
