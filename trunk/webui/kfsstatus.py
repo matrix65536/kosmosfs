@@ -509,6 +509,7 @@ def rackView(buffer):
 						<tr class=dead><td></td><td>Dead Node</td></tr>
 						<tr class=retiring><td></td><td>Retiring Node</td></tr>
 						<tr class=><td ></td><td>Healthy</td></tr>
+                                                <tr class=overloaded><td></td><td>Healthy, but not enough space for writes</td></tr>
 					</tbody>
 				  </table>
 			  </td>
