@@ -2205,7 +2205,7 @@ LayoutManager::RebalanceServers()
 
 	vector<ChunkServerPtr> servers = mChunkServers;
 	vector<ChunkServerPtr> loadedServers, nonloadedServers;
-	int extraReplicas, numBlocksMoved = 0;
+	int extraReplicas, numBlocksMoved = 0, numSkipped = 0;
 
 	for (uint32_t i = 0; i < servers.size(); i++) {
 		if (servers[i]->IsRetiring())
@@ -2237,10 +2237,7 @@ LayoutManager::RebalanceServers()
 			}
 		}
 
-		if (allbusy)
-			break;
-
-		if (numBlocksMoved > 200) {
+		if (allbusy || (numBlocksMoved > 200) || (numSkipped > 500)) {
 			allbusy = true;
 			break;
 		}
@@ -2305,6 +2302,8 @@ LayoutManager::RebalanceServers()
 					candidates);
 		if (numOngoing > 0) {
                         numBlocksMoved++;
+		} else {
+			numSkipped++;
 		}
 	}
 	if (!allbusy)
