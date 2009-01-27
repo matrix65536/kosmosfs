@@ -100,8 +100,15 @@ Replicator::HandleStartDone(int code, void *data)
         return 0;
     }
 
+
     mChunkSize = mChunkMetadataOp.chunkSize;
     mChunkVersion = mChunkMetadataOp.chunkVersion;
+
+    if ((mChunkSize < 0) || (mChunkSize > CHUNKSIZE)) {
+        KFS_LOG_VA_INFO("Invalid chunksize: %d", mChunkSize);
+        Terminate();
+        return 0;
+    }
 
     mReadOp.chunkVersion = mWriteOp.chunkVersion = mChunkVersion;
 
@@ -112,6 +119,8 @@ Replicator::HandleStartDone(int code, void *data)
         return -1;
     }
 
+    KFS_LOG_VA_INFO("Starting re-replication for chunk %ld with size %d",
+                    mChunkId, mChunkSize);
     Read();
     return 0;
 }
@@ -125,8 +134,16 @@ Replicator::Read()
     verifyExecutingOnEventProcessor();
 #endif
 
-    if (mOffset >= (off_t) mChunkSize) {
+    if (mOffset == (off_t) mChunkSize) {
+        KFS_LOG_VA_INFO("Offset: %d is past end of chunk %d", mOffset, mChunkSize);
         mDone = true;
+        Terminate();
+        return;
+    }
+
+    if (mOffset > (off_t) mChunkSize) {
+        KFS_LOG_VA_INFO("Offset: %d is well past end of chunk %d", mOffset, mChunkSize);
+        mDone = false;
         Terminate();
         return;
     }
@@ -213,7 +230,8 @@ Replicator::Terminate()
 #endif
 
     if (mDone) {
-        KFS_LOG_VA_INFO("Replication for %ld finished", mChunkId);
+        KFS_LOG_VA_INFO("Replication for %ld finished from %s",
+                        mChunkId, mPeer->GetLocation().ToString().c_str());
 
         // now that replication is all done, set the version appropriately
         gChunkManager.ChangeChunkVers(mFileId, mChunkId, mChunkVersion);

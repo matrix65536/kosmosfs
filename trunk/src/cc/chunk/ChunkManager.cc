@@ -90,6 +90,8 @@ ChunkManager::ChunkManager()
     // mChunkManagerTimeoutImpl->SetTimeoutInterval(10 * 1000);
     mIsChunkTableDirty = false;
     mLastDriveChosen = -1;
+    time_t now = time(NULL);
+    srand48(now);
 }
 
 ChunkManager::~ChunkManager()
@@ -183,7 +185,7 @@ ChunkManager::DeleteChunk(kfsChunkId_t chunkId)
     s = MakeChunkPathname(cih);
     unlink(s.c_str());
 
-    KFS_LOG_VA_DEBUG("Deleting chunk: %s", s.c_str());
+    KFS_LOG_VA_INFO("Deleting chunk: %s", s.c_str());
 
     mNumChunks--;
     assert(mNumChunks >= 0);
@@ -489,23 +491,52 @@ ChunkManager::GetDirForChunk()
     if (mChunkDirs.size() == 1)
         return mChunkDirs[0].dirname;
 
-    // round robin over the drives, picking one that has space; this
-    // has the effect of spreading the load over all the drives.
-    int32_t dirToUse;
-    bool found = false;
+    // do weighted random, so that we can fill all drives
+    off_t totalFreeSpace = 0;
     for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
-        dirToUse = (mLastDriveChosen + i + 1) % mChunkDirs.size();
-        if ((mChunkDirs[dirToUse].availableSpace == 0) ||
-            ((mChunkDirs[dirToUse].availableSpace - mChunkDirs[dirToUse].usedSpace) < (off_t) CHUNKSIZE)) {
+        if ((mChunkDirs[i].availableSpace == 0) ||
+            ((mChunkDirs[i].availableSpace - mChunkDirs[i].usedSpace) < (off_t) CHUNKSIZE)) {
             continue;
-        } else {
+        }
+        totalFreeSpace += (mChunkDirs[i].availableSpace - mChunkDirs[i].usedSpace);
+    }
+
+    bool found = false;
+    int dirToUse;
+    double bucketLow = 0.0, bucketHi = 0.0;
+    double randVal = drand48();
+    for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
+        if ((mChunkDirs[i].availableSpace == 0) ||
+            ((mChunkDirs[i].availableSpace - mChunkDirs[i].usedSpace) < (off_t) CHUNKSIZE)) {
+            continue;
+        }
+        bucketHi = bucketLow + ((double) (mChunkDirs[i].availableSpace - mChunkDirs[i].usedSpace) / (double) totalFreeSpace);
+        if ((bucketLow <= randVal) && (randVal <= bucketHi)) {
+            dirToUse = i;
             found = true;
             break;
         }
+        bucketLow = bucketHi;
     }
 
-    if (!found)
+    if (!found) {
+        // to account for rounding errors, if we didn't pick a drive, but some drive has space, use it.
+        for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
+            if ((mChunkDirs[i].availableSpace == 0) ||
+                ((mChunkDirs[i].availableSpace - mChunkDirs[i].usedSpace) < (off_t) CHUNKSIZE)) {
+                continue;
+            }
+            dirToUse = i;
+            found = true;
+            break;
+        }
+    }        
+
+    if (!found) {
+        KFS_LOG_INFO("All drives are full; dir allocation failed");
         return "";
+    }
+
     mLastDriveChosen = dirToUse;
     return mChunkDirs[dirToUse].dirname;
 }
