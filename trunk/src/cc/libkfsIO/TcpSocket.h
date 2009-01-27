@@ -115,7 +115,8 @@ public:
     /// Return true if socket is good for read/write. false otherwise.
     bool IsGood();
 
-    int GetPeerName(struct sockaddr *peerAddr);
+    /// pass in the length of the buffer pointed to by peerAddr
+    int GetPeerName(struct sockaddr *peerAddr, int len);
     /// Return the peer's IP address as a string
     std::string GetPeerName();
 

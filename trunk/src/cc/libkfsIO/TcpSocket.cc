@@ -207,9 +207,9 @@ void TcpSocket::SetupSocket()
 
 }
 
-int TcpSocket::GetPeerName(struct sockaddr *peerAddr)
+int TcpSocket::GetPeerName(struct sockaddr *peerAddr, int len)
 {
-    socklen_t peerLen;
+    socklen_t peerLen = len;
 
     if (getpeername(mSockFd, peerAddr, &peerLen) < 0) {
         perror("getpeername: ");
@@ -223,8 +223,10 @@ string TcpSocket::GetPeerName()
     struct sockaddr_in saddr;
     char ipname[INET_ADDRSTRLEN];
 
-    GetPeerName((struct sockaddr*) &saddr);
-    inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN);
+    if (GetPeerName((struct sockaddr*) &saddr, sizeof(struct sockaddr_in)) < 0)
+        return "unknown src";
+    if (inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN) == NULL)
+        return "unknown src";        
     return ipname;
 }
 

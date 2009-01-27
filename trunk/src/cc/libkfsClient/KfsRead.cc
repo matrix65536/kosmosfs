@@ -662,7 +662,7 @@ KfsClientImpl::VerifyChecksum(ReadOp* op, TcpSocket* sock)
                 struct sockaddr_in saddr;
                 char ipname[INET_ADDRSTRLEN];
 
-                sock->GetPeerName((struct sockaddr *) &saddr);
+                sock->GetPeerName((struct sockaddr *) &saddr, sizeof(struct sockaddr_in));
                 inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN);
 
                 KFS_LOG_VA_INFO("Checksum mismatch from %s starting @pos = %lld: got = %d, computed = %d for %s",
