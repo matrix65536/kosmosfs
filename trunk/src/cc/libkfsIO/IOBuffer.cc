@@ -62,6 +62,16 @@ IOBufferData::IOBufferData()
     Init(IOBUFSIZE);
 }
 
+inline int IOBufferData::MaxAvailable(int numBytes) const
+{
+    return std::max(0, std::min(int(SpaceAvailable()), numBytes));
+}
+
+inline int IOBufferData::MaxConsumable(int numBytes) const
+{
+    return std::max(0, std::min(BytesConsumable(), numBytes));
+}
+
 // setup a new IOBufferData for read access by block sharing.  
 IOBufferData::IOBufferData(IOBufferDataPtr &other, char *s, char *e) :
     mData(other->mData), mStart(s), mEnd(e), mProducer(e), mConsumer(s) {
@@ -93,53 +103,35 @@ IOBufferData::~IOBufferData()
     mProducer = mConsumer = NULL;
 }
 
-int IOBufferData::ZeroFill(int nbytes)
+int IOBufferData::ZeroFill(int numBytes)
 {
-    int fillAvail = mEnd - mProducer;
-
-    if (fillAvail < nbytes)
-        nbytes = fillAvail;
-
+    const int nbytes = MaxAvailable(numBytes);
     memset(mProducer, '\0', nbytes);
-    return Fill(nbytes);
-}
-
-int IOBufferData::Fill(int nbytes)
-{
-    int fillAvail = mEnd - mProducer;
-
-    if (nbytes > fillAvail) {
-        mProducer = mEnd;
-        return fillAvail;
-    }
-    mProducer += nbytes; 
-    assert(mProducer <= mEnd);
+    mProducer += nbytes;
     return nbytes;
 }
 
-int IOBufferData::Consume(int nbytes)
+int IOBufferData::Fill(int numBytes)
 {
-    int consumeAvail = mProducer - mConsumer;
+    const int nbytes = MaxAvailable(numBytes);
+    mProducer += nbytes;
+    return nbytes;
+}
 
-    if (nbytes > consumeAvail) {
-        mConsumer = mProducer;
-        return consumeAvail;
-    }
+int IOBufferData::Consume(int numBytes)
+{
+    const int nbytes = MaxConsumable(numBytes);
     mConsumer += nbytes; 
     assert(mConsumer <= mProducer);
     return nbytes;
 }
 
-int IOBufferData::Trim(int nbytes)
+int IOBufferData::Trim(int numBytes)
 {
-    int bytesAvail = mProducer - mConsumer;
-
     // you can't trim and grow the data in the buffer
-    if (bytesAvail < nbytes)
-        return bytesAvail;
-
-    mProducer = mConsumer + nbytes;
-    return nbytes;
+    const int nbytes = MaxConsumable(numBytes);
+    mProducer -= nbytes;
+    return BytesConsumable();
 }
 
 int IOBufferData::Read(int fd)
@@ -185,49 +177,26 @@ int IOBufferData::Write(int fd)
 
 int IOBufferData::CopyIn(const char *buf, int numBytes)
 {
-    int bytesToCopy = mEnd - mProducer;
-
-    if (bytesToCopy < numBytes) {
-        memcpy(mProducer, buf, bytesToCopy);
-        Fill(bytesToCopy);
-        return bytesToCopy;
-    } else {
-        memcpy(mProducer, buf, numBytes);
-        Fill(numBytes);
-        return numBytes;
-    }
+    const int nbytes = MaxAvailable(numBytes);
+    memmove(mProducer, buf, nbytes);
+    mProducer += nbytes;
+    return nbytes;
 }
 
 int IOBufferData::CopyIn(const IOBufferData *other, int numBytes)
 {
-    int bytesToCopy = mEnd - mProducer;
-
-    if (bytesToCopy < numBytes) {
-        memcpy(mProducer, other->mConsumer, bytesToCopy);
-        Fill(bytesToCopy);
-        return bytesToCopy;
-    } else {
-        memcpy(mProducer, other->mConsumer, numBytes);
-        Fill(numBytes);
-        return numBytes;
-    }
+    const int nbytes = MaxAvailable(
+        std::min(numBytes, other->BytesConsumable()));
+    memmove(mProducer, other->mConsumer, nbytes);
+    mProducer += nbytes;
+    return nbytes;
 }
 
 int IOBufferData::CopyOut(char *buf, int numBytes)
 {
-    int bytesToCopy = mProducer - mConsumer;
-
-    assert(bytesToCopy >= 0);
-
-    if (bytesToCopy <= 0) {
-        return 0;
-    }
-
-    if (bytesToCopy > numBytes)
-        bytesToCopy = numBytes;
-
-    memcpy(buf, mConsumer, bytesToCopy);
-    return bytesToCopy;
+    const int nbytes = MaxConsumable(numBytes);
+    memmove(buf, mConsumer, nbytes);
+    return nbytes;
 }
 
 IOBuffer::IOBuffer()

@@ -126,6 +126,9 @@ public:
     char *Start() { return mStart; }
     char *Producer() { return mProducer; }
     char *Consumer() { return mConsumer; }
+    const char *Start() const { return mStart; }
+    const char *Producer() const { return mProducer; }
+    const char *Consumer() const { return mConsumer; }
 
     ///
     /// Some data has been filled in the buffer.  So, advance
@@ -153,12 +156,12 @@ public:
     int Trim(int nbytes);
 
     /// Returns the # of bytes available for consumption.
-    int BytesConsumable() { return mProducer - mConsumer; }
+    int BytesConsumable() const { return mProducer - mConsumer; }
 
     /// Return the space available in the buffer
-    size_t SpaceAvailable() { return mEnd - mProducer; }
-    int IsFull() { return mProducer == mEnd; }
-    int IsEmpty() { return mProducer == mConsumer; }
+    size_t SpaceAvailable() const { return mEnd - mProducer; }
+    int IsFull() const { return mProducer == mEnd; }
+    int IsEmpty() const { return mProducer == mConsumer; }
 
 private:
     /// Data buffer that is ref-counted for sharing.
@@ -170,7 +173,9 @@ private:
 
     /// Allocate memory and init the pointers.
     void		Init(uint32_t bufsz);
-    
+
+    inline int MaxAvailable(int numBytes) const;
+    inline int MaxConsumable(int numBytes) const;
 };
 
 
