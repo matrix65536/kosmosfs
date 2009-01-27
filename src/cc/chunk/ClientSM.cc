@@ -76,28 +76,31 @@ ClientSM::SendResponse(KfsOp *op)
     ReadOp *rop;
     string s = op->Show();
     int len;
+    string clientIP = mNetConnection->GetPeerName();
 
 #ifdef DEBUG
     verifyExecutingOnNetProcessor();
 #endif    
     op->Response(os);
 
-    KFS_LOG_VA_DEBUG("Command %s: Response status: %d\n", 
-                     s.c_str(), op->status);
+    KFS_LOG_VA_DEBUG("Client %s, Command %s: Response status: %d\n", 
+                     clientIP.c_str(), s.c_str(), op->status);
 
     len = os.str().length();
     if (len > 0)
         mNetConnection->Write(os.str().c_str(), len);
 
+    
     if (op->op == CMD_WRITE_SYNC) {
-        KFS_LOG_VA_INFO("Ack'ing write sync: %s", op->Show().c_str());
+        KFS_LOG_VA_INFO("Ack'ing write sync to %s: %s", clientIP.c_str(), op->Show().c_str());
     }
 
     if (op->op == CMD_READ) {
         // need to send out the data read
         rop = static_cast<ReadOp *> (op);
         if (op->status >= 0) {
-            KFS_LOG_VA_INFO("Read done: %s, status = %d", rop->Show().c_str(), rop->status);
+            KFS_LOG_VA_INFO("Client: %s, Read done: %s, status = %d", clientIP.c_str(), 
+                            rop->Show().c_str(), rop->status);
             assert(rop->dataBuf->BytesConsumable() == rop->status);
             mNetConnection->Write(rop->dataBuf, rop->numBytesIO);
         }
@@ -298,7 +301,8 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
     }
 
     if (op->op == CMD_WRITE_SYNC) {
-        KFS_LOG_VA_INFO("Received write sync: %s", op->Show().c_str());
+        string clientIP = mNetConnection->GetPeerName();
+        KFS_LOG_VA_INFO("Received write sync from %s: %s", clientIP.c_str(), op->Show().c_str());
         // make the write sync depend on a previous write
         KfsOp *w = NULL;
         for (deque<KfsOp *>::iterator i = mOps.begin(); i != mOps.end(); i++) {
