@@ -130,7 +130,7 @@ class UpServer:
     def __init__(self, info):
         if isinstance(info, str):
             serverInfo = info.split(',')
-            # order here is host, port, total, used, util, nblocks, last heard, nblks corrupt
+            # order here is host, port, rack, used, free, util, nblocks, last heard, nblks corrupt
             for i in xrange(len(serverInfo)):
                 s = serverInfo[i].split('=')
                 setattr(self, s[0].strip(), s[1].strip())
@@ -189,8 +189,8 @@ class UpServer:
             return
         util = self.util.split('%')
         self.util = '%.2f' % float(util[0])
-        print >> buffer, '''<td>''', self.total, '''</td>'''
         print >> buffer, '''<td>''', self.used, '''</td>'''
+        print >> buffer, '''<td>''', self.free, '''</td>'''
         print >> buffer, '''<td>''', self.util, '''</td>'''
         print >> buffer, '''<td align="right">''', self.nblocks, '''</td>'''
         print >> buffer, '''<td align="right">''', self.lastheard, '''</td>'''
@@ -406,7 +406,7 @@ def systemStatus(buffer):
      <table class="sortable status-table" id="table1" cellspacing="0" cellpadding="0.1em" summary="Status of nodes in the system: who is up/down and when we last heard from them">
      <caption> All Nodes </caption>
      <thead>
-     <tr><th> Chunkserver </th> <th> Space </th> <th> Used </th> <th> Used% </th> <th> # of blocks </th> <th> Last heard </th> </tr>
+     <tr><th> Chunkserver </th> <th> Used </th> <th> Free </th> <th> Used% </th> <th> # of blocks </th> <th> Last heard </th> </tr>
      </thead>
      <tbody>
     '''
