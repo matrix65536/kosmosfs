@@ -2094,7 +2094,7 @@ ReadChunkMetaOp::HandleDone(int code, void *data)
             DiskChunkInfo_t dci;
             
             dataBuf->CopyOut((char *) &dci, sizeof(DiskChunkInfo_t));
-            res = gChunkManager.SetChunkMetadata(dci);
+            res = gChunkManager.SetChunkMetadata(dci, chunkId);
         }
     }
     

@@ -150,12 +150,12 @@ computeMD5(const char *pathname)
 }
 
 static bool
-make_if_needed(const char *dirname)
+make_if_needed(const char *dirname, bool check)
 {
     struct stat s;
     int res = stat(dirname, &s);
 
-    if (res < 0) {
+    if (check && (res < 0)) {
         // stat failed; maybe the drive is down.  Keep going
         cout << "Stat on dir: " << dirname  << " failed.  Moving on..." << endl;
         return true;
@@ -223,14 +223,15 @@ ReadChunkServerProperties(char *fileName)
             continue;
         }
 
-        if (!make_if_needed(component.c_str())) {
+        if (!make_if_needed(component.c_str(), true)) {
             cout << "Aborting...failed to create " << component << '\n';
             return -1;
         }
 
         // also, make the directory for holding stale chunks in each "partition"
         string staleChunkDir = GetStaleChunkPath(component);
-        make_if_needed(staleChunkDir.c_str());
+        // if the parent dir exists, make the stale chunks directory
+        make_if_needed(staleChunkDir.c_str(), false);
 
         cout << "Using chunk dir = " << component << '\n';
 
@@ -238,7 +239,7 @@ ReadChunkServerProperties(char *fileName)
     }
 
     gLogDir = gProp.getValue("chunkServer.logDir", "logs");
-    if (!make_if_needed(gLogDir.c_str())) {
+    if (!make_if_needed(gLogDir.c_str(), false)) {
 	cout << "Aborting...failed to create " << gLogDir << '\n';
 	return -1;
     }
