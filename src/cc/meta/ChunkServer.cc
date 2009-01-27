@@ -897,6 +897,7 @@ ChunkServer::Ping(string &result)
 	ostringstream ost;
 	time_t now = time(NULL);
 	bool isOverloaded = false;
+	uint64_t freeSpace = mTotalSpace - mUsedSpace;
 
 	// for nodes taken out of write allocation, send the info back; this allows
 	// the UI to color these nodes differently
@@ -905,8 +906,9 @@ ChunkServer::Ping(string &result)
 
 	if (mTotalSpace < (1L << 30)) {
 		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
-	    		<< ", total=" << convertToMB(mTotalSpace) 
-			<< "(MB), used=" << convertToMB(mUsedSpace)
+			<< ", rack=" << mRackId 
+			<< ", used=" << convertToMB(mUsedSpace)
+	    		<< "(MB), free=" << convertToMB(freeSpace) 
 			<< "(MB), util=" << GetSpaceUtilization() * 100.0 
 			<< "%, nblocks=" << mNumChunks 
 			<< ", lastheard=" << now - mLastHeard << " (sec)"
@@ -917,8 +919,9 @@ ChunkServer::Ping(string &result)
 		ost << "\t";
 	} else {
 		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
-	    		<< ", total=" << convertToGB(mTotalSpace) 
-			<< "(GB), used=" << convertToGB(mUsedSpace)
+			<< ", rack=" << mRackId 
+			<< ", used=" << convertToGB(mUsedSpace)
+	    		<< "(GB), free=" << convertToGB(freeSpace) 
 			<< "(GB), util=" << GetSpaceUtilization() * 100.0 
 			<< "%, nblocks=" << mNumChunks 
 			<< ", lastheard=" << now - mLastHeard << " (sec)"
