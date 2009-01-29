@@ -28,6 +28,7 @@
 #include <iostream>    
 #include <fstream>
 #include <cerrno>
+#include <ostream>
 
 extern "C" {
 #include <unistd.h>
@@ -42,14 +43,15 @@ extern "C" {
 using std::cout;
 using std::endl;
 using std::ofstream;
+using std::ostringstream;
 using std::vector;
 
 using namespace KFS;
 
-static int dirList(string kfsdirname, bool longMode, bool humanReadable);
+static int dirList(string kfsdirname, bool longMode, bool humanReadable, bool timeInSecs);
 static int doDirList(string kfsdirname);
-static int doDirListPlusAttr(string kfsdirname, bool humanReadable);
-static void printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable);
+static int doDirListPlusAttr(string kfsdirname, bool humanReadable, bool timeInSecs);
+static void printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable, bool timeInSecs);
 static void getTimeString(time_t time, char *buf, int bufLen = 256);
 
 
@@ -57,11 +59,11 @@ static void getTimeString(time_t time, char *buf, int bufLen = 256);
 int
 KFS::tools::handleLs(const vector<string> &args)
 {
-    bool longMode = false, humanReadable = false;
+    bool longMode = false, humanReadable = false, timeInSecs = false;
     vector<string>::size_type pathIndex = 0;
 
     if ((args.size() >= 1) && (args[0] == "--help")) {
-        cout << "Usage: ls {-lh} {<dir>} " << endl;
+        cout << "Usage: ls {-lht} {<dir>} " << endl;
         return 0;
     }
 
@@ -76,22 +78,25 @@ KFS::tools::handleLs(const vector<string> &args)
                     case 'h':
                         humanReadable = true;
                         break;
+                    case 't':
+                        timeInSecs = true;
+                        break;
                 }
             }
         }
     }
 
     if (args.size() > pathIndex)
-        return dirList(args[pathIndex], longMode, humanReadable);
+        return dirList(args[pathIndex], longMode, humanReadable, timeInSecs);
     else
-        return dirList(".", longMode, humanReadable);
+        return dirList(".", longMode, humanReadable, timeInSecs);
 }
 
 int
-dirList(string kfsdirname, bool longMode, bool humanReadable)
+dirList(string kfsdirname, bool longMode, bool humanReadable, bool timeInSecs)
 {
     if (longMode)
-        return doDirListPlusAttr(kfsdirname, humanReadable);
+        return doDirListPlusAttr(kfsdirname, humanReadable, timeInSecs);
     else
         return doDirList(kfsdirname);
 }
@@ -126,7 +131,7 @@ doDirList(string kfsdirname)
 }
 
 int
-doDirListPlusAttr(string kfsdirname, bool humanReadable)
+doDirListPlusAttr(string kfsdirname, bool humanReadable, bool timeInSecs)
 {
     string kfssubdir, subdir;
     int res;
@@ -139,7 +144,7 @@ doDirListPlusAttr(string kfsdirname, bool humanReadable)
         struct stat statInfo;
 
         kfsClient->Stat(kfsdirname.c_str(), statInfo);
-        printFileInfo(kfsdirname, statInfo.st_mtime, statInfo.st_size, humanReadable);
+        printFileInfo(kfsdirname, statInfo.st_mtime, statInfo.st_size, humanReadable, timeInSecs);
         return 0;
     }
     if ((res = kfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
@@ -159,18 +164,26 @@ doDirListPlusAttr(string kfsdirname, bool humanReadable)
             cout << fileInfo[i].filename << "/" << '\t' << timeBuf << '\t' << "(dir)" << endl;
         } else {
             printFileInfo(fileInfo[i].filename, fileInfo[i].mtime.tv_sec, 
-                          fileInfo[i].fileSize, humanReadable);
+                          fileInfo[i].fileSize, humanReadable, timeInSecs);
         }
     }
     return 0;
 }
 
 void
-printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable)
+printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable, bool timeInSecs)
 {
     char timeBuf[256];
 
-    getTimeString(mtime, timeBuf);
+    if (timeInSecs) {
+        ostringstream ost;
+
+        ost << mtime;
+        strncpy(timeBuf, ost.str().c_str(), 256);
+        timeBuf[255] = '\0';
+    }
+    else
+        getTimeString(mtime, timeBuf);
 
     if (!humanReadable) {
         cout << filename << '\t' << timeBuf << '\t' << filesize << endl;
