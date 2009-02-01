@@ -455,12 +455,12 @@ int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
     struct ip_mreq imreq;
     string srvIp = "10.2.0.10";
     // int srvPort = 12000;
-    //int multicastPort = 13000;
+    // int multicastPort = 13000;
 
     imreq.imr_multiaddr.s_addr = inet_addr("226.0.0.1");
     imreq.imr_interface.s_addr = INADDR_ANY; // use DEFAULT interface
     
-    // will setup this for release
+    // will setup this for release evenutally
     // mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
 
     mIsInitialized = true;
@@ -1540,6 +1540,12 @@ KfsClientImpl::AllocChunk(int fd)
     // for writes, [0] is the master; that is the preferred server
     if (op.chunkServers.size() > 0) {
         FdPos(fd)->SetPreferredServer(op.chunkServers[0]);
+        // if we can't connect to head of daisy chain, retry
+        if (FdPos(fd)->preferredServer == NULL) {
+            string s = op.chunkServers[0].ToString();
+            KFS_LOG_VA_INFO("Unable to connect to %s, retrying allocation", s.c_str());
+            return -EHOSTUNREACH;
+        }
         SizeChunk(fd);
     }
 
