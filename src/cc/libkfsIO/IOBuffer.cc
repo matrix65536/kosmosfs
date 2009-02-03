@@ -128,10 +128,9 @@ int IOBufferData::Consume(int numBytes)
 
 int IOBufferData::Trim(int numBytes)
 {
-    // you can't trim and grow the data in the buffer
     const int nbytes = MaxConsumable(numBytes);
-    mProducer -= nbytes;
-    return BytesConsumable();
+    mProducer = mConsumer + nbytes;
+    return nbytes;
 }
 
 int IOBufferData::Read(int fd)
