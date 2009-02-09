@@ -91,7 +91,11 @@ KFS::ComputeChecksums(IOBuffer *data, size_t len)
     vector<uint32_t> cksums;
     list<IOBufferDataPtr>::iterator iter = data->mBuf.begin();
 
-    assert(len >= CHECKSUM_BLOCKSIZE);
+    if (len < CHECKSUM_BLOCKSIZE) {
+        uint32_t cks = ComputeBlockChecksum(data, len);
+        cksums.push_back(cks);
+        return cksums;
+    }
 
     if (iter == data->mBuf.end())
         return cksums;
