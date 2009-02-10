@@ -105,7 +105,7 @@ Replicator::HandleStartDone(int code, void *data)
     mChunkVersion = mChunkMetadataOp.chunkVersion;
 
     if ((mChunkSize < 0) || (mChunkSize > CHUNKSIZE)) {
-        KFS_LOG_VA_INFO("Invalid chunksize: %d", mChunkSize);
+        KFS_LOG_VA_INFO("Invalid chunksize: %ld", mChunkSize);
         Terminate();
         return 0;
     }
@@ -119,7 +119,7 @@ Replicator::HandleStartDone(int code, void *data)
         return -1;
     }
 
-    KFS_LOG_VA_INFO("Starting re-replication for chunk %ld with size %d",
+    KFS_LOG_VA_INFO("Starting re-replication for chunk %ld with size %ld",
                     mChunkId, mChunkSize);
     Read();
     return 0;
@@ -135,14 +135,14 @@ Replicator::Read()
 #endif
 
     if (mOffset == (off_t) mChunkSize) {
-        KFS_LOG_VA_INFO("Offset: %d is past end of chunk %d", mOffset, mChunkSize);
+        KFS_LOG_VA_INFO("Offset: %ld is past end of chunk %ld", mOffset, mChunkSize);
         mDone = true;
         Terminate();
         return;
     }
 
     if (mOffset > (off_t) mChunkSize) {
-        KFS_LOG_VA_INFO("Offset: %d is well past end of chunk %d", mOffset, mChunkSize);
+        KFS_LOG_VA_INFO("Offset: %ld is well past end of chunk %ld", mOffset, mChunkSize);
         mDone = false;
         Terminate();
         return;
