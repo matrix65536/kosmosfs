@@ -87,6 +87,9 @@ NetManager::UnRegisterTimeoutHandler(ITimeout *handler)
 {
     list<ITimeout *>::iterator iter;
     ITimeout *tm;
+
+    if (handler == NULL)
+        return;
     
     for (iter = mTimeoutHandlers.begin(); iter != mTimeoutHandlers.end(); 
          ++iter) {
@@ -96,6 +99,7 @@ NetManager::UnRegisterTimeoutHandler(ITimeout *handler)
             return;
         }
     }
+    KFS_LOG_VA_WARN("Unable to find registered handler for %x", handler);
 }
 
 void
