@@ -52,9 +52,11 @@ using boost::scoped_array;
 
 RemoteSyncSM::~RemoteSyncSM()
 {
-    if (mTimer)
+    if (mTimer) {
         globals().netManager.UnRegisterTimeoutHandler(mTimer);
+    }
     delete mTimer;
+    mTimer = NULL;
 
     if (mNetConnection)
         mNetConnection->Close();
@@ -372,7 +374,10 @@ KFS::RemoveServer(list<RemoteSyncSMPtr> &remoteSyncers, RemoteSyncSM *target)
     i = find_if(remoteSyncers.begin(), remoteSyncers.end(),
                 RemoteSyncSMMatcher(target->GetLocation()));
     if (i != remoteSyncers.end()) {
-        remoteSyncers.erase(i);
+        RemoteSyncSMPtr r = *i;
+        if (r.get() == target) {
+            remoteSyncers.erase(i);
+        }
     }
 }
 
@@ -386,7 +391,7 @@ KFS::ReleaseAllServers(list<RemoteSyncSMPtr> &remoteSyncers)
             break;
         RemoteSyncSMPtr r = *i;
 
-        remoteSyncers.erase(i);
         r->Finish();
+        remoteSyncers.erase(i);
     }
 }

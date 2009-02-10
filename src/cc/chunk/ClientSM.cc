@@ -170,10 +170,13 @@ ClientSM::HandleRequest(int code, void *data)
 	break;
 
     case EVENT_NET_ERROR:
-	// KFS_LOG_VA_DEBUG("Closing connection");
 
-	if (mNetConnection)
+	if (mNetConnection) {
+            string clientIP = mNetConnection->GetPeerName();
+            KFS_LOG_VA_INFO("Closing connection from client %s", clientIP.c_str());
+
 	    mNetConnection->Close();
+        }
 
         // get rid of the connection to all the peers in daisy chain;
         // if there were any outstanding ops, they will all come back
