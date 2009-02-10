@@ -35,12 +35,14 @@
 
 #include <cerrno>
 #include <sstream>
+#include <string>
 #include <algorithm>
 using std::find_if;
 using std::for_each;
 using std::istringstream;
 using std::ostringstream;
 using std::list;
+using std::string;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -248,8 +250,21 @@ RemoteSyncSM::HandleResponse(IOBuffer *iobuf, int msgLen)
             wiao->writeIdStr = prop.getValue("Write-id", "");
         } else if (op->op == CMD_READ) {
             ReadOp *rop = static_cast<ReadOp *> (op);
+            int checksumEntries = prop.getValue("Checksum-entries", 0);
+
             if (rop->dataBuf == NULL)
                 rop->dataBuf = new IOBuffer();
+            rop->checksum.clear();
+            if (checksumEntries > 0) {
+                string checksums = prop.getValue("Checksums", "");
+                istringstream is(checksums.c_str());
+                uint32_t cks;
+                for (int i = 0; i < checksumEntries; i++) {
+                    is >> cks;
+                    rop->checksum.push_back(cks);
+                }
+            }
+            rop->numBytesIO = numBytes;
             rop->dataBuf->Move(iobuf, numBytes);
         } else if (op->op == CMD_SIZE) {
             SizeOp *sop = static_cast<SizeOp *>(op);

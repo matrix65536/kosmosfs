@@ -51,6 +51,7 @@ using std::istringstream;
 using std::ostringstream;
 using std::for_each;
 using std::vector;
+using std::min;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -703,6 +704,17 @@ ReadOp::HandleDone(int code, void *data)
 int
 ReadOp::HandleReplicatorDone(int code, void *data)
 {
+    if (checksum.size() > 0) {
+        vector<uint32_t> datacksums = ComputeChecksums(dataBuf, numBytesIO);
+
+        for (uint32_t i = 0; i < min(datacksums.size(), checksum.size()); i++) 
+            if (datacksums[i] != checksum[i]) {
+                KFS_LOG_VA_INFO("Checksum mismatch in re-replication: expect %ld, got: %ld\n",
+                                datacksums[i], checksum[i]);
+                status = -EBADCKSUM;
+                break;
+            }
+    }
     // notify the replicator object that the read it had submitted to
     // the peer has finished. 
     return clnt->HandleEvent(code, data);
@@ -1370,6 +1382,7 @@ WritePrepareOp::Execute()
         if (!gLeaseClerk.IsLeaseValid(chunkId)) {
             KFS_LOG_VA_INFO("Write prepare failed...as lease expired for %ld",
                              chunkId);
+            gLeaseClerk.RelinquishLease(chunkId);
             status = -KFS::ELEASEEXPIRED;
             gLogger.Submit(this);
             return;
