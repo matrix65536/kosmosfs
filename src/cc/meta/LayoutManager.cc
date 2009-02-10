@@ -914,9 +914,9 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 			ptr_fun(LeaseInfo::IsValidWriteLease));
 	if (l != v.chunkLeases.end()) {
 		LeaseInfo lease = *l;
-		time_t now = time(0);
-		string s = timeToStr(now);
+		string s = timeToStr(lease.expires);
 #ifdef DEBUG
+		time_t now = time(0);
 		assert(now <= lease.expires);
 		KFS_LOG_DEBUG("write lease exists...no version bump");
 #endif

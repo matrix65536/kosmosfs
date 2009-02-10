@@ -78,8 +78,10 @@ ClientSM::SendResponse(MetaRequest *op)
 		KFS_LOG_VA_INFO("Client = %s, Allocate: %s", mClientIP.c_str(), o.str().c_str());
 	}
 
-	KFS_LOG_VA_INFO("Client = %s, Command %s, Status: %d", 
-			mClientIP.c_str(), op->Show().c_str(), op->status);
+	if (op->op != META_LOOKUP) {
+		KFS_LOG_VA_INFO("Client = %s, Command %s, Status: %d", 
+				mClientIP.c_str(), op->Show().c_str(), op->status);
+	}
 
 	mNetConnection->Write(os.str().c_str(), os.str().length());
 }
