@@ -58,18 +58,22 @@ int main(int argc, char **argv)
     int res, count;
     struct dirent **entries;
     struct stat statBuf;
-    bool verbose = false;
+    bool verbose = false, samplingMode = false;
+    double randval;
 
     KFS::MsgLogger::Init(NULL);
     KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
 
-    while ((optchar = getopt(argc, argv, "hvd:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hvsd:")) != -1) {
         switch (optchar) {
             case 'd': 
                 chunkDir = optarg;
                 break;
             case 'v':
                 verbose = true;
+                break;
+            case 's':
+                samplingMode = true;
                 break;
             case 'h':
             default:
@@ -79,7 +83,8 @@ int main(int argc, char **argv)
     }
 
     if ((help) || (chunkDir == NULL)) {
-        cout << "Usage: " << argv[0] << " -d <chunkdir> {-v}" << endl;
+        cout << "Usage: " << argv[0] << " -d <chunkdir> {-v} {-s}" << endl;
+        cout << " where -s means scrub only about 10% of the files" << endl;
         exit(-1);
     }
     
@@ -89,6 +94,8 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
+    time_t seed = time(NULL);
+    srand48(seed);
     count = res;
     for (int i = 0; i < count; i++) {
         string fn = chunkDir;
@@ -97,7 +104,17 @@ int main(int argc, char **argv)
         free(entries[i]);
         if ((res < 0) || (!S_ISREG(statBuf.st_mode)))
             continue;
+        if (samplingMode) {
+            randval = drand48();
+            if (randval > 0.1)
+                continue;
+        }
         scrubFile(fn, verbose);
+        // scrubs will keep the disk very busy; slow it down so that
+        // the system isn't overwhelmed
+        if ((i % 10) == 0) {
+            sleep(10);
+        }
     }
     free(entries);
     exit(0);
