@@ -153,6 +153,8 @@ Replicator::Read()
     mReadOp.seq = mPeer->NextSeqnum();
     mReadOp.status = 0;
     mReadOp.offset = mOffset;
+    mReadOp.numBytesIO = 0;
+    mReadOp.checksum.clear();
     // read an MB 
     mReadOp.numBytes = 1 << 20;
     mPeer->Enqueue(&mReadOp);

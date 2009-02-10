@@ -704,7 +704,7 @@ ReadOp::HandleDone(int code, void *data)
 int
 ReadOp::HandleReplicatorDone(int code, void *data)
 {
-    if (checksum.size() > 0) {
+    if ((status >= 0) && (checksum.size() > 0)) {
         vector<uint32_t> datacksums = ComputeChecksums(dataBuf, numBytesIO);
 
         for (uint32_t i = 0; i < min(datacksums.size(), checksum.size()); i++) 
