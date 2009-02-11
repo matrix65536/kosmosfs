@@ -58,6 +58,7 @@ string gMD5Sum;
 ServerLocation gMetaServerLoc;
 int64_t gTotalSpace;			// max. storage space to use
 int gChunkServerClientPort;	// Port at which kfs clients connect to us
+string gChunkServerHostname;	// Our hostname to use (instead of using gethostname() )
 
 Properties gProp;
 const char *gClusterKey;
@@ -117,7 +118,7 @@ main(int argc, char **argv)
         gChunkManager.Restart();
     }
 
-    gChunkServer.MainLoop(gChunkServerClientPort);
+    gChunkServer.MainLoop(gChunkServerClientPort, gChunkServerHostname);
 
     return 0;
 }
@@ -205,6 +206,12 @@ ReadChunkServerProperties(char *fileName)
     }
     cout << "Using chunk server client port: " << gChunkServerClientPort << '\n';
 
+    gChunkServerHostname = gProp.getValue("chunkServer.hostname", "");
+    if (gChunkServerHostname.size() > 0)
+    {
+      cout << "Using chunk server hostname: " << gChunkServerHostname << '\n';
+    }
+    
     // Paths are space separated directories for storing chunks
     chunkDirPaths = gProp.getValue("chunkServer.chunkDir", "chunks");
 
