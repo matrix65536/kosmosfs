@@ -79,13 +79,14 @@ MetaServerSM::SetMetaInfo(const ServerLocation &metaLoc, const char *clusterKey,
 }
 
 void
-MetaServerSM::Init(int chunkServerPort)
+MetaServerSM::Init(int chunkServerPort, const std::string & chunkServerHostname)
 {
     if (mTimer == NULL) {
         mTimer = new MetaServerSMTimeoutImpl(this);
         globals().netManager.RegisterTimeoutHandler(mTimer);
     }
-    mChunkServerPort = chunkServerPort;    
+    mChunkServerPort = chunkServerPort;
+    mChunkServerHostname = chunkServerHostname;
 }
 
 void
@@ -142,8 +143,6 @@ MetaServerSM::Connect()
 int
 MetaServerSM::SendHello()
 {
-    char hostname[256];
-
     if (mHelloOp != NULL)
         return 0;
 
@@ -157,10 +156,21 @@ MetaServerSM::SendHello()
             return -1;
         }
     }
-    gethostname(hostname, 256);
+    
+    struct hostent *hent = 0;
+    
+    if (mChunkServerHostname.size() < 1) {
+        char hostname[256];
+        gethostname(hostname, 256);
 
-    // switch to IP address so we can avoid repeated DNS lookups
-    struct hostent *hent = gethostbyname(hostname);
+        // switch to IP address so we can avoid repeated DNS lookups
+        hent = gethostbyname(hostname);
+    }
+    else {
+        // switch to IP address so we can avoid repeated DNS lookups
+        hent = gethostbyname(mChunkServerHostname.c_str());
+    }
+    
     in_addr ipaddr;
 
     if (hent == NULL) {

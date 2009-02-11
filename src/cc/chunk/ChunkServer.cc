@@ -86,21 +86,32 @@ ChunkServer::SendTelemetryReport(KfsOp_t op, double timeSpent)
 }
 
 void
-ChunkServer::MainLoop(int clientAcceptPort)
+ChunkServer::MainLoop(int clientAcceptPort, const string & serverHostname)
 {
-#if !defined (__sun__)
-    static const int MAXHOSTNAMELEN = 256;
-#endif
-    char hostname[MAXHOSTNAMELEN];
+    struct hostent *hent = 0;
 
     mClientAcceptPort = clientAcceptPort;
-    if (gethostname(hostname, MAXHOSTNAMELEN)) {
-        perror("gethostname: ");
-        exit(-1);
+    
+    if (serverHostname.size() < 1) {
+#if !defined (__sun__)
+        static const int MAXHOSTNAMELEN = 256;
+#endif
+        char hostname[MAXHOSTNAMELEN];
+        
+        if (gethostname(hostname, MAXHOSTNAMELEN)) {
+            perror("gethostname: ");
+            exit(-1);
+        }
+        KFS_LOG_VA_INFO("gethostname returned: %s", hostname);
+        
+        // convert to IP address
+        hent = gethostbyname(hostname);
     }
-
-    // convert to IP address
-    struct hostent *hent = gethostbyname(hostname);
+    else {
+        // convert to IP address
+        hent = gethostbyname(serverHostname.c_str());
+    }
+    
     in_addr ipaddr;
 
     memcpy(&ipaddr, hent->h_addr, hent->h_length);
@@ -108,7 +119,6 @@ ChunkServer::MainLoop(int clientAcceptPort)
     // Warn user if resolved address is the local loopback address which may
     // cause duplicate chunk server issues.
     if ( (ipaddr.s_addr >> 0 & 0xFF) == 127) {
-        KFS_LOG_VA_INFO("gethostname returned: %s", hostname);
         KFS_LOG_VA_INFO("hostname resolved to: %s", inet_ntoa(ipaddr));
         KFS_LOG_WARN("WARNING: IP resolved to 127.x.x.x address - "
                      "check 'hosts' line in /etc/nsswitch.conf to make sure that 'dns'"
@@ -121,7 +131,7 @@ ChunkServer::MainLoop(int clientAcceptPort)
     gLogger.Start();
     gChunkManager.Start();
     // gMetaServerSM.SendHello(clientAcceptPort);
-    gMetaServerSM.Init(clientAcceptPort);
+    gMetaServerSM.Init(clientAcceptPort, serverHostname);
 
     // gChunkManager.DumpChunkMap();
     StartNetProcessor();

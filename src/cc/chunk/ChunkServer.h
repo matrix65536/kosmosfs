@@ -48,7 +48,7 @@ public:
     
     void Init();
 
-    void MainLoop(int clientAcceptPort);
+    void MainLoop(int clientAcceptPort, const std::string & serverHostname);
 
     bool IsLocalServer(const ServerLocation &location) const {
         return mLocation == location;

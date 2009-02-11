@@ -62,8 +62,11 @@ public:
     /// Init function for configuring the metaserver SM.
     /// @param[in] chunkServerPort  Port at which chunk-server is
     /// listening for connections from KFS clients.
+    /// @param[in] chunkServerHostname  Hostname at which chunk-server
+    /// is running - to be used instead of gethostname()
+    /// listening for connections from KFS clients.
     /// @retval 0 if we could connect/send HELLO; -1 otherwise
-    void Init(int chunkServerPort);
+    void Init(int chunkServerPort, const std::string & chunkServerHostname);
 
     /// Send HELLO message.  This sends an op down to the event
     /// processor to get all the info.
@@ -108,9 +111,14 @@ private:
 
     /// the port that the metaserver tells the clients to connect to us at.
     int mChunkServerPort;
+    
+    /// the hostname to use for discovering our IP address
+    /// (instead of using gethostname)
+    std::string mChunkServerHostname;
 
     /// Track if we have sent a "HELLO" to metaserver
     bool mSentHello;
+    
     /// a handle to the hello op.  The model: the network processor
     /// queues the hello op to the event processor; the event
     /// processor pulls the result and enqueues the op back to us; the
