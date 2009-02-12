@@ -45,6 +45,7 @@
 #include "LeaseClerk.h"
  
 #include "concurrency.h"
+#include "KfsPendingOp.h"
 
 namespace KFS {
 
@@ -90,30 +91,27 @@ struct ChunkBuffer {
     // we will hit the network few times and on each occasion, we read
     // a ton and thereby get decent performance; having a big buffer
     // obviates the need to do read-ahead :-)
-    static const size_t ONE_MB = 1 << 20;
-    // to reduce memory footprint, keep a decent size buffer; we used to have
-    // 64MB before
-    static const size_t BUF_SIZE = KFS::CHUNKSIZE < 4 * ONE_MB ? KFS::CHUNKSIZE : 4 * ONE_MB;
-    // static const size_t BUF_SIZE = KFS::CHUNKSIZE;
     
-    ChunkBuffer():chunkno(-1), start(0), length(0), dirty(false), buf(NULL) { }
+    ChunkBuffer():chunkno(-1), start(0), length(0), dirty(false), buf(NULL), bufsz(0) { }
     ~ChunkBuffer() { delete [] buf; }
     void invalidate() { 
         chunkno = -1; start = 0; length = 0; dirty = false; 
         delete [] buf;
+        buf = 0;
     }
     void allocate() {
-        if (buf) 
-            return;
-        // XXX: align this to 16-byte boundary
-        // see IOBuffer.cc code
-        buf = new char[BUF_SIZE];
+        if (! buf && bufsz > 0) {
+            // XXX: align this to 16-byte boundary
+            // see IOBuffer.cc code
+            buf = new char[bufsz];
+        }
     }
     int chunkno;		// which chunk
     off_t start;		// offset with chunk
     size_t length;	// length of valid data
     bool dirty;		// must flush to server if true
     char *buf;	// the data
+    size_t bufsz;
 };
 
 struct ChunkServerConn {
@@ -165,6 +163,36 @@ struct ChunkServerConn {
     }
 };
 
+class KfsClientImpl;
+
+///
+/// The following class is used for chunk read ahead:
+/// Start() sends chunk read request to chunk server, and
+/// Read() retrieves the data.
+/// Reset() cancels read request by resetting chunk server connection.
+///
+class PendingChunkRead
+{
+public:
+    enum { kMaxReadRequest = 1 << 20 };
+
+    PendingChunkRead(KfsClientImpl& impl, size_t readAhead);
+    ~PendingChunkRead();
+    bool Start(int fd, size_t off);
+    ssize_t Read(char *buf, size_t numBytes);
+    bool IsValid() const { return (mFd >= 0); }
+    void Reset() { Start(-1, 0); }
+    void SetReadAhead(size_t readAhead) { mReadAhead = readAhead; }
+    size_t GetReadAhead() const { return mReadAhead; }
+    off_t GetChunkOffset() const { return (IsValid() ? mReadOp.offset : -1); }
+private:
+    ReadOp         mReadOp;
+    TcpSocket*     mSocket;
+    KfsClientImpl& mImpl;
+    int            mFd;
+    size_t         mReadAhead;
+};
+
 ///
 /// \brief Location of the file pointer in a file consists of two
 /// parts: the offset in the file, which then translates to a chunk #
@@ -177,15 +205,17 @@ struct FilePosition {
 	fileOffset = chunkOffset = 0;
 	chunkNum = 0;
         preferredServer = NULL;
+        pendingChunkRead = 0;
     }
     ~FilePosition() {
-
+        delete pendingChunkRead;
     }
     void Reset() {
 	fileOffset = chunkOffset = 0;
 	chunkNum = 0;
         chunkServers.clear();
         preferredServer = NULL;
+        CancelPendingRead();
     }
 
     off_t	fileOffset; // offset within the file
@@ -205,9 +235,12 @@ struct FilePosition {
     /// Track the location of the preferred server so we can print debug messages
     ServerLocation preferredServerLocation;
 
+    PendingChunkRead* pendingChunkRead;
+
     void ResetServers() {
         chunkServers.clear();
         preferredServer = NULL;
+        CancelPendingRead();
     }
 
     TcpSocket *GetChunkServerSocket(const ServerLocation &loc, bool nonblockingConnect = false) {
@@ -266,6 +299,17 @@ struct FilePosition {
             return -1;
         return preferredServer->GetPeerName((struct sockaddr *) &saddr, sizeof(struct sockaddr_in));
     }
+    void CancelPendingRead() {
+        if (pendingChunkRead) {
+            pendingChunkRead->Reset();
+        }
+    }
+    void CancelNonAdjacentPendingRead() {
+        if (pendingChunkRead &&
+                pendingChunkRead->GetChunkOffset() != chunkOffset) {
+            pendingChunkRead->Reset();
+        }
+    }
 };
 
 typedef std::tr1::unordered_map<std::string, int, Hsieh_hash_fcn> NameToFdMap;
@@ -315,6 +359,7 @@ class KfsClientImpl {
 
 public:
     KfsClientImpl();
+    ~KfsClientImpl();
 
     ///
     /// @param[in] metaServerHost  Machine on meta is running
@@ -492,7 +537,7 @@ public:
     /// @param[in] fd that corresponds to a file that was previously
     /// opened for writing.
     ///
-    int Sync(int fd);
+    int Sync(int fd, bool flushOnlyIfHasFullChecksumBlock = false);
 
     /// \brief Adjust the current position of the file pointer similar
     /// to the seek() system call.
@@ -556,6 +601,17 @@ public:
     // This is called in a thread safe manner.
     kfsSeq_t nextSeq() { return mCmdSeqNum++; }
 
+    size_t SetDefaultIoBufferSize(size_t size);
+    size_t GetDefaultIoBufferSize() const;
+    size_t SetIoBufferSize(int fd, size_t size);
+    size_t GetIoBufferSize(int fd) const;
+
+    size_t SetDefaultReadAheadSize(size_t size);
+    size_t GetDefaultReadAheadSize() const;
+    size_t SetReadAheadSize(int fd, size_t size);
+    size_t GetReadAheadSize(int fd) const;
+    pthread_mutex_t& GetMutex() { return mMutex; }
+    
 private:
      /// Maximum # of files a client can have open.
     static const int MAX_FILES = 512000;
@@ -591,9 +647,12 @@ private:
     TelemetryClient mTelemetryReporter;
     /// set of slow nodes as flagged by the telemetry service
     std::vector<struct in_addr> mSlowNodes;
+    size_t mDefaultIoBufferSize;
+    size_t mDefaultReadAheadSize;
+    KfsPendingOp mPendingOp;
 
     /// Check that fd is in range
-    bool valid_fd(int fd) { return (fd >= 0 && fd < MAX_FILES); }
+    bool valid_fd(int fd) { return (fd >= 0 && fd < MAX_FILES && (size_t)fd < mFileTable.size() && mFileTable[fd]); }
 
     /// Connect to the meta server and return status.
     /// @retval true if connect succeeds; false otherwise.
@@ -673,7 +732,7 @@ private:
     ssize_t DoLargeReadFromServer(int fd, char *buf, size_t numBytes);
 
     /// Helper function that copies out data from the chunk buffer
-    /// corresponding to the "current" chunk.
+    /// corresponding to the "current" chunk./home/mike/qq/src/sort/platform/kosmosfs/src/cc/libkfsClient/KfsPendingOp.cc:43:
     /// @param[in] fd  The file from which data is to be read
     /// @param[out] buf  The buffer which will be filled with data
     /// @param[in] numBytes  The desired # of bytes to be read
@@ -711,7 +770,7 @@ private:
     /// server.
     /// @param[in] fd  The file to which data is to be written
     /// @retval  # of bytes written; -1 on failure
-    ssize_t FlushBuffer(int fd);
+    ssize_t FlushBuffer(int fd, bool flushOnlyIfHasFullChecksumBlock = false);
 
     /// Helper function that does the write RPC.
     /// @param[in] fd  The file to which data is to be written
@@ -846,6 +905,7 @@ private:
 
     bool VerifyDataChecksums(int fte, const vector<uint32_t> &checksums);
     bool VerifyChecksum(ReadOp* op, TcpSocket* sock);
+    friend class PendingChunkRead;
 };
 
 

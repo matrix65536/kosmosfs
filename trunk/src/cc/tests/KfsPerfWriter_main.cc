@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/23
 //
@@ -29,7 +29,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <fstream>
+#include <time.h>
 #include "libkfsClient/KfsClient.h"
+#include "common/log.h"
 
 using std::cout;
 using std::endl;
@@ -41,7 +43,7 @@ using namespace KFS;
 int numReplicas = 3;
 KfsClientPtr gKfsClient;
 static bool doMkdirs(const char *dirname);
-static off_t doWrite(const string &kfspathname, int numMBytes, size_t writeSizeBytes);
+static off_t doWrite(const string &kfspathname, int numMBytes, size_t writeSizeBytes, double sleepSec);
 
 int
 main(int argc, char **argv)
@@ -52,8 +54,9 @@ main(int argc, char **argv)
     int numMBytes = 1;
     size_t writeSizeBytes = 65536;
     bool help = false;
+    double sleepSec = -1;
 
-    while ((optchar = getopt(argc, argv, "f:p:m:b:r:")) != -1) {
+    while ((optchar = getopt(argc, argv, "f:p:m:b:r:S:")) != -1) {
         switch (optchar) {
             case 'f':
                 kfspathname = optarg;
@@ -70,6 +73,9 @@ main(int argc, char **argv)
             case 'r':
                 numReplicas = atoi(optarg);
                 break;
+            case 'S':
+                sleepSec = atof(optarg);
+                break;
             default:
                 cout << "Unrecognized flag: " << optchar << endl;
                 help = true;
@@ -79,7 +85,9 @@ main(int argc, char **argv)
 
     if (help || (kfsPropsFile == NULL) || (kfspathname == "")) {
         cout << "Usage: " << argv[0] << " -p <Kfs Client properties file> "
-             << " -m <# of MB to write> -b <write size in bytes> -f <Kfs file> " << endl;
+             << " -m <# of MB to write> -b <write size in bytes> -f <Kfs file> "
+             << " -S <sleep between writes>"
+             << endl;
         exit(0);
     }
 
@@ -91,6 +99,8 @@ main(int argc, char **argv)
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(-1);
     }
+
+    KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
 
     string kfsdirname, kfsfilename;
     string::size_type slash = kfspathname.rfind('/');
@@ -110,7 +120,7 @@ main(int argc, char **argv)
 
     gettimeofday(&startTime, NULL);
 
-    bytesWritten = doWrite(kfspathname, numMBytes, writeSizeBytes);
+    bytesWritten = doWrite(kfspathname, numMBytes, writeSizeBytes, sleepSec);
 
     gettimeofday(&endTime, NULL);
 
@@ -139,7 +149,7 @@ doMkdirs(const char *dirname)
 }
 
 off_t
-doWrite(const string &filename, int numMBytes, size_t writeSizeBytes)
+doWrite(const string &filename, int numMBytes, size_t writeSizeBytes, double sleepSec)
 {
     const size_t mByte = 1024 * 1024;
     char dataBuf[mByte];
@@ -162,13 +172,21 @@ doWrite(const string &filename, int numMBytes, size_t writeSizeBytes)
         cout << "Create failed: " << endl;
         exit(-1);
     }
-
+    struct timespec sleepTm;
+    const bool doSleep = sleepSec > 0;
+    if (doSleep) {
+        sleepTm.tv_sec = time_t(sleepSec);
+        sleepTm.tv_nsec = long((sleepSec - (double)sleepTm.tv_sec) * 1e9);
+    }
     for (nMBytes = 0; nMBytes < numMBytes; nMBytes++) {
         for (bytesWritten = 0; bytesWritten < mByte; bytesWritten += writeSizeBytes) {
             res = gKfsClient->Write(fd, dataBuf, writeSizeBytes);
             if (res != (int) writeSizeBytes)
                 return (bytesWritten + nMBytes * 1024 * 1024);
             nwrote += writeSizeBytes;
+        }
+        if (doSleep) {
+            nanosleep(&sleepTm, 0);
         }
     }
     cout << "write of " << nwrote / (1024 * 1024) << " (MB) is done" << endl;

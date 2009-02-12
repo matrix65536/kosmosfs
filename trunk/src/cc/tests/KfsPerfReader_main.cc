@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/23
 //
@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <fstream>
+#include <time.h>
 #include <boost/scoped_array.hpp>
 #include "libkfsClient/KfsClient.h"
 
@@ -41,7 +42,8 @@ using std::string;
 using namespace KFS;
 KfsClientPtr gKfsClient;
 
-static off_t doRead(const string &kfspathname, int numMBytes, int readSizeBytes);
+static off_t doRead(const string &kfspathname,
+    int numMBytes, int readSizeBytes, int cliBufSize, int readAhead, double sleepSec);
 
 int
 main(int argc, char **argv)
@@ -51,8 +53,12 @@ main(int argc, char **argv)
     char *kfsPropsFile = NULL;
     int numMBytes = 1, readSizeBytes = 65536;
     bool help = false;
+    const char* logLevel = "INFO";
+    int cliBufSize = -1;
+    int readAhead = -1;
+    double sleepSec = -1;
 
-    while ((optchar = getopt(argc, argv, "f:p:m:b:")) != -1) {
+    while ((optchar = getopt(argc, argv, "f:p:m:b:s:a:S:d")) != -1) {
         switch (optchar) {
             case 'f':
                 kfspathname = optarg;
@@ -66,6 +72,18 @@ main(int argc, char **argv)
             case 'm':
                 numMBytes = atoi(optarg);
                 break;
+            case 'd':
+                logLevel = "DEBUG";
+                break;
+            case 's':
+                cliBufSize = atoi(optarg);
+                break;
+            case 'S':
+                sleepSec = atof(optarg);
+                break;
+            case 'a':
+                readAhead = atoi(optarg);
+                break;
             default:
                 cout << "Unrecognized flag: " << optchar << endl;
                 help = true;
@@ -74,8 +92,10 @@ main(int argc, char **argv)
     }
 
     if (help || (kfsPropsFile == NULL) || (kfspathname == "")) {
-        cout << "Usage: " << argv[0] << " -p <Kfs Client properties file> "
-             << " -m <# of MB to read> -b <read size in bytes> -f <Kfs file> " << endl;
+        cout << "Usage: " << argv[0] << " -p <Kfs Client properties file>"
+             " -m <# of MB to read> -b <read size in bytes> -f <Kfs file>"
+             " -S <sleep sec. between reads> -d -s <kfs buffer size>"
+        << endl;
         exit(0);
     }
 
@@ -87,6 +107,7 @@ main(int argc, char **argv)
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(-1);
     }
+    gKfsClient->SetLogLevel(logLevel);
 
     string kfsdirname, kfsfilename;
     string::size_type slash = kfspathname.rfind('/');
@@ -105,7 +126,7 @@ main(int argc, char **argv)
 
     gettimeofday(&startTime, NULL);
 
-    bytesRead = doRead(kfspathname, numMBytes, readSizeBytes);
+    bytesRead = doRead(kfspathname, numMBytes, readSizeBytes, cliBufSize, readAhead, sleepSec);
 
     gettimeofday(&endTime, NULL);
 
@@ -119,7 +140,8 @@ main(int argc, char **argv)
 }
 
 off_t
-doRead(const string &filename, int numMBytes, int readSizeBytes)
+doRead(const string &filename, int numMBytes,
+    int readSizeBytes, int cliBufSize, int readAhead, double sleepSec)
 {
     const int mByte = 1024 * 1024;
     boost::scoped_array<char> dataBuf;
@@ -138,13 +160,31 @@ doRead(const string &filename, int numMBytes, int readSizeBytes)
         cout << "Open failed: " << endl;
         exit(-1);
     }
-
+    if (cliBufSize >= 0) {
+        const size_t size = gKfsClient->SetIoBufferSize(fd, cliBufSize);
+        cout << "Setting kfs buffer size to: "
+            << cliBufSize << " got: " << size << endl;
+    }
+    if (readAhead >= 0) {
+        const size_t size = gKfsClient->SetReadAheadSize(fd, readAhead);
+        cout << "Setting kfs read ahead size to: "
+            << readAhead << " got: " << size << endl;
+    }
+    struct timespec sleepTm;
+    const bool doSleep = sleepSec > 0;
+    if (doSleep) {
+        sleepTm.tv_sec = time_t(sleepSec);
+        sleepTm.tv_nsec = long((sleepSec - (double)sleepTm.tv_sec) * 1e9);
+    }
     for (nMBytes = 0; nMBytes < numMBytes; nMBytes++) {
         for (bytesRead = 0; bytesRead < mByte; bytesRead += readSizeBytes) {
             res = gKfsClient->Read(fd, dataBuf.get(), readSizeBytes);
             if (res != readSizeBytes)
                 return (bytesRead + nMBytes * 1024 * 1024);
             nread += readSizeBytes;
+            if (doSleep) {
+                nanosleep(&sleepTm, 0);
+            }
         }
     }
     cout << "read of " << nread / (1024 * 1024) << " (MB) is done" << endl;

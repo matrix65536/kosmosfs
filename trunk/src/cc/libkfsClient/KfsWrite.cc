@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/10/02
 // Author: Sriram Rao
@@ -58,6 +58,12 @@ NeedToRetryAllocation(int status)
 	    (status == -KFS::EALLOCFAILED));
 }
 
+inline size_t GetChecksumBlockTailSize(off_t offset)
+{
+    size_t rem(offset % CHECKSUM_BLOCKSIZE);
+    return (rem > 0 ? CHECKSUM_BLOCKSIZE - rem : 0);
+}
+    
 ssize_t
 KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 {
@@ -76,9 +82,11 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	return -EISDIR;
 
     FilePosition *pos = FdPos(fd);
+    pos->CancelPendingRead();
     //
     // Loop thru chunk after chunk until we write the desired #
     // of bytes.
+    ChunkBuffer* const cb = FdBuffer(fd);
     while (nwrote < numBytes) {
 
 	size_t nleft = numBytes - nwrote;
@@ -101,7 +109,7 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	    }
 	}
 
-	if (nleft < ChunkBuffer::BUF_SIZE || FdBuffer(fd)->dirty) {
+	if (nleft < cb->bufsz || cb->dirty) {
 	    // either the write is small or there is some dirty
 	    // data...so, aggregate as much as possible and then it'll
 	    // get flushed
@@ -137,6 +145,14 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
     if (nwrote != numBytes) {
 	KFS_LOG_VA_DEBUG("----Write done: asked: %llu, got: %llu-----",
 			  numBytes, nwrote);
+    } else if (cb->dirty &&
+            cb->length >= max(
+                CHECKSUM_BLOCKSIZE + GetChecksumBlockTailSize(cb->start),
+                min(cb->bufsz >> 1, size_t(1) << 20))) {
+        KFS_LOG_VA_DEBUG("starting sync chunk: %d offset: %d/%d size: %d",
+            (int)pos->chunkNum, (int)cb->start,
+            (int)pos->chunkOffset, (int)cb->length);
+        mPendingOp.Start(fd, false);
     }
     return nwrote;
 }
@@ -164,7 +180,7 @@ KfsClientImpl::WriteToBuffer(int fd, const char *buf, size_t numBytes)
     off_t start = pos->chunkOffset - cb->start;
     size_t previous = cb->length;
     if (cb->dirty && ((start != (off_t) previous) ||
-	              (previous == ChunkBuffer::BUF_SIZE))) {
+	              (previous == cb->bufsz))) {
 	int status = FlushBuffer(fd);
 	if (status < 0)
 	    return status;
@@ -183,7 +199,7 @@ KfsClientImpl::WriteToBuffer(int fd, const char *buf, size_t numBytes)
 	return 0;
 
     // max I/O we can do
-    numIO = min(ChunkBuffer::BUF_SIZE - cb->length, numBytes);
+    numIO = min(cb->bufsz - cb->length, numBytes);
     assert(numIO > 0);
 
     // KFS_LOG_VA_DEBUG("Buffer absorbs write...%d bytes", numIO);
@@ -194,7 +210,7 @@ KfsClientImpl::WriteToBuffer(int fd, const char *buf, size_t numBytes)
     // where the "filepointer" is currently at.
     // Figure out where the data we want copied into starts
     start = pos->chunkOffset - cb->start;
-    assert(start >= 0 && start < (off_t) ChunkBuffer::BUF_SIZE);
+    assert(start >= 0 && start < (off_t) cb->bufsz);
     memcpy(&cb->buf[start], buf, numIO);
 
     lastByte = start + numIO;
@@ -208,17 +224,24 @@ KfsClientImpl::WriteToBuffer(int fd, const char *buf, size_t numBytes)
 }
 
 ssize_t
-KfsClientImpl::FlushBuffer(int fd)
+KfsClientImpl::FlushBuffer(int fd, bool flushOnlyIfHasFullChecksumBlock)
 {
     ssize_t numIO = 0;
+    size_t extra = 0;
     ChunkBuffer *cb = FdBuffer(fd);
 
-    if (cb->dirty) {
-	numIO = WriteToServer(fd, cb->start, cb->buf, cb->length);
+    if (cb->dirty && (! flushOnlyIfHasFullChecksumBlock ||
+            cb->length >= CHECKSUM_BLOCKSIZE +
+                (extra = GetChecksumBlockTailSize(cb->start)))) {
+        const size_t nWr = flushOnlyIfHasFullChecksumBlock ?
+            extra + cb->length / CHECKSUM_BLOCKSIZE * CHECKSUM_BLOCKSIZE :
+            cb->length;
+	numIO = WriteToServer(fd, cb->start, cb->buf, nWr);
 	if (numIO >= 0) {
-	    cb->dirty = false;
-            // we just flushed the buffer...so, there is no data in it
-            cb->length = 0;
+            cb->length -= nWr;
+            cb->start += nWr;
+            memmove(cb->buf, cb->buf + nWr, cb->length);
+            cb->dirty = cb->length > 0;
         }
     }
     return numIO;

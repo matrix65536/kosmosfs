@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/04/18
 // Author: Sriram Rao
@@ -246,7 +246,7 @@ public:
     /// @param[in] fd that corresponds to a file that was previously
     /// opened for writing.
     ///
-    int Sync(int fd);
+    int Sync(int fd, bool flushOnlyIfHasFullChecksumBlock = false);
 
     /// \brief Adjust the current position of the file pointer similar
     /// to the seek() system call.
@@ -307,6 +307,65 @@ public:
     int16_t SetReplicationFactor(const char *pathname, int16_t numReplicas);
 
     ServerLocation GetMetaserverLocation() const;
+
+    ///
+    /// Set default io buffer size.
+    /// This has no effect on already opened files.
+    /// SetIoBufferSize() can be used to change buffer size for opened file.
+    /// @param[in] desired buffer size
+    /// @retval actual buffer size
+    //
+    size_t SetDefaultIoBufferSize(size_t size);
+ 
+    ///
+    /// Get read ahead / write behind default buffer size.
+    /// @retval buffer size
+    //
+    size_t GetDefaultIoBufferSize() const;
+ 
+    ///
+    /// Set file io buffer size.
+    /// @param[in] fd that corresponds to a previously opened file
+    /// @param[in] desired buffer size
+    /// @retval actual buffer size
+    //
+    size_t SetIoBufferSize(int fd, size_t size);
+ 
+    ///
+    /// Get file io buffer size.
+    /// @param[in] fd that corresponds to a previously opened file
+    /// @retval buffer size
+    //
+    size_t GetIoBufferSize(int fd) const;
+
+    ///
+    /// Set default read ahead size.
+    /// This has no effect on already opened files.
+    /// @param[in] desired read ahead size
+    /// @retval actual default read ahead size
+    //
+    size_t SetDefaultReadAheadSize(size_t size);
+ 
+    ///
+    /// Get read ahead / write behind default buffer size.
+    /// @retval buffer size
+    //
+    size_t GetDefaultReadAheadSize() const;
+ 
+    ///
+    /// Set file read ahead size.
+    /// @param[in] fd that corresponds to a previously opened file
+    /// @param[in] desired read ahead size
+    /// @retval actual read ahead size
+    //
+    size_t SetReadAheadSize(int fd, size_t size);
+ 
+    ///
+    /// Get file read ahead size.
+    /// @param[in] fd that corresponds to a previously opened file
+    /// @retval read ahead size
+    //
+    size_t GetReadAheadSize(int fd) const;
 private:
     KfsClientImpl *mImpl;
 };

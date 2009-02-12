@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2007/08/24
 // Author: Sriram Rao
@@ -104,6 +104,30 @@ extern "C" {
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_create(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jint jnumReplicas, jboolean jexclusive);
+
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setDefaultIoBufferSize(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jlong jsize);
+
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getDefaultIoBufferSize(
+        JNIEnv *jenv, jclass jcls, jlong jptr);
+
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setDefaultReadAheadSize(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jlong jsize);
+
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getDefaultReadAheadSize(
+        JNIEnv *jenv, jclass jcls, jlong jptr);
+
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setIoBufferSize(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jlong jsize);
+
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getIoBufferSize(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd);
+
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setReadAheadSize(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jlong jsize);
+
+    jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getReadAheadSize(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd);
 
     /* Input channel methods */
     jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_read(
@@ -362,6 +386,70 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rename(
     setStr(npath, jenv, jnewpath);
 
     return clnt->Rename(opath.c_str(), npath.c_str(), joverwrite);
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setDefaultIoBufferSize(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jlong jsize)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    
+    return (jlong)clnt->SetDefaultIoBufferSize(jsize);
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getDefaultIoBufferSize(
+    JNIEnv *jenv, jclass jcls, jlong jptr)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    
+    return (jlong)clnt->GetDefaultIoBufferSize();
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setDefaultReadAheadSize(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jlong jsize)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    
+    return (jlong)clnt->SetDefaultReadAheadSize(jsize);
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getDefaultReadAheadSize(
+    JNIEnv *jenv, jclass jcls, jlong jptr)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    
+    return (jlong)clnt->GetDefaultReadAheadSize();
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setIoBufferSize(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jlong jsize)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    
+    return (jlong)clnt->SetIoBufferSize(jfd, jsize);
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getIoBufferSize(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    
+    return (jlong)clnt->GetIoBufferSize(jfd);
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setReadAheadSize(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jlong jsize)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    
+    return (jlong)clnt->SetReadAheadSize(jfd, jsize);
+}
+
+jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getReadAheadSize(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    
+    return (jlong)clnt->GetReadAheadSize(jfd);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_sync(

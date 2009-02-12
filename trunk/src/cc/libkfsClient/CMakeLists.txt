@@ -17,10 +17,10 @@ set_target_properties (kfsClient-shared PROPERTIES OUTPUT_NAME "kfsClient")
 set_target_properties (kfsClient PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties (kfsClient-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-add_dependencies (kfsClient kfsCommon kfsIO)
+add_dependencies (kfsClient kfsCommon kfsIO qcdio)
 # get everthing into one
-target_link_libraries (kfsClient kfsCommon kfsIO)
-target_link_libraries (kfsClient-shared kfsCommon-shared kfsIO-shared)
+target_link_libraries (kfsClient kfsCommon kfsIO qcdio)
+target_link_libraries (kfsClient-shared kfsCommon-shared kfsIO-shared qcdio-shared)
 #
 install (TARGETS kfsClient kfsClient-shared
         LIBRARY DESTINATION lib

@@ -1,5 +1,5 @@
 /**
- * $Id$ 
+ * $Id$
  *
  * Created 2007/08/24
  * @author: Sriram Rao
@@ -97,6 +97,30 @@ public class KfsAccess
 
     private final static native
     long filesize(long ptr, String path);
+
+    public final static native
+    long setDefaultIoBufferSize(long size);
+
+    public final static native
+    long getDefaultIoBufferSize();
+
+    public final static native
+    long setDefaultReadAheadSize(long size);
+
+    public final static native
+    long getDefaultReadAheadSize();
+
+    private final static native
+    long setIoBufferSize(int fd, long size);
+
+    private final static native
+    long getIoBufferSize(int fd);
+
+    private final static native
+    long setReadAheadSize(int fd, long size);
+
+    private final static native
+    long getReadAheadSize(int fd);
 
     static {
         try {
@@ -234,11 +258,40 @@ public class KfsAccess
         return new KfsOutputChannel(cPtr, fd);
     }
 
+    public KfsOutputChannel kfs_create(String path, int numReplicas, boolean exclusive,
+        long bufferSize, long readAheadSize)
+    {
+        int fd = create(cPtr, path, numReplicas, exclusive);
+        if (fd < 0)
+            return null;
+        if (bufferSize >= 0) {
+            setIoBufferSize(fd, bufferSize);
+        }
+        if (readAheadSize >= 0) {
+            setReadAheadSize(fd, readAheadSize);
+        }
+        return new KfsOutputChannel(cPtr, fd);
+    }
+
     public KfsInputChannel kfs_open(String path)
     {
         int fd = open(cPtr, path, "r", 1);
         if (fd < 0)
             return null;
+        return new KfsInputChannel(cPtr, fd);
+    }
+
+    public KfsInputChannel kfs_open(String path, long bufferSize, long readAheadSize)
+    {
+        int fd = open(cPtr, path, "r", 1);
+        if (fd < 0)
+            return null;
+        if (bufferSize >= 0) {
+            setIoBufferSize(fd, bufferSize);
+        }
+        if (readAheadSize >= 0) {
+            setReadAheadSize(fd, readAheadSize);
+        }
         return new KfsInputChannel(cPtr, fd);
     }
 
