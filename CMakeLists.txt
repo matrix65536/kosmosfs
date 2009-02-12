@@ -60,13 +60,11 @@ IF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
    set (CMAKE_SKIP_RPATH ON)
 ELSE (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
    set (USE_STATIC_LIB_LINKAGE ON CACHE BOOL "Build binaries with statically linked libraries" FORCE)
+    IF (CMAKE_SIZEOF_VOID_P MATCHES "4")
+       message (STATUS "Enabling largefile source flags")
+       add_definitions (-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_LARGE_FILES)
+    ENDIF (CMAKE_SIZEOF_VOID_P MATCHES "4")
 ENDIF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
-
-
-IF (CMAKE_SYSTEM_PROCESSOR MATCHES "i[1-9]86")
-   message (STATUS "Enabling largefile source flags")
-   add_definitions (-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_LARGE_FILES)
-ENDIF (CMAKE_SYSTEM_PROCESSOR MATCHES "i[1-9]86")
 
 IF (ENABLE_PROFILING)
    message (STATUS "Enabling profiling with gprof")
@@ -110,7 +108,6 @@ SET(Fuse_INCLUDE_DIR "")
 # include dirs
 include_directories( ${Boost_INCLUDE_DIRS} ${Log4cpp_INCLUDE_DIR} src/cc)
 
-
 # get the subdirs we want
 add_subdirectory (src/cc/common)
 add_subdirectory (src/cc/meta)
@@ -121,6 +118,7 @@ add_subdirectory (src/cc/tools)
 add_subdirectory (src/cc/tests)
 add_subdirectory (src/cc/emulator)
 #add_subdirectory (src/cc/telemetry)
+add_subdirectory (src/cc/qcdio)
 
 IF (NOT ${JAVA_INCLUDE_PATH} STREQUAL "")
    message(STATUS "Found JNI...building kfs_access")

@@ -72,6 +72,16 @@ NeedToChangeReplica(int errcode)
     return ((errcode == -EHOSTUNREACH) || (errcode == -ETIMEDOUT) || (errcode == -EIO));
 }
 
+inline static bool 
+IsChunkBufferDataValid(
+    FilePosition* pos,
+    ChunkBuffer*  cb)
+{
+    return (pos->chunkNum == cb->chunkno &&
+        pos->chunkOffset >= cb->start &&
+        pos->chunkOffset < (off_t)(cb->start + cb->length));
+}
+
 ssize_t
 KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
 {
@@ -127,16 +137,26 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
 	Seek(fd, numIO, SEEK_CUR);
     }
 
-    if ((pos->fileOffset < (off_t) fa->fileSize) && (nread < numBytes)) {
-        FilePosition *pos = FdPos(fd);
-        string s;
+    if (pos->fileOffset < (off_t) fa->fileSize) {
+        if (nread < numBytes) {
+            FilePosition *pos = FdPos(fd);
+            string s;
 
-        if ((pos != NULL) && (pos->preferredServer != NULL)) {
-            s = pos->GetPreferredServerLocation().ToString();
+            if ((pos != NULL) && (pos->preferredServer != NULL)) {
+                s = pos->GetPreferredServerLocation().ToString();
+            }
+
+            KFS_LOG_VA_INFO("Read done from %s on %s: @offset: %lld: asked: %d, returning %d, errorcode = %d",
+                            s.c_str(), mFileTable[fd]->pathname.c_str(), pos->fileOffset, numBytes, (int) nread, (int) numIO);
+        } else if (pos->pendingChunkRead &&
+                pos->pendingChunkRead->GetReadAhead() > 0 &&
+                cb->bufsz > 1u &&
+                // ! pos->pendingChunkRead->IsValid() && Uncomment to read only on chunk boundary.
+                ! IsChunkBufferDataValid(pos, cb)) {
+            KFS_LOG_VA_DEBUG("queuing pending read: %d offset: %d",
+                (int)pos->chunkNum, (int)pos->chunkOffset);
+            mPendingOp.Start(fd, true);
         }
-        
-        KFS_LOG_VA_INFO("Read done from %s on %s: @offset: %lld: asked: %d, returning %d, errorcode = %d",
-                        s.c_str(), mFileTable[fd]->pathname.c_str(), pos->fileOffset, numBytes, (int) nread, (int) numIO);
     }
     return nread;
 }
@@ -214,6 +234,7 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
     if (numIO > 0)
 	return numIO;
 
+    pos->CancelNonAdjacentPendingRead();
     chunk = GetCurrChunk(fd);
 
     while (retryCount < NUM_RETRIES_PER_OP) {
@@ -264,10 +285,10 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
 	if (numIO > 0)
 	    return numIO;
 
-	if (numBytes < ChunkBuffer::BUF_SIZE) {
+        ChunkBuffer *cb = FdBuffer(fd);
+	if (numBytes < cb->bufsz) {
 	    // small reads...so buffer the data
-	    ChunkBuffer *cb = FdBuffer(fd);
-	    numIO = ReadFromServer(fd, cb->buf, ChunkBuffer::BUF_SIZE);
+	    numIO = ReadFromServer(fd, cb->buf, cb->bufsz);
 	    if (numIO > 0) {
 	        cb->chunkno = pos->chunkNum;
 	        cb->start = pos->chunkOffset;
@@ -309,6 +330,107 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
     return numIO;
 }
 
+PendingChunkRead::PendingChunkRead(
+    KfsClientImpl& impl,
+    size_t         readAhead)
+    : mReadOp(-1, -1, -1),
+      mSocket(0),
+      mImpl(impl),
+      mFd(-1),
+      mReadAhead(readAhead)
+{
+}
+
+PendingChunkRead::~PendingChunkRead()
+{
+    PendingChunkRead::Reset();
+}
+
+bool
+PendingChunkRead::Start(int fd, size_t off)
+{
+    if (mFd >= 0) {
+        // mImpl.GetCurrChunk(fd)->chunkId = -1;
+        delete [] mReadOp.contentBuf;
+        mReadOp.ReleaseContentBuf();
+        const int curFd = mFd;
+        mFd = -1;
+        mImpl.FdPos(curFd)->ResetServers();
+    }
+    mFd = fd;
+    if (mFd < 0 || mReadAhead <= 0) {
+        mFd = -1;
+        return false;
+    }
+    FilePosition& pos = *mImpl.FdPos(mFd);
+    mSocket = pos.preferredServer;
+    if (! mSocket) {
+        mFd = -1;
+        return false;
+    }
+    ChunkAttr& chunk = *mImpl.GetCurrChunk(mFd);
+    mReadOp.contentLength = 0;
+    mReadOp.seq           = mImpl.nextSeq();
+    mReadOp.chunkId       = chunk.chunkId;
+    mReadOp.chunkVersion  = chunk.chunkVersion;
+    mReadOp.offset        = pos.chunkOffset + off;
+    if (mReadOp.offset >= chunk.chunkSize) {
+        mFd = -1;
+        return false;
+    }
+    mReadOp.numBytes = min(size_t(kMaxReadRequest),
+        min(size_t(chunk.chunkSize - mReadOp.offset), mReadAhead));
+    mReadOp.numBytes =
+        OffsetToChecksumBlockStart(mReadOp.offset + mReadOp.numBytes) -
+        mReadOp.offset;
+    if (mReadOp.numBytes > 0 && mSocket) {
+        if (DoOpSend(&mReadOp, mSocket)) {
+            chunk.chunkId = -1;
+            pos.ResetServers();
+            mFd = -1;
+        }
+    } else {
+        mFd = -1;
+    }
+    KFS_LOG_VA_DEBUG("starting pending read chunk: %d offset: %d size: %d %s",
+        (int)mReadOp.chunkId, (int)mReadOp.offset, (int)mReadOp.numBytes,
+        mFd >= 0 ? "OK" : "failed");
+    return (mFd >= 0);
+}
+
+ssize_t
+PendingChunkRead::Read(char *buf, size_t numBytes)
+{
+    if (mFd < 0) {
+        return 0;
+    }
+    const bool attachFlag = numBytes >= mReadOp.numBytes;
+    if (attachFlag) {
+        mReadOp.AttachContentBuf(buf, numBytes);
+    }
+    if (DoOpResponse(&mReadOp, mSocket) < 0 || mReadOp.status < 0 ||
+            ! mImpl.VerifyChecksum(&mReadOp, mSocket)) {
+        if (attachFlag) {
+            mReadOp.ReleaseContentBuf();
+        }
+        mImpl.FdPos(mFd)->ResetServers();
+        mFd = -1;
+        return (mReadOp.status < 0 ? mReadOp.status < 0 : -EAGAIN);
+    }
+    const ssize_t numRd = min(mReadOp.contentLength, numBytes);
+    if (! attachFlag) {
+        memcpy(buf, mReadOp.contentBuf, numRd);
+        delete [] mReadOp.contentBuf;
+    }
+    mReadOp.ReleaseContentBuf();
+    mReadOp.contentLength = 0;
+    mFd = -1;
+    KFS_LOG_VA_DEBUG("pending chunk read done chunk: %d offset: %d size: %d ret: %d",
+        (int)mReadOp.chunkId, (int)mReadOp.offset, (int)mReadOp.numBytes,
+        (int)numRd);
+    return numRd;
+}
+
 ssize_t
 KfsClientImpl::ReadFromServer(int fd, char *buf, size_t numBytes)
 {
@@ -322,6 +444,20 @@ KfsClientImpl::ReadFromServer(int fd, char *buf, size_t numBytes)
     numAvail = min((size_t) (chunk->chunkSize - pos->chunkOffset),
                    numBytes);
 
+    if (pos->pendingChunkRead) {
+        if (pos->pendingChunkRead->IsValid() &&
+                pos->pendingChunkRead->GetChunkOffset() != pos->chunkOffset) {
+            KFS_LOG_VA_ERROR("pending chunk read offset mismatch pos: %d offset: %d",
+                (int)pos->chunkOffset, (int)pos->pendingChunkRead->GetChunkOffset());
+            pos->pendingChunkRead->Reset();
+            return -EAGAIN;
+        } else if ((res = pos->pendingChunkRead->Read(buf, numBytes)) != 0) {
+            if (res > 0) {
+                pos->pendingChunkRead->Start(fd, res);
+            }
+            return res;
+        }
+    }
     // Align the reads to checksum block boundaries, so that checksum
     // verification on the server can be done efficiently: if the read falls
     // within a checksum block, issue it as one read; otherwise, split
@@ -332,6 +468,13 @@ KfsClientImpl::ReadFromServer(int fd, char *buf, size_t numBytes)
     else
 	res = DoLargeReadFromServer(fd, buf, numBytes);
 
+    if (pos->pendingChunkRead) {
+        if (res > 0) {
+            pos->pendingChunkRead->Start(fd, res);
+        } else {
+            pos->pendingChunkRead->Reset();
+        }
+    }
 
     return res;
 }
@@ -415,9 +558,7 @@ KfsClientImpl::CopyFromChunkBuf(int fd, char *buf, size_t numBytes)
     // "BEYOND" the current location of the file pointer, we don't
     // have the data.  "BEYOND" => offset is before the starting point
     // or offset is after the end of the buffer
-    if ((pos->chunkNum != cb->chunkno) ||
-        (pos->chunkOffset < cb->start) ||
-        (pos->chunkOffset >= (off_t) (cb->start + cb->length)))
+    if (! IsChunkBufferDataValid(pos, cb))
 	return 0;
 
     // first figure out how much data is available in the buffer

@@ -74,7 +74,19 @@ namespace KFS
     private:
         void Parse(const char *line, bool addChunksToReplicationChecker);
         bool mDoingRebalancePlanning;
-        std::tr1::unordered_map<chunkId_t, std::vector<size_t> > mChunkSize;
+
+        struct ChunkIdHash
+            : public std::unary_function<chunkId_t, std::size_t>
+        {
+            std::size_t operator()(chunkId_t v) const
+            {
+                return (std::size_t(v) ^
+                    std::size_t(v >> (sizeof(std::size_t) * 8)));
+            }
+        };
+        typedef std::tr1::unordered_map<chunkId_t, std::vector<size_t>, ChunkIdHash > ChunkSizeMap;
+
+        ChunkSizeMap mChunkSize;
     };
 
     extern LayoutEmulator gLayoutEmulator;

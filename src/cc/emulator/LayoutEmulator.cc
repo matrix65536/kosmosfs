@@ -190,7 +190,7 @@ LayoutEmulator::GetChunkversion(fid_t fid, chunkId_t cid)
 vector<size_t>
 LayoutEmulator::GetChunkSizes(chunkId_t cid)
 {
-    std::tr1::unordered_map<chunkId_t, std::vector<size_t> >::iterator iter2 = mChunkSize.find(cid);
+    ChunkSizeMap::iterator iter2 = mChunkSize.find(cid);
     if (iter2 == mChunkSize.end()) {
         std::vector<size_t> v;
         return v;
@@ -201,7 +201,7 @@ LayoutEmulator::GetChunkSizes(chunkId_t cid)
 size_t
 LayoutEmulator::GetChunkSize(chunkId_t cid)
 {
-    std::tr1::unordered_map<chunkId_t, std::vector<size_t> >::iterator iter2 = mChunkSize.find(cid);
+    ChunkSizeMap::iterator iter2 = mChunkSize.find(cid);
 
     if (iter2 == mChunkSize.end())
         return CHUNKSIZE;

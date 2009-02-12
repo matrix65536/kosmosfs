@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/04/18
 // Author: Sriram Rao
@@ -314,9 +314,9 @@ KfsClient::Write(int fd, const char *buf, size_t numBytes)
 }
 
 int 
-KfsClient::Sync(int fd)
+KfsClient::Sync(int fd, bool flushOnlyIfHasFullChecksumBlock)
 {
-    return mImpl->Sync(fd);
+    return mImpl->Sync(fd, flushOnlyIfHasFullChecksumBlock);
 }
 
 off_t 
@@ -375,11 +375,60 @@ KfsClient::GetMetaserverLocation() const
     return mImpl->GetMetaserverLocation();
 }
 
+size_t
+KfsClient::SetDefaultIoBufferSize(size_t size)
+{
+    return mImpl->SetDefaultIoBufferSize(size);
+}
+
+size_t
+KfsClient::GetDefaultIoBufferSize() const
+{
+    return mImpl->GetDefaultIoBufferSize();
+}
+
+size_t
+KfsClient::SetIoBufferSize(int fd, size_t size)
+{
+    return mImpl->SetIoBufferSize(fd, size);
+}
+
+size_t
+KfsClient::GetIoBufferSize(int fd) const
+{
+    return mImpl->GetIoBufferSize(fd);
+}
+
+size_t
+KfsClient::SetDefaultReadAheadSize(size_t size)
+{
+    return mImpl->SetDefaultReadAheadSize(size);
+}
+
+size_t
+KfsClient::GetDefaultReadAheadSize() const
+{
+    return mImpl->GetDefaultReadAheadSize();
+}
+
+size_t
+KfsClient::SetReadAheadSize(int fd, size_t size)
+{
+    return mImpl->SetReadAheadSize(fd, size);
+}
+
+size_t
+KfsClient::GetReadAheadSize(int fd) const
+{
+    return mImpl->GetReadAheadSize(fd);
+}
+
 //
 // Now, the real work is done by the impl object....
 //
 
 KfsClientImpl::KfsClientImpl()
+    : mPendingOp(*this)
 {
     pthread_mutexattr_t mutexAttr;
     int rval;
@@ -416,8 +465,18 @@ KfsClientImpl::KfsClientImpl()
     // whenever a socket goes kaput, don't crash the app
     signal(SIGPIPE, SIG_IGN);
 
+    // to reduce memory footprint, keep a decent size buffer; we used to have
+    // 64MB before
+    const size_t BUF_SIZE = min(KFS::CHUNKSIZE, size_t(4) << 20);
+    mDefaultIoBufferSize  = BUF_SIZE;
+    mDefaultReadAheadSize = min(BUF_SIZE, size_t(1) << 20);
     // for random # generation, seed it
     srand(getpid());
+}
+
+KfsClientImpl::~KfsClientImpl()
+{
+    mPendingOp.Stop();
 }
 
 int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
@@ -454,14 +513,14 @@ int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
     // setup the telemetry stuff...
     struct ip_mreq imreq;
     string srvIp = "10.2.0.10";
-    // int srvPort = 12000;
-    // int multicastPort = 13000;
+    int srvPort = 12000;
+    int multicastPort = 13000;
 
     imreq.imr_multiaddr.s_addr = inet_addr("226.0.0.1");
     imreq.imr_interface.s_addr = INADDR_ANY; // use DEFAULT interface
     
-    // will setup this for release evenutally
-    // mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
+    // will setup this for release
+    mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
 
     mIsInitialized = true;
     return 0;
@@ -1251,6 +1310,13 @@ KfsClientImpl::Open(const char *pathname, int openMode, int numReplicas)
     if (openMode & O_APPEND)
 	Seek(fte, 0, SEEK_END);
 
+    if (! mFileTable[fte]->fattr.isDirectory &&
+            ((openMode & O_RDWR) == O_RDWR || (openMode & O_RDONLY) == O_RDONLY) &&
+            mDefaultReadAheadSize > 0) {
+        mFileTable[fte]->currPos.pendingChunkRead =
+            new PendingChunkRead(*this, mDefaultReadAheadSize);
+    }
+
     return fte;
 }
 
@@ -1273,7 +1339,7 @@ KfsClientImpl::Close(int fd)
 }
 
 int
-KfsClientImpl::Sync(int fd)
+KfsClientImpl::Sync(int fd, bool flushOnlyIfHasFullChecksumBlock)
 {
     MutexLock l(&mMutex);
 
@@ -1281,7 +1347,7 @@ KfsClientImpl::Sync(int fd)
 	return -EBADF;
 
     if (mFileTable[fd]->buffer.dirty) {
-       int status = FlushBuffer(fd);
+       int status = FlushBuffer(fd, flushOnlyIfHasFullChecksumBlock);
        if (status < 0)
 	   return status;
     }
@@ -1614,6 +1680,107 @@ KfsClientImpl::IsCurrChunkAttrKnown(int fd)
 {
     map <int, ChunkAttr> *c = &FdInfo(fd)->cattr;
     return c->find(FdPos(fd)->chunkNum) != c->end();
+}
+
+size_t
+KfsClientImpl::SetDefaultIoBufferSize(size_t size)
+{
+    MutexLock lock(&mMutex);
+    mDefaultIoBufferSize = (size + CHECKSUM_BLOCKSIZE - 1) /
+                CHECKSUM_BLOCKSIZE * CHECKSUM_BLOCKSIZE;
+    return mDefaultIoBufferSize;
+}
+
+size_t
+KfsClientImpl::GetDefaultIoBufferSize() const
+{
+    MutexLock lock(&const_cast<KfsClientImpl*>(this)->mMutex);
+    return mDefaultIoBufferSize;
+}
+
+size_t
+KfsClientImpl::SetIoBufferSize(int fd, size_t size)
+{
+    MutexLock lock(&mMutex);
+    if (fd < 0 || size_t(fd) >= mFileTable.size() || ! mFileTable[fd]) {
+        return 0;
+    }
+    ChunkBuffer * const cb = FdBuffer(fd);
+    if (cb->bufsz != size) {
+        if (cb->dirty) {
+            FlushBuffer(fd);
+        }
+        if (! cb->dirty) {
+            cb->invalidate();
+            cb->bufsz = (size + CHECKSUM_BLOCKSIZE - 1) /
+                CHECKSUM_BLOCKSIZE * CHECKSUM_BLOCKSIZE;
+        }
+    }
+    return cb->bufsz;
+}
+
+size_t
+KfsClientImpl::GetIoBufferSize(int fd) const
+{
+    KfsClientImpl& mutableSelf = *const_cast<KfsClientImpl*>(this);
+    MutexLock lock(&mutableSelf.mMutex);
+    if (fd < 0 || size_t(fd) >= mFileTable.size() || ! mFileTable[fd]) {
+        return 0;
+    }
+    ChunkBuffer * const cb = mutableSelf.FdBuffer(fd);
+    return cb->bufsz;
+}
+
+size_t
+KfsClientImpl::SetDefaultReadAheadSize(size_t size)
+{
+    MutexLock lock(&mMutex);
+    mDefaultReadAheadSize = (size + CHECKSUM_BLOCKSIZE - 1) /
+                CHECKSUM_BLOCKSIZE * CHECKSUM_BLOCKSIZE;
+    return mDefaultReadAheadSize;
+}
+
+size_t
+KfsClientImpl::GetDefaultReadAheadSize() const
+{
+    MutexLock lock(&const_cast<KfsClientImpl*>(this)->mMutex);
+    return mDefaultReadAheadSize;
+}
+
+size_t
+KfsClientImpl::SetReadAheadSize(int fd, size_t size)
+{
+    MutexLock lock(&mMutex);
+    if (fd < 0 || size_t(fd) >= mFileTable.size() || ! mFileTable[fd]) {
+        return 0;
+    }
+    FilePosition& pos = *FdPos(fd);
+    const size_t readAhead = min(size_t(PendingChunkRead::kMaxReadRequest),
+        (size + CHECKSUM_BLOCKSIZE - 1) /
+            CHECKSUM_BLOCKSIZE * CHECKSUM_BLOCKSIZE);
+    if (pos.pendingChunkRead) {
+        if (readAhead > 0) {
+            pos.pendingChunkRead->SetReadAhead(readAhead);
+        } else {
+            delete pos.pendingChunkRead;
+            pos.pendingChunkRead = 0;
+        }
+    } else if (readAhead > 0) {
+        pos.pendingChunkRead = new PendingChunkRead(*this, readAhead);
+    }
+    return readAhead;
+}
+
+size_t
+KfsClientImpl::GetReadAheadSize(int fd) const
+{
+    KfsClientImpl& mutableSelf = *const_cast<KfsClientImpl*>(this);
+    MutexLock lock(&mutableSelf.mMutex);
+    if (fd < 0 || size_t(fd) >= mFileTable.size() || ! mFileTable[fd]) {
+        return 0;
+    }
+    const FilePosition& pos = *mutableSelf.FdPos(fd);
+    return (pos.pendingChunkRead ? pos.pendingChunkRead->GetReadAhead() : 0);
 }
 
 ///
@@ -2364,7 +2531,7 @@ KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name,
             // mFileTable[fte]->pathCacheIter = mPathCache.find(pathname);
         }
         mFileTable[fte]->pathname = pathname;
-
+        mFileTable[fte]->buffer.bufsz = mDefaultIoBufferSize;
     }
     return fte;
 }
