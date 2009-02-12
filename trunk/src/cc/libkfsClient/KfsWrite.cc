@@ -145,7 +145,8 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
     if (nwrote != numBytes) {
 	KFS_LOG_VA_DEBUG("----Write done: asked: %llu, got: %llu-----",
 			  numBytes, nwrote);
-    } else if (cb->dirty &&
+    } else if (false && // turn off for now.
+            cb->dirty &&
             cb->length >= max(
                 CHECKSUM_BLOCKSIZE + GetChecksumBlockTailSize(cb->start),
                 min(cb->bufsz >> 1, size_t(1) << 20))) {
