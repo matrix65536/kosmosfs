@@ -99,7 +99,6 @@ NetManager::UnRegisterTimeoutHandler(ITimeout *handler)
             return;
         }
     }
-    KFS_LOG_VA_WARN("Unable to find registered handler for %x", handler);
 }
 
 void
