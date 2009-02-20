@@ -1064,13 +1064,14 @@ kfs_rename(PyObject *pself, PyObject *args)
 {
 	kfs_Client *self = (kfs_Client *)pself;
 	char *srcpath, *dstpath;
+	bool overwrite = true;
 
-	if (PyArg_ParseTuple(args, "ss", &srcpath, &dstpath) == -1)
+	if (PyArg_ParseTuple(args, "ss|b", &srcpath, &dstpath, &overwrite) == -1)
 		return NULL;
 
 	string spath = build_path(self->cwd, srcpath);
 	string dpath = build_path(self->cwd, dstpath);
-	int status = self->client->Rename(spath.c_str(), dpath.c_str(), false);
+	int status = self->client->Rename(spath.c_str(), dpath.c_str(), overwrite);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
