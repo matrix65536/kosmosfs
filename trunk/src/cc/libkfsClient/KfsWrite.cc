@@ -235,7 +235,7 @@ KfsClientImpl::FlushBuffer(int fd, bool flushOnlyIfHasFullChecksumBlock)
             cb->length >= CHECKSUM_BLOCKSIZE +
                 (extra = GetChecksumBlockTailSize(cb->start)))) {
         const size_t nWr = flushOnlyIfHasFullChecksumBlock ?
-            extra + cb->length / CHECKSUM_BLOCKSIZE * CHECKSUM_BLOCKSIZE :
+            extra + (cb->length - extra) / CHECKSUM_BLOCKSIZE * CHECKSUM_BLOCKSIZE :
             cb->length;
 	numIO = WriteToServer(fd, cb->start, cb->buf, nWr);
 	if (numIO >= 0) {
