@@ -80,8 +80,10 @@ namespace KFS
         {
             std::size_t operator()(chunkId_t v) const
             {
-                return (std::size_t(v) ^
-                    std::size_t(v >> (sizeof(std::size_t) * 8)));
+                // two >> to get rid of compiler warning
+                // when sizeof(v) == sizeof(size_t)
+                const std::size_t vs(v >> (sizeof(std::size_t) * 8 - 1));
+                return (std::size_t(v) ^ std::size_t((vs >> 1)));
             }
         };
         typedef std::tr1::unordered_map<chunkId_t, std::vector<size_t>, ChunkIdHash > ChunkSizeMap;

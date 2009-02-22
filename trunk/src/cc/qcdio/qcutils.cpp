@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcutils.cpp#1 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcutils.cpp#2 $
 //
 // Created 2008/11/01
 // Author: Mike Ovsiannikov
@@ -81,7 +81,7 @@ DoSysErrorMsg(
         if (theMsgPtr != inMsgBufPtr) {
             StrAppend(" ", theMsgPtr, theMaxLen);
         }
-#if defined(__EXTENSIONS__) || \
+#if defined(__EXTENSIONS__) || defined(QC_OS_NAME_DARWIN) || \
     (! defined(_GNU_SOURCE) && defined(_XOPEN_SOURCE) && _XOPEN_SOURCE == 600)
         int theErr = strerror_r(inSysError, theMsgPtr, theMaxLen);
         if (theErr != 0) {
