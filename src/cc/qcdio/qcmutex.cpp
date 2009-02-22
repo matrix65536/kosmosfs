@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcmutex.cpp#1 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcmutex.cpp#2 $
 //
 // Created 2008/10/30
 // Author: Mike Ovsiannikov
@@ -25,16 +25,32 @@
 
 #include "qcmutex.h"
 #include "qcutils.h"
+#include <unistd.h>
+#include <sys/time.h>
+
+#ifdef QC_OS_NAME_DARWIN 
+#   define pthread_mutex_timedlock(m, l) pthread_mutex_lock(m)
+#endif
 
     static int
 GetAbsTimeout(
     QCMutex::Time    inTimeoutNanoSec,
     struct timespec& outAbsTimeout)
 {
+#if defined(_POSIX_TIMERS) && ! defined(QC_OS_NAME_DARWIN)
     const int theErr = clock_gettime(CLOCK_REALTIME, &outAbsTimeout);
     if (theErr != 0) {
         return theErr;
     }
+#else
+    struct timeval theTimeVal;
+    const int theErr = gettimeofday(&theTimeVal, 0);
+    if (theErr != 0) {
+        return theErr;
+    }
+    outAbsTimeout.tv_sec  = theTimeVal.tv_sec;
+    outAbsTimeout.tv_nsec = (long)theTimeVal.tv_usec * 1000;
+#endif
     const QCMutex::Time k2NanoSec  = QCMutex::Time(1000) * 1000000;
     const QCMutex::Time theNanoSec = outAbsTimeout.tv_nsec + inTimeoutNanoSec;
     outAbsTimeout.tv_nsec = long(theNanoSec % k2NanoSec);
