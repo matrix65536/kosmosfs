@@ -28,6 +28,7 @@ cmake_minimum_required(VERSION 2.4.6)
 
 # Locate Boost
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+set(Boost_ADDITIONAL_VERSIONS "1.37" "1.38")
 find_package(Boost REQUIRED)
 find_package(Log4cpp REQUIRED)
 # Locate the path to jni.h
@@ -65,6 +66,16 @@ ELSE (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
        add_definitions (-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_LARGE_FILES)
     ENDIF (CMAKE_SIZEOF_VOID_P MATCHES "4")
 ENDIF (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+
+IF (APPLE)
+   #
+   # Build 64-bit on Macs since Java 1.6 works only with 64-bit libs
+   #
+   message (STATUS "Building 64-bit mode on Apple")
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -arch x86_64")
+   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -arch x86_64")
+   set(CMAKE_SHARED_LINKER_FLAGS  "${CMAKE_SHARED_LINKER_FLAGS} -arch x86_64")
+ENDIF (APPLE)
 
 IF (ENABLE_PROFILING)
    message (STATUS "Enabling profiling with gprof")
