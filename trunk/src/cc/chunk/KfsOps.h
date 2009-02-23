@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/05/26
 // Author: Sriram Rao
@@ -452,8 +452,7 @@ struct WritePrepareFwdOp : public KfsOp {
     }
 
     ~WritePrepareFwdOp() {
-        if (dataBuf != NULL)
-            delete dataBuf;
+        delete dataBuf;
     }
 
     void Request(std::ostringstream &os);
@@ -678,9 +677,7 @@ struct ReadOp : public KfsOp {
     }
     ~ReadOp() {
         assert(wop == NULL);
-        if (dataBuf != NULL) {
-            delete dataBuf;
-        }
+        delete dataBuf;
         if (diskConnection)
             diskConnection->Close();
     }
