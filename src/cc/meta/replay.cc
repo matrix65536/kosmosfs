@@ -184,7 +184,7 @@ replay_remove(deque <string> &c)
 	ok = pop_name(myname, "name", c, ok);
 
 	if (ok)
-		status = metatree.remove(parent, myname);
+		status = metatree.remove(parent, myname, "");
 
 	return (ok && status == 0);
 }
@@ -202,7 +202,7 @@ replay_rmdir(deque <string> &c)
 	bool ok = pop_parent(parent, c);
 	ok = pop_name(myname, "name", c, ok);
 	if (ok)
-		status = metatree.rmdir(parent, myname);
+		status = metatree.rmdir(parent, myname, "");
 	return (ok && status == 0);
 }
 
@@ -226,8 +226,13 @@ replay_rename(deque <string> &c)
 	bool ok = pop_parent(parent, c);
 	ok = pop_name(oldname, "old", c, ok);
 	ok = pop_path(newpath, "new", c, ok);
-	if (ok)
-		status = metatree.rename(parent, oldname, newpath, true);
+	if (ok) {
+		MetaFattr *fa = metatree.lookup(parent, oldname);
+		string oldpath = "";
+		if (fa != NULL)
+			oldpath = metatree.getPathname(fa->id());
+		status = metatree.rename(parent, oldname, newpath, oldpath, true);
+	}
 	return (ok && status == 0);
 }
 
@@ -367,8 +372,21 @@ replay_size(deque <string> &c)
 	ok = pop_offset(filesize, "filesize", c, ok);
 	if (ok) {
 		MetaFattr *fa = metatree.getFattr(fid);
-		if (fa != NULL) 
+		if (fa != NULL) {
+			off_t delta = filesize;
+			if (fa->filesize > 0) {
+				// we are updating the size for a file.  if we
+				// had a value for the file's size and the log
+				// has a value, then the change in space usage
+				// for the tree is the difference between the
+				// two.
+				delta -= fa->filesize;
+			}
+			string pn = metatree.getPathname(fid);
+			metatree.updateSpaceUsageForPath(pn, delta);
+
 			fa->filesize = filesize;
+		}
 	}
 	return true;
 }

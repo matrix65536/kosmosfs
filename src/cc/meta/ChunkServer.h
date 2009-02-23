@@ -134,7 +134,7 @@ namespace KFS
 		void Retire();
 
 		/// Method to get the size of a chunk from a chunkserver.
-		int GetChunkSize(fid_t fid, chunkId_t chunkId);
+		int GetChunkSize(fid_t fid, chunkId_t chunkId, const std::string &pathname);
 
 		/// Methods to handle (re) replication of a chunk.  If there are
 		/// insufficient copies of a chunk, we replicate it.

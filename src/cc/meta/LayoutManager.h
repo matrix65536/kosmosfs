@@ -73,14 +73,14 @@ namespace KFS
 		LeaseInfo(LeaseType t, int64_t i): leaseType(t), leaseId(i)
 		{
 			time(&expires);
-			// default lease time of 1 min
+			// set it to default lease time 
 			expires += LEASE_INTERVAL_SECS;
 		}
-		LeaseInfo(LeaseType t, int64_t i, ChunkServerPtr &c):
-			leaseType(t), leaseId(i), chunkServer(c)
+		LeaseInfo(LeaseType t, int64_t i, ChunkServerPtr &c, const std::string &p):
+			leaseType(t), leaseId(i), chunkServer(c), pathname(p)
 		{
 			time(&expires);
-			// default lease time of 1 min
+			// set it to default lease time 
 			expires += LEASE_INTERVAL_SECS;
 		}
 		static bool IsValidLease(const LeaseInfo &l)
@@ -98,6 +98,10 @@ namespace KFS
 		int64_t leaseId;
 		// set for a write lease
 		ChunkServerPtr chunkServer;
+		// for a write lease, record the pathname; we can use the path
+		// to traverse the dir. tree and update space used at each level
+		// of the tree
+		std::string pathname;
 		time_t expires;
 	};
 

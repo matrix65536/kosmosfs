@@ -72,6 +72,7 @@ class MetaNode {
 public:
 	MetaNode(MetaType t): type(t), flagbits(0) { }
 	MetaNode(MetaType t, int f): type(t), flagbits(f) { }
+	MetaType metaType() const { return type; }
 	virtual ~MetaNode() { }
 	virtual const Key key() const = 0;	//!< cons up key value for node
 	virtual const string show() const = 0;	//!< print out contents

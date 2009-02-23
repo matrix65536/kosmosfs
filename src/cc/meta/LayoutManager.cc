@@ -193,7 +193,8 @@ LayoutManager::AddNewServer(MetaHello *r)
 					MetaChunkInfo *lastChunk = v.back();
 					if (lastChunk->chunkId == r->chunks[i].chunkId)
 						s->GetChunkSize(r->chunks[i].fileId,
-								r->chunks[i].chunkId);
+								r->chunks[i].chunkId,
+								"");
 				}
 
 				if (mci->chunkVersion < r->chunks[i].chunkVersion) {
@@ -851,7 +852,7 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 	if (r->servers.size() == 0)
 		return -ENOSPC;
 
-	LeaseInfo l(WRITE_LEASE, mLeaseId, r->servers[0]);
+	LeaseInfo l(WRITE_LEASE, mLeaseId, r->servers[0], r->pathname);
 	mLeaseId++;
 
 	r->master = r->servers[0];
@@ -948,7 +949,7 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 
 	isNewLease = true;
 
-	LeaseInfo lease(WRITE_LEASE, mLeaseId, r->servers[0]);
+	LeaseInfo lease(WRITE_LEASE, mLeaseId, r->servers[0], r->pathname);
 	mLeaseId++;
 
 	v.chunkLeases.push_back(lease);
@@ -1373,7 +1374,7 @@ public:
 		for_each(servers.begin(), servers.end(), ChunkWriteDecrementor());
 		// get the chunk's size from one of the servers
 		if (servers.size() > 0)
-			servers[0]->GetChunkSize(f, c);
+			servers[0]->GetChunkSize(f, c, l.pathname);
 	}
 
 };

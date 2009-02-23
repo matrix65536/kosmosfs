@@ -633,11 +633,11 @@ ChunkServer::TruncateChunk(chunkId_t chunkId, off_t s)
 }
 
 int
-ChunkServer::GetChunkSize(fid_t fid, chunkId_t chunkId)
+ChunkServer::GetChunkSize(fid_t fid, chunkId_t chunkId, const string &pathname)
 {
 	MetaChunkSize *r;
 
-	r = new MetaChunkSize(NextSeq(), this, fid, chunkId);
+	r = new MetaChunkSize(NextSeq(), this, fid, chunkId, pathname);
 
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
