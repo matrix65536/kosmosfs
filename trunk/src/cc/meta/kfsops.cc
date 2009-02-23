@@ -151,7 +151,7 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 		if (exclusive)
 			return -EEXIST;
 
-		int status = remove(dir, fname);
+		int status = remove(dir, fname, "");
 		if (status == -EBUSY) {
 			KFS_LOG_VA_INFO("Remove failed as file (%d:%s) is busy", dir, fname.c_str());
 			return status;
@@ -193,13 +193,23 @@ Tree::unlink(fid_t dir, const string fname, MetaFattr *fa, bool save_fa)
  * \return		status code (zero on success)
  */
 int
-Tree::remove(fid_t dir, const string &fname)
+Tree::remove(fid_t dir, const string &fname, const string &pathname)
 {
 	MetaFattr *fa = lookup(dir, fname);
 	if (fa == NULL)
 		return -ENOENT;
 	if (fa->type != KFS_FILE)
 		return -EISDIR;
+
+	if (fa->filesize > 0) {
+		if (pathname != "") {
+			updateSpaceUsageForPath(pathname, -fa->filesize);
+		} else {
+			string pn = getPathname(dir);
+			updateSpaceUsageForPath(pn, -fa->filesize);
+		}
+	}
+
 	if (fa->chunkcount > 0) {
 		vector <MetaChunkInfo *> chunkInfo;
 		getalloc(fa->id(), chunkInfo);
@@ -214,6 +224,7 @@ Tree::remove(fid_t dir, const string &fname)
 		for_each(chunkInfo.begin(), chunkInfo.end(),
 			 mem_fun(&MetaChunkInfo::DeleteChunk));
 	}
+
 	unlink(dir, fname, fa, false);
 	return 0;
 }
@@ -270,10 +281,11 @@ Tree::emptydir(fid_t dir)
  * \brief remove a directory
  * \param[in] dir	file id of the parent directory
  * \param[in] dname	name of directory
+ * \param[in] pathname  fully qualified path to dname
  * \return		status code (zero on success)
  */
 int
-Tree::rmdir(fid_t dir, const string &dname)
+Tree::rmdir(fid_t dir, const string &dname, const string &pathname)
 {
 	MetaFattr *fa = lookup(dir, dname);
 
@@ -293,6 +305,15 @@ Tree::rmdir(fid_t dir, const string &dname)
 	fid_t myID = fa->id();
 	if (!emptydir(myID))
 		return -ENOTEMPTY;
+
+	if (fa->filesize > 0) {
+		if (pathname != "") {
+			updateSpaceUsageForPath(pathname, -fa->filesize);
+		} else {
+			string pn = getPathname(dir);
+			updateSpaceUsageForPath(pn, -fa->filesize);
+		}
+	}
 
 	unlink(myID, ".", fa, true);
 	unlink(myID, "..", fa, true);
@@ -326,35 +347,83 @@ Tree::getDentry(fid_t dir, const string &fname)
 	return (d == v.end()) ? NULL : *d;
 }
 
-
 /*
- * Map from file id to its directory entry.  In the current instantation, this is SLOW:
+ * Map from file id to its directory entry.  In the current instantation, this
+ * is SLOW:
  * we iterate over the leaves until we find the dentry.  This method is needed
  * for KFS fsck, where we want to map from a fid -> name to reconstruct the
  * pathname for the file for which we want to print info (such as, missing
  * block, has fewer replicas etc.
- * \param[in] fid	the object's file id
- * \return		pointer to the attributes
+ * \param[in] fid       the object's file id
+ * \return              pointer to the attributes
  */
 MetaDentry *
 Tree::getDentry(fid_t fid)
 {
-	LeafIter li(metatree.firstLeaf(), 0);
-	Node *p = li.parent();
-	Meta *m = li.current();
-	MetaDentry *d = NULL;
-	while (m != NULL) {
-		if (m->id() == fid) {
-			d = dynamic_cast<MetaDentry *>(m);
-			if (d != NULL)
-				break;
-		}
+        LeafIter li(metatree.firstLeaf(), 0);
+        Node *p = li.parent();
+        Meta *m = li.current();
+        MetaDentry *d = NULL;
+        while (m != NULL) {
+                if (m->id() == fid) {
+                        d = dynamic_cast<MetaDentry *>(m);
+                        if (d != NULL)
+                                break;
+                }
 
-		li.next();
-		p = li.parent();
-		m = (p == NULL) ? NULL : li.current();
+                li.next();
+                p = li.parent();
+                m = (p == NULL) ? NULL : li.current();
+        }
+        return d;
+}
+
+/*
+ * For fast "du", we store the size of a directory tree in the Fattr for that
+ * tree id.  This method should be called whenever the size values need to be
+ * recomputed for accuracy.  This is an expensive operation: we have to traverse
+ * from root to each leaf in the tree.
+ */
+void
+Tree::recomputeDirSize()
+{
+	recomputeDirSize(ROOTFID);
+}
+
+/*
+ * A simple depth first traversal of the directory tree starting at the root
+ * @param[in] dir  The directory we are processing
+ */
+off_t
+Tree::recomputeDirSize(fid_t dir)
+{
+	vector<MetaDentry *> entries;
+	MetaFattr *dirattr = getFattr(dir);
+
+	if (dirattr == NULL)
+		return 0;
+
+	readdir(dir, entries);
+	dirattr->filesize = 0;
+	for (uint32_t i = 0; i < entries.size(); i++) {
+		string entryname = entries[i]->getName();
+		if ((entryname == ".") || (entryname == "..") ||
+			(entries[i]->id() == dir))
+			continue;
+
+		MetaFattr *fa = getFattr(entries[i]->id());
+		if (fa == NULL)
+			continue;
+		if (fa->type == KFS_DIR) {
+			// Do a depth first traversal
+			dirattr->filesize += recomputeDirSize(fa->id());
+			continue;
+		}
+		if (fa->filesize > 0)
+			dirattr->filesize += fa->filesize;
 	}
-	return d;
+
+	return dirattr->filesize;
 }
 
 /*
@@ -430,6 +499,52 @@ Tree::lookupPath(fid_t rootdir, const string &path)
 
 	component.assign(path, cstart, path.size() - cstart);
 	return lookup(dir, component);
+}
+
+/*
+ * At each level of the directory tree, we'd like to record the space used by
+ * that subtree.  Then, on a stat of directory, we can provide "du" results for
+ * the subtree.
+ * To update space usage, start at the root and work down till the parent
+ * directory where the file lives and update space used at each level by nbytes.
+ */
+void
+Tree::updateSpaceUsageForPath(const string &path, off_t nbytes)
+{
+	string dumpster = "/" + DUMPSTERDIR + "/";
+	if ((nbytes == 0) || (path == "") || (path.compare(0, dumpster.size(), dumpster) == 0)) {
+		// either we dont' have a path or the path is in the dumpster
+		// and so, we don't update space used by the dumpster
+		return;
+	}
+	string component;
+	fid_t dir = ROOTFID;
+	string::size_type cstart = 1;
+	string::size_type slash = path.find('/', cstart);
+	MetaFattr *fa;
+
+	fa = lookup(dir, "/");
+	fa->filesize += nbytes;
+	if (fa->filesize < 0)
+		// sanity
+		fa->filesize = 0;
+	if (path.size() == cstart) {
+		return;
+	}
+
+	while (slash != string::npos) {
+		component.assign(path, cstart, slash - cstart);
+		fa = lookup(dir, component);
+		if (fa == NULL)
+			return;
+		fa->filesize += nbytes;
+		if (fa->filesize < 0)
+			// sanity
+			fa->filesize = 0;
+		dir = fa->id();
+		cstart = slash + 1;
+		slash = path.find('/', cstart);
+	}
 }
 
 /*!
@@ -716,12 +831,13 @@ Tree::is_descendant(fid_t src, fid_t dst)
  * \param[in]	parent	file id of parent directory
  * \param[in]	oldname	the file's current name
  * \param[in]	newname	the new name for the file
+ * \param[in]	oldpath	the fully qualified path for the file's current name
  * \param[in]	overwrite when set, overwrite the dest if it exists
  * \return		status code
  */
 int
 Tree::rename(fid_t parent, const string &oldname, string &newname,
-		bool overwrite)
+		const string &oldpath, bool overwrite)
 {
 	int status;
 	MetaDentry *src = getDentry(parent, oldname);
@@ -771,9 +887,14 @@ Tree::rename(fid_t parent, const string &oldname, string &newname,
 
 	if (dexists) {
 		status = (t == KFS_DIR) ?
-			rmdir(ddir, dname) : remove(ddir, dname);
+			rmdir(ddir, dname, newname) : remove(ddir, dname, newname);
 		if (status != 0)
 			return status;
+	}
+
+	if (sfattr->filesize > 0) {
+		updateSpaceUsageForPath(oldpath, -sfattr->filesize);
+		updateSpaceUsageForPath(newname, sfattr->filesize);
 	}
 
 	fid_t srcFid = src->id();
@@ -856,7 +977,10 @@ Tree::moveToDumpster(fid_t dir, const string &fname)
 	tempname += fname + boost::lexical_cast<string>(counter);
 
 	counter++;
-	return rename(dir, fname, tempname, true);
+	// space accounting has been done before the call to this function.  so,
+	// we don't rename to do any accounting and hence pass in "" for the old
+	// path name.
+	return rename(dir, fname, tempname, "", true);
 }
 
 class RemoveDumpsterEntry {
@@ -864,7 +988,7 @@ class RemoveDumpsterEntry {
 public:
 	RemoveDumpsterEntry(fid_t d) : dir(d) { }
 	void operator() (MetaDentry *e) {
-		metatree.remove(dir, e->getName());
+		metatree.remove(dir, e->getName(), "");
 	}
 };
 

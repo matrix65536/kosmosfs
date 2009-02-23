@@ -56,14 +56,14 @@ int main(int argc, char **argv)
 {
     // use options: -l for logdir -c for checkpoint dir
     char optchar;
-    bool help = false;
+    bool help = false, computeDirSize = false;
     string logdir, cpdir;
     int status;
 
     KFS::MsgLogger::Init(NULL);
     KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
 
-    while ((optchar = getopt(argc, argv, "hl:c:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hpl:c:")) != -1) {
         switch (optchar) {
             case 'l': 
                 logdir = optarg;
@@ -74,6 +74,9 @@ int main(int argc, char **argv)
             case 'h':
                 help = true;
                 break;
+            case 'p':
+                computeDirSize = true;
+                break;
             default:
                 KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
@@ -82,8 +85,9 @@ int main(int argc, char **argv)
     }
 
     if (help) {
-        cout << "Usage: " << argv[0] << " [-l <logdir>] [-c <cpdir>]"
+        cout << "Usage: " << argv[0] << " [-l <logdir>] [-c <cpdir>] {-p}"
              << endl;
+        cout << "where -p means recompute size of each directory in the tree" << endl;
         exit(-1);
     }
 
@@ -93,8 +97,12 @@ int main(int argc, char **argv)
     if (status != 0)
         panic("restore checkpoint failed!", false);
     status = replayLogs();
-    if (status == 0)
+    if (status == 0) {
+        if (computeDirSize) {
+            metatree.recomputeDirSize();
+        }
         cp.do_CP();
+    }
     exit(0);
 }
 

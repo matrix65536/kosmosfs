@@ -64,7 +64,6 @@ enum MetaOp {
 	META_READDIRPLUS,
 	META_GETALLOC,
 	META_GETLAYOUT,
-	META_GETDIRSUMMARY,
 	META_ALLOCATE,
 	META_TRUNCATE,
 	META_RENAME,
@@ -233,6 +232,7 @@ struct MetaMkdir: public MetaRequest {
 struct MetaRemove: public MetaRequest {
 	fid_t dir;	//!< parent directory fid
 	string name;	//!< name to remove
+	string pathname; //!< full pathname to remove
 	MetaRemove(seq_t s, fid_t d, string n):
 		MetaRequest(META_REMOVE, s, true), dir(d), name(n) { }
 	int log(ofstream &file) const;
@@ -241,7 +241,7 @@ struct MetaRemove: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "remove: name = " << name;
+		os << "remove: path = " << pathname << " (name = " << name << ")";
 		os << " (parent fid = " << dir << ")";
 		return os.str();
 	}
@@ -253,6 +253,7 @@ struct MetaRemove: public MetaRequest {
 struct MetaRmdir: public MetaRequest {
 	fid_t dir;	//!< parent directory fid
 	string name;	//!< name to remove
+	string pathname; //!< full pathname to remove
 	MetaRmdir(seq_t s, fid_t d, string n):
 		MetaRequest(META_RMDIR, s, true), dir(d), name(n) { }
 	int log(ofstream &file) const;
@@ -261,7 +262,7 @@ struct MetaRmdir: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "rmdir: name = " << name;
+		os << "rmdir: path = " << pathname << " (name = " << name << ")";
 		os << " (parent fid = " << dir << ")";
 		return os.str();
 	}
@@ -370,27 +371,6 @@ struct MetaGetlayout: public MetaRequest {
 	}
 };
 
-/*!
- * \brief return summary information for a directory---# of files/sizes.
- */
-struct MetaGetDirSummary : public MetaRequest {
-	fid_t dir; //!< the directory of interest
-	uint64_t numFiles; //!< # of files in dir
-	uint64_t numBytes; //!< # of bytes in dir
-	MetaGetDirSummary(seq_t s, fid_t f):
-		MetaRequest(META_GETDIRSUMMARY, s, false), dir(f),
-		numFiles(0), numBytes(0) { }
-	int log(ofstream &file) const;
-	void response(ostringstream &os);
-	string Show()
-	{
-		ostringstream os;
-
-		os << "getdirsummary: dir = " << dir;
-		return os.str();
-	}
-};
-
 class ChunkServer;
 typedef boost::shared_ptr<ChunkServer> ChunkServerPtr;
 
@@ -403,6 +383,7 @@ struct MetaAllocate: public MetaRequest {
 	chunkOff_t offset;	//!< offset of chunk within file
 	chunkId_t chunkId;	//!< Id of the chunk that was allocated
 	seq_t chunkVersion;	//!< version # assigned to this chunk
+	std::string pathname;   //!< full pathname that corresponds to fid
 	std::string clientHost; //!< the host from which request was received
 	int16_t  numReplicas;	//!< inherited from file's fattr
 	bool layoutDone;	//!< Has layout of chunk been done
@@ -421,7 +402,7 @@ struct MetaAllocate: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "allocate: fid = " << fid;
+		os << "allocate: path = " << pathname << " fid = " << fid;
 		os << " offset = " << offset;
 		return os.str();
 	}
@@ -433,6 +414,7 @@ struct MetaAllocate: public MetaRequest {
 struct MetaTruncate: public MetaRequest {
 	fid_t fid;	//!< file for which space has to be allocated
 	chunkOff_t offset; //!< offset to truncate the file to
+	string pathname; //!< full pathname for file being truncated
 	MetaTruncate(seq_t s, fid_t f, chunkOff_t o):
 		MetaRequest(META_TRUNCATE, s, true), fid(f), offset(o) { }
 	int log(ofstream &file) const;
@@ -441,7 +423,7 @@ struct MetaTruncate: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "truncate: fid = " << fid;
+		os << "truncate: path = " << pathname << " fid = " << fid;
 		os << " offset = " << offset;
 		return os.str();
 	}
@@ -454,6 +436,7 @@ struct MetaRename: public MetaRequest {
 	fid_t dir;	//!< parent directory
 	string oldname;	//!< old file name
 	string newname;	//!< new file name
+	string oldpath; //!< fully-qualified old pathname
 	bool overwrite; //!< overwrite newname if it exists
 	MetaRename(seq_t s, fid_t d, const char *o, const char *n, bool c):
 		MetaRequest(META_RENAME, s, true), dir(d),
@@ -464,7 +447,7 @@ struct MetaRename: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "rename: oldname = " << oldname;
+		os << "rename: oldname = " << oldpath << "(oldname = " << oldname << ")";
 		os << " (fid = " << dir << ")";
 		os << " newname = " << newname;
 		return os.str();
@@ -783,9 +766,14 @@ struct MetaChunkSize: public MetaChunkRequest {
 	chunkId_t chunkId; //!< input: the chunk whose size we need
 	off_t chunkSize; //!< output: the chunk size
 	off_t filesize; //!< for logging purposes: the size of the file
-	MetaChunkSize(seq_t n, ChunkServer *s, fid_t f, chunkId_t c) :
+	/// input: given the pathname, we can update space usage for the path
+	/// hierarchy corresponding to pathname; this will enable us to make "du"
+	/// instantaneous.
+	std::string pathname; 
+	MetaChunkSize(seq_t n, ChunkServer *s, fid_t f, chunkId_t c, 
+			const std::string &p) :
 		MetaChunkRequest(META_CHUNK_SIZE, n, true, NULL, s),
-		fid(f), chunkId(c), chunkSize(-1), filesize(-1) { }
+		fid(f), chunkId(c), chunkSize(-1), filesize(-1), pathname(p) { }
 	//!< generate the request string that should be sent out
 	void request(ostringstream &os);
 	int log(ofstream &file) const;
@@ -793,7 +781,7 @@ struct MetaChunkSize: public MetaChunkRequest {
 	{
 		ostringstream os;
 
-		os <<  "meta->chunk size: ";
+		os <<  "meta->chunk size: " << pathname;
 		os << " fileId = " << fid;
 		os << " chunkId = " << chunkId;
 		return os.str();

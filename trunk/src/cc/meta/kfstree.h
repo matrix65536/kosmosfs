@@ -168,7 +168,10 @@ public:
 			dad = dad->peer();
 		}
 	}
-
+	void reset(Node *d, int p) {
+		dad = d;
+		pos = p;
+	}
 };
 
 /*!
@@ -195,6 +198,7 @@ class Tree {
 	bool emptydir(fid_t dir);
 	bool is_descendant(fid_t src, fid_t dst);
 	void shift_path(vector <pathlink> &path);
+	off_t recomputeDirSize(fid_t dir);
 public:
 	Tree()
 	{
@@ -220,18 +224,21 @@ public:
 	MetaFattr *getFattr(fid_t fid);		//!< return attributes
 	MetaDentry *getDentry(fid_t fid);	//!< return dentry attributes
 	std::string getPathname(fid_t fid);	//!< return full pathname for a given file id
+	void recomputeDirSize();		//!< re-compute the size of each dir. in tree
 
 	int create(fid_t dir, const string &fname, fid_t *newFid, 
 			int16_t numReplicas, bool exclusive);
-	int remove(fid_t dir, const string &fname);
+	int remove(fid_t dir, const string &fname, const string &pathname);
 	int mkdir(fid_t dir, const string &dname, fid_t *newFid);
-	int rmdir(fid_t dir, const string &dname);
+	int rmdir(fid_t dir, const string &dname, const string &pathname);
 	int readdir(fid_t dir, vector <MetaDentry *> &result);
 	int getalloc(fid_t file, vector <MetaChunkInfo *> &result);
 	int getalloc(fid_t file, chunkOff_t offset, MetaChunkInfo **c);
-	int rename(fid_t dir, const string &oldname, string &newname, bool once);
+	int rename(fid_t dir, const string &oldname, string &newname, 
+			const string &oldpath, bool once);
 	MetaFattr *lookup(fid_t dir, const string &fname);
 	MetaFattr *lookupPath(fid_t rootdir, const string &path);
+	void updateSpaceUsageForPath(const string &path, off_t nbytes);
 	int getChunkVersion(fid_t file, chunkId_t chunkId, seq_t *chunkVersion);
 	int changeFileReplication(fid_t file, int16_t numReplicas);
 

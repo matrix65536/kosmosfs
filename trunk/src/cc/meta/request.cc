@@ -64,7 +64,6 @@ static int parseHandlerReaddir(Properties &prop, MetaRequest **r);
 static int parseHandlerReaddirPlus(Properties &prop, MetaRequest **r);
 static int parseHandlerGetalloc(Properties &prop, MetaRequest **r);
 static int parseHandlerGetlayout(Properties &prop, MetaRequest **r);
-static int parseHandlerGetDirSummary(Properties &prop, MetaRequest **r);
 static int parseHandlerAllocate(Properties &prop, MetaRequest **r);
 static int parseHandlerTruncate(Properties &prop, MetaRequest **r);
 static int parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r);
@@ -310,7 +309,7 @@ handle_remove(MetaRequest *r)
 		req->status = -EPERM;
 		return;
 	}
-	req->status = metatree.remove(req->dir, req->name);
+	req->status = metatree.remove(req->dir, req->name, req->pathname);
 }
 
 static void
@@ -322,7 +321,7 @@ handle_rmdir(MetaRequest *r)
 		req->status = -EPERM;
 		return;
 	}
-	req->status = metatree.rmdir(req->dir, req->name);
+	req->status = metatree.rmdir(req->dir, req->name, req->pathname);
 }
 
 static void
@@ -462,69 +461,6 @@ handle_readdirplus(MetaRequest *r)
 	req->numEntries = res.size();
 	for_each(res.begin(), res.end(), EnumerateReaddirPlusInfo(req->v));
 }
-
-/*!
- * \brief Given a directory tree rooted at dir, return
- * the # of files/# of bytes in that tree.
- */
-
-static int
-getDirSummary(fid_t dir, uint64_t &nFiles, uint64_t &nBytes)
-{
-	int res;
-	vector<MetaDentry *> dentries;
-	res = metatree.readdir(dir, dentries);
-	if (res != 0)
-		return res;
-	for (uint32_t i = 0; i < dentries.size(); i++) {
-		MetaDentry *entry = dentries[i];
-		string entryName = entry->getName();
-
-		if ((entryName == ".") || (entryName == ".."))
-			continue;
-		MetaFattr *fa = metatree.lookup(entry->getDir(), entryName);
-		if ((fa == NULL) || (fa->type == KFS_NONE))
-			continue;
-		if (fa->type == KFS_DIR) {
-			if (fa->id() == dir)
-				continue;
-			res = getDirSummary(fa->id(), nFiles, nBytes);
-			if (res != 0)
-				return res;
-			continue;
-		}
-		nFiles++;
-		if (fa->filesize >= 0)
-			nBytes += fa->filesize;
-		else {
-			// we don't know the filesize; so, we assume all the
-			// chunks upto the last one are full and use that value
-			// as an approximation of the file size.
-			if (fa->chunkcount > 0)
-				nBytes += ((fa->chunkcount - 1) * CHUNKSIZE);
-			else
-				nBytes += CHUNKSIZE;
-
-		}
-	}
-	// all good
-	return 0;
-
-}
-
-static void
-handle_getDirSummary(MetaRequest *r)
-{
-	MetaGetDirSummary *req = static_cast <MetaGetDirSummary *>(r);
-
-	if (!is_dir(req->dir)) {
-		req->status = -ENOTDIR;
-		return;
-	}
-
-	req->status = getDirSummary(req->dir, req->numFiles, req->numBytes);
-}
-
 
 /*!
  * \brief Get the allocation information for a specific chunk in a file.
@@ -765,7 +701,7 @@ handle_rename(MetaRequest *r)
 		return;
 	}
 	req->status = metatree.rename(req->dir, req->oldname, req->newname,
-					req->overwrite);
+					req->oldpath, req->overwrite);
 }
 
 static void
@@ -908,10 +844,15 @@ handle_chunk_size_done(MetaRequest *r)
 	if ((fa != NULL) && (fa->type == KFS_FILE)) {
 		vector<MetaChunkInfo*> chunkInfo;
                 int status = metatree.getalloc(fa->id(), chunkInfo);
+		off_t spaceUsageDelta = 0;
 
                 if ((status != 0) || (chunkInfo.size() == 0)) {
                         return;
                 }
+		if (fa->filesize > 0) {
+			// stash the value for doing the delta calc
+			spaceUsageDelta = fa->filesize;
+		}
 		// only if we are looking at the last chunk of the file can we
 		// set the size.
                 MetaChunkInfo* lastChunk = chunkInfo.back();
@@ -921,6 +862,16 @@ handle_chunk_size_done(MetaRequest *r)
 		}
 		// stash the value away so that we can log it.
 		req->filesize = fa->filesize;
+		if (req->pathname == "") {
+			req->pathname = metatree.getPathname(req->fid);
+		}
+
+		//
+		// we possibly updated fa->filesize; so, compute the delta from
+		// before and after
+		//
+		spaceUsageDelta = fa->filesize - spaceUsageDelta;
+		metatree.updateSpaceUsageForPath(req->pathname, spaceUsageDelta);
 	}
 	req->status = 0;
 }
@@ -1018,7 +969,6 @@ setup_handlers()
 	handler[META_RMDIR] = handle_rmdir;
 	handler[META_READDIR] = handle_readdir;
 	handler[META_READDIRPLUS] = handle_readdirplus;
-	handler[META_GETDIRSUMMARY] = handle_getDirSummary;
 	handler[META_GETALLOC] = handle_getalloc;
 	handler[META_GETLAYOUT] = handle_getlayout;
 	handler[META_ALLOCATE] = handle_allocate;
@@ -1065,7 +1015,6 @@ setup_handlers()
 	gParseHandlers["READDIRPLUS"] = parseHandlerReaddirPlus;
 	gParseHandlers["GETALLOC"] = parseHandlerGetalloc;
 	gParseHandlers["GETLAYOUT"] = parseHandlerGetlayout;
-	gParseHandlers["GETDIRSUMMARY"] = parseHandlerGetDirSummary;
 	gParseHandlers["ALLOCATE"] = parseHandlerAllocate;
 	gParseHandlers["TRUNCATE"] = parseHandlerTruncate;
 	gParseHandlers["RENAME"] = parseHandlerRename;
@@ -1239,15 +1188,6 @@ MetaGetalloc::log(ofstream &file) const
  */
 int
 MetaGetlayout::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief log getdirsummary (nop)
- */
-int
-MetaGetDirSummary::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1718,7 +1658,9 @@ parseHandlerRemove(Properties &prop, MetaRequest **r)
 	name = prop.getValue("Filename", (const char *) NULL);
 	if (name == NULL)
 		return -1;
-	*r = new MetaRemove(seq, dir, name);
+	MetaRemove *rm = new MetaRemove(seq, dir, name);
+	rm->pathname = prop.getValue("Pathname", "");
+	*r = rm;
 	return 0;
 }
 
@@ -1754,7 +1696,9 @@ parseHandlerRmdir(Properties &prop, MetaRequest **r)
 	name = prop.getValue("Directory", (const char *) NULL);
 	if (name == NULL)
 		return -1;
-	*r = new MetaRmdir(seq, dir, name);
+	MetaRmdir *rm = new MetaRmdir(seq, dir, name);
+	rm->pathname = prop.getValue("Pathname", "");
+	*r = rm;
 	return 0;
 }
 
@@ -1783,20 +1727,6 @@ parseHandlerReaddirPlus(Properties &prop, MetaRequest **r)
 	if (dir < 0)
 		return -1;
 	*r = new MetaReaddirPlus(seq, dir);
-	return 0;
-}
-
-static int
-parseHandlerGetDirSummary(Properties &prop, MetaRequest **r)
-{
-	fid_t dir;
-	seq_t seq;
-
-	seq = prop.getValue("Cseq", (seq_t) -1);
-	dir = prop.getValue("Directory File-handle", (fid_t) -1);
-	if (dir < 0)
-		return -1;
-	*r = new MetaGetDirSummary(seq, dir);
 	return 0;
 }
 
@@ -1843,6 +1773,7 @@ parseHandlerAllocate(Properties &prop, MetaRequest **r)
 	if ((fid < 0) || (offset < 0))
 		return -1;
 	MetaAllocate *m = new MetaAllocate(seq, fid, offset);
+	m->pathname = prop.getValue("Pathname", "");
 	m->clientHost = prop.getValue("Client-host", "");
 	*r = m;
 	return 0;
@@ -1860,7 +1791,9 @@ parseHandlerTruncate(Properties &prop, MetaRequest **r)
 	offset = prop.getValue("Offset", (chunkOff_t) -1);
 	if ((fid < 0) || (offset < 0))
 		return -1;
-	*r = new MetaTruncate(seq, fid, offset);
+	MetaTruncate *mt = new MetaTruncate(seq, fid, offset);
+	mt->pathname = prop.getValue("Pathname", "");
+	*r = mt;
 	return 0;
 }
 
@@ -1881,7 +1814,9 @@ parseHandlerRename(Properties &prop, MetaRequest **r)
 	if ((fid < 0) || (oldname == NULL) || (newpath == NULL))
 		return -1;
 
-	*r = new MetaRename(seq, fid, oldname, newpath, overwrite);
+	MetaRename *rn = new MetaRename(seq, fid, oldname, newpath, overwrite);
+	rn->oldpath = prop.getValue("Old-path", "");
+	*r = rn;
 	return 0;
 }
 
@@ -2378,20 +2313,6 @@ MetaGetlayout::response(ostringstream &os)
 
 	if (res.length() > 0)
 		os << res;
-}
-
-void
-MetaGetDirSummary::response(ostringstream &os)
-{
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
-		return;
-	}
-	os << "Num-files: " << numFiles << "\r\n";
-	os << "Num-bytes: " << numBytes << "\r\n\r\n";
 }
 
 class PrintChunkServerLocations {
