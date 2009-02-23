@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/05/26
 // Author: Sriram Rao
@@ -2144,11 +2144,12 @@ WriteOp::~WriteOp()
         gCtrWriteDuration.Update(timeSpent);
     }
 
-    if (dataBuf != NULL)
-        delete dataBuf;
+    delete dataBuf;
     if (rop != NULL) {
         rop->wop = NULL;
-        assert(rop->dataBuf == NULL);
+        // rop->dataBuf can be non null when read completes but WriteChunk
+        // fails, and returns before using this buff.
+        // Read op destructor deletes dataBuf.
         delete rop;
     }
     if (diskConnection)
@@ -2157,8 +2158,7 @@ WriteOp::~WriteOp()
 
 WriteIdAllocOp::~WriteIdAllocOp()
 {
-    if (fwdedOp != NULL)
-        delete fwdedOp;
+    delete fwdedOp;
 }
 
 WritePrepareOp::~WritePrepareOp()
@@ -2166,22 +2166,17 @@ WritePrepareOp::~WritePrepareOp()
     // on a successful prepare, dataBuf should be moved to a write op.
     assert((status != 0) || (dataBuf == NULL));
 
-    if (dataBuf != NULL)
-        delete dataBuf;
-    if (writeFwdOp != NULL)
-        delete writeFwdOp;
-    if (writeOp != NULL)
-        delete writeOp;
+    delete dataBuf;
+    delete writeFwdOp;
+    delete writeOp;
 }
 
 WriteSyncOp::~WriteSyncOp()
 {
     off_t chunkSize = 0;
 
-    if (fwdedOp != NULL)
-        delete fwdedOp;
-    if (writeOp != NULL)
-        delete writeOp;
+    delete fwdedOp;
+    delete writeOp;
 
     gChunkManager.ChunkSize(chunkId, &chunkSize);
     if ((chunkSize > 0) && 
