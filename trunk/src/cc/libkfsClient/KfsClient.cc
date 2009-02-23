@@ -675,8 +675,7 @@ KfsClientImpl::Rmdir(const char *pathname)
     int fte = LookupFileTableEntry(parentFid, dirname.c_str());
     if (fte > 0)
 	ReleaseFileTableEntry(fte);
-
-    RmdirOp op(nextSeq(), parentFid, dirname.c_str());
+    RmdirOp op(nextSeq(), parentFid, dirname.c_str(), pathname);
     (void)DoMetaOpWithRetry(&op);
     return op.status;
 }
@@ -1036,9 +1035,11 @@ KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFiles
 
     // either we don't have the attributes cached or it is a file and
     // we are asked to compute the size and we don't know the size,
-    // lookup the attributes
-    if ((fte < 0) || ((!kfsattr.isDirectory) && computeFilesize && 
-                      (kfsattr.fileSize < 0))) {
+    // for directories, the metaserver keeps track of the size of the
+    // dir tree; whenever it is stat'ed we should lookup the updated
+    // size of the dir. tree
+    if ((fte < 0) || kfsattr.isDirectory ||
+        (computeFilesize && (kfsattr.fileSize < 0))) {
 	kfsFileId_t parentFid;
 	string filename;
 	int res = GetPathComponents(pathname, &parentFid, filename);
@@ -1049,6 +1050,7 @@ KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFiles
 	    return res;
     }
 
+    KFS_LOG_VA_INFO("Size of %s is %d", pathname, kfsattr.fileSize);
 
     memset(&result, 0, sizeof (struct stat));
     result.st_mode = kfsattr.isDirectory ? S_IFDIR : S_IFREG;
@@ -1107,22 +1109,18 @@ KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
     int fte = LookupFileTableEntry(parentFid, filename);
     LookupOp op(nextSeq(), parentFid, filename);
 
-    if (fte >= 0) {
-	result = mFileTable[fte]->fattr;
-    } else {
-        (void)DoMetaOpWithRetry(&op);
-        if (op.status < 0)
-            return op.status;
+    (void)DoMetaOpWithRetry(&op);
+    if (op.status < 0)
+        return op.status;
 
-        result = op.fattr;
-    }
+    result = op.fattr;
+
+    result.fileSize = op.fattr.fileSize;
+    
     if ((!result.isDirectory) && computeFilesize) {
         if (result.fileSize < 0) {
             result.fileSize = ComputeFilesize(result.fileId);
         }
-    }
-    else {
-        result.fileSize = -1;
     }
 
     if (fte >= 0) {
@@ -1200,7 +1198,7 @@ KfsClientImpl::Remove(const char *pathname)
     if (fte > 0)
 	ReleaseFileTableEntry(fte);
 
-    RemoveOp op(nextSeq(), parentFid, filename.c_str());
+    RemoveOp op(nextSeq(), parentFid, filename.c_str(), pathname);
     (void)DoMetaOpWithRetry(&op);
     return op.status;
 }
@@ -1218,7 +1216,7 @@ KfsClientImpl::Rename(const char *oldpath, const char *newpath, bool overwrite)
 
     string absNewpath = build_path(mCwd, newpath);
     RenameOp op(nextSeq(), parentFid, oldfilename.c_str(),
-		    absNewpath.c_str(), overwrite);
+                absNewpath.c_str(), oldpath, overwrite);
     (void)DoMetaOpWithRetry(&op);
 
     KFS_LOG_VA_DEBUG("Status of renaming %s -> %s is: %d", 
@@ -1379,7 +1377,7 @@ KfsClientImpl::Truncate(int fd, off_t offset)
     pos->ResetServers();
 
     FileAttr *fa = FdAttr(fd);
-    TruncateOp op(nextSeq(), fa->fileId, offset);
+    TruncateOp op(nextSeq(), FdInfo(fd)->pathname.c_str(), fa->fileId, offset);
     (void)DoMetaOpWithRetry(&op);
     int res = op.status;
 
@@ -1586,8 +1584,7 @@ KfsClientImpl::AllocChunk(int fd)
     
     gettimeofday(&startTime, NULL);
 
-
-    AllocateOp op(nextSeq(), fa->fileId);
+    AllocateOp op(nextSeq(), fa->fileId, FdInfo(fd)->pathname);
     FilePosition *pos = FdPos(fd);
     op.fileOffset = ((pos->fileOffset / KFS::CHUNKSIZE) * KFS::CHUNKSIZE);
 

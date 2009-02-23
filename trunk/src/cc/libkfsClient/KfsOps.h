@@ -145,8 +145,9 @@ struct CreateOp : public KfsOp {
 struct RemoveOp : public KfsOp {
     kfsFileId_t parentFid; // input parent file-id
     const char *filename;
-    RemoveOp(kfsSeq_t s, kfsFileId_t p, const char *f) :
-        KfsOp(CMD_REMOVE, s), parentFid(p), filename(f)
+    const char *pathname;
+    RemoveOp(kfsSeq_t s, kfsFileId_t p, const char *f, const char *pn) :
+        KfsOp(CMD_REMOVE, s), parentFid(p), filename(f), pathname(pn)
     {
 
     }
@@ -181,8 +182,9 @@ struct MkdirOp : public KfsOp {
 struct RmdirOp : public KfsOp {
     kfsFileId_t parentFid; // input parent file-id
     const char *dirname;
-    RmdirOp(kfsSeq_t s, kfsFileId_t p, const char *d) :
-        KfsOp(CMD_RMDIR, s), parentFid(p), dirname(d)
+    const char *pathname; // input: full pathname
+    RmdirOp(kfsSeq_t s, kfsFileId_t p, const char *d, const char *pn) :
+        KfsOp(CMD_RMDIR, s), parentFid(p), dirname(d), pathname(pn)
     {
 
     }
@@ -201,11 +203,12 @@ struct RenameOp : public KfsOp {
     kfsFileId_t parentFid; // input parent file-id
     const char *oldname;  // old file name/dir
     const char *newpath;  // new path to be renamed to
+    const char *oldpath;  // old path (starting from /)
     bool overwrite; // set if the rename can overwrite newpath
     RenameOp(kfsSeq_t s, kfsFileId_t p, const char *o,
-             const char *n, bool c) :
+             const char *n, const char *op, bool c) :
         KfsOp(CMD_RENAME, s), parentFid(p), oldname(o),
-        newpath(n), overwrite(c)
+        newpath(n), oldpath(op), overwrite(c)
     {
 
     }
@@ -441,14 +444,15 @@ struct GetChunkMetadataOp: public KfsOp {
 struct AllocateOp : public KfsOp {
     kfsFileId_t fid;
     off_t fileOffset;
+    std::string pathname; // input: the full pathname corresponding to fid
     kfsChunkId_t chunkId; // result
     int64_t chunkVersion; // result---version # for the chunk
     std::string clientHost; // our hostname
     // where is the chunk hosted name/port
     ServerLocation masterServer; // master for running the write transaction
     std::vector<ServerLocation> chunkServers;
-    AllocateOp(kfsSeq_t s, kfsFileId_t f) :
-        KfsOp(CMD_ALLOCATE, s), fid(f), fileOffset(0)
+    AllocateOp(kfsSeq_t s, kfsFileId_t f, const std::string &p) :
+        KfsOp(CMD_ALLOCATE, s), fid(f), fileOffset(0), pathname(p)
     {
 
     }
@@ -463,10 +467,11 @@ struct AllocateOp : public KfsOp {
 };
 
 struct TruncateOp : public KfsOp {
+    const char *pathname;
     kfsFileId_t fid;
     off_t fileOffset;
-    TruncateOp(kfsSeq_t s, kfsFileId_t f, off_t o) :
-        KfsOp(CMD_TRUNCATE, s), fid(f), fileOffset(o)
+    TruncateOp(kfsSeq_t s, const char *p, kfsFileId_t f, off_t o) :
+        KfsOp(CMD_TRUNCATE, s), pathname(p), fid(f), fileOffset(o)
     {
 
     }
