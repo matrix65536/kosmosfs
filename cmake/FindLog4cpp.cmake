@@ -20,7 +20,7 @@ FIND_PATH(Log4cpp_INCLUDE_DIR log4cpp/Category.hh
 SET(Log4cpp_NAMES log4cpp)
 FIND_LIBRARY(Log4cpp_LIBRARY
   NAMES ${Log4cpp_NAMES}
-  PATHS /usr/lib /usr/local/lib /opt/local/lib
+  PATHS /usr/local/lib64/lib /usr/lib /usr/local/lib /opt/local/lib
 )
 
 IF (Log4cpp_INCLUDE_DIR AND Log4cpp_LIBRARY)
