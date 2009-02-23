@@ -83,6 +83,7 @@ RmdirOp::Request(ostringstream &os)
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
+    os << "Pathname: " << pathname << "\r\n";
     os << "Directory: " << dirname << "\r\n\r\n";
 }
 
@@ -97,6 +98,7 @@ RenameOp::Request(ostringstream &os)
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Old-name: " << oldname << "\r\n";
     os << "New-path: " << newpath << "\r\n";
+    os << "Old-path: " << oldpath << "\r\n";
     os << "Overwrite: " << o << "\r\n\r\n";
 }
 
@@ -157,6 +159,7 @@ RemoveOp::Request(ostringstream &os)
     os << "REMOVE " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Pathname: " << pathname << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Filename: " << filename << "\r\n\r\n";
 }
@@ -223,6 +226,7 @@ AllocateOp::Request(ostringstream &os)
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Client-host: " << hostname << "\r\n";
+    os << "Pathname: " << pathname << "\r\n";
     os << "File-handle: " << fid << "\r\n";
     os << "Chunk-offset: " << fileOffset << "\r\n\r\n";
 }
@@ -233,6 +237,7 @@ TruncateOp::Request(ostringstream &os)
     os << "TRUNCATE \r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Pathname: " << pathname << "\r\n";
     os << "File-handle: " << fid << "\r\n";
     os << "Offset: " << fileOffset << "\r\n\r\n";
 }
