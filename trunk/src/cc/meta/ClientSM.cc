@@ -46,6 +46,7 @@ ClientSM::ClientSM(NetConnectionPtr &conn)
 {
 	mNetConnection = conn;
 	mOp = NULL;
+	mClientIP = mNetConnection->GetPeerName();
 	SET_HANDLER(this, &ClientSM::HandleRequest);
 }
 

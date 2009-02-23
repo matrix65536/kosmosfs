@@ -81,6 +81,8 @@ main(int argc, char **argv)
                 exit(-1);
         }
 
+	KFS_LOG_INFO("Starting metaserver...");
+
 	libkfsio::InitGlobals();
 
         kfs_startup(gLogDir, gCPDir, gMinChunkservers, gMinReplicasPerFile);
