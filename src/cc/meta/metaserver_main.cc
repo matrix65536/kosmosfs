@@ -34,6 +34,7 @@
 
 #include "NetDispatch.h"
 #include "startup.h"
+#include "ChunkServer.h"
 
 using namespace KFS;
 
@@ -93,6 +94,7 @@ main(int argc, char **argv)
         signal(SIGPIPE, SIG_IGN);
 
         gNetDispatch.Start(gClientPort, gChunkServerPort);
+	ChunkServerHeartbeaterInit();
 
         while (1) {
 		struct timeval timeout;

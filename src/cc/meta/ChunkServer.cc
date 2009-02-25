@@ -49,8 +49,17 @@ using boost::scoped_array;
 //
 const int32_t INACTIVE_SERVER_TIMEOUT = 600;
 
+#include "ChunkServerHeartbeater.h"
+
+KFS::ChunkServerHeartbeater gChunkServerHeartbeater;
+
+void KFS::ChunkServerHeartbeaterInit()
+{
+	globals().netManager.RegisterTimeoutHandler(&gChunkServerHeartbeater);
+}
+
 ChunkServer::ChunkServer() :
-    mSeqNo(1), mTimer(NULL),
+	mSeqNo(1),
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
 	mHeartbeatSkipped(false), mIsRetiring(false), mRackId(-1), 
 	mNumCorruptChunks(0), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
@@ -69,11 +78,8 @@ ChunkServer::ChunkServer(NetConnectionPtr &conn) :
 	mNumChunks(0), mNumChunkWrites(0), 
 	mNumChunkWriteReplications(0), mNumChunkReadReplications(0)
 {
-        mTimer = new ChunkServerTimeoutImpl(this);
         // Receive HELLO message
         SET_HANDLER(this, &ChunkServer::HandleHello);
-
-        globals().netManager.RegisterTimeoutHandler(mTimer);
 }
 
 ChunkServer::~ChunkServer()
@@ -82,20 +88,6 @@ ChunkServer::~ChunkServer()
 
         if (mNetConnection)
                 mNetConnection->Close();
-	if (mTimer) {
-        	globals().netManager.UnRegisterTimeoutHandler(mTimer);
-        	delete mTimer;
-	}
-}
-
-void
-ChunkServer::StopTimer()
-{
-	if (mTimer) {
-        	globals().netManager.UnRegisterTimeoutHandler(mTimer);
-        	delete mTimer;
-		mTimer = NULL;
-	}
 }
 
 ///
@@ -198,7 +190,6 @@ ChunkServer::HandleRequest(int code, void *data)
 	case EVENT_NET_ERROR:
 		KFS_LOG_VA_INFO("Chunk server %s is down...", GetServerName());
 
-		StopTimer();
 		FailDispatchedOps();
 		
 		// Take out the server from write-allocation

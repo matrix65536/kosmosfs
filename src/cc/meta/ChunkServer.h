@@ -48,7 +48,6 @@ using std::ostringstream;
 #include <time.h>
 
 #include "libkfsIO/KfsCallbackObj.h"
-#include "libkfsIO/ITimeout.h"
 #include "libkfsIO/NetConnection.h"
 #include "request.h"
 #include "queue.h"
@@ -64,10 +63,6 @@ namespace KFS
         /// Types of messages:
         ///   Meta server --> Chunk server: Allocate, Free, Heartbeat
         ///
-
-        /// Something to trigger timeouts so that we send heartbeat to
-        /// the chunk server.
-        class ChunkServerTimeoutImpl;
 
         class ChunkServer : public KfsCallbackObj,
 		public boost::enable_shared_from_this<ChunkServer> {
@@ -392,9 +387,6 @@ namespace KFS
                 /// A handle to the network connection
                 NetConnectionPtr mNetConnection;
 
-                /// Periodically heartbeat the chunk server
-                ChunkServerTimeoutImpl *mTimer;
-
                 /// Are we thru with processing HELLO message
                 bool mHelloDone;
 
@@ -539,24 +531,6 @@ namespace KFS
 		void FailDispatchedOps();
         };
 
-        class ChunkServerTimeoutImpl: public ITimeout {
-        public:
-                ChunkServerTimeoutImpl(ChunkServer *c) {
-                        mChunkServer = c;
-                        // send heartbeat once every min
-                        SetTimeoutInterval(60 * 1000);
-                };
-                ~ChunkServerTimeoutImpl() {
-			mChunkServer = NULL;
-		};
-                // On a timeout send a heartbeat RPC
-                void Timeout() {
-                        mChunkServer->Heartbeat();
-                };
-        private:
-                ChunkServer *mChunkServer; //!< pointer to the owner (chunk server)
-        };
-
 	class ChunkServerMatcher {
 		const ChunkServer *target;
 
@@ -566,6 +540,8 @@ namespace KFS
 			return c.get() == target;
 		}
 	};
+
+	extern void ChunkServerHeartbeaterInit();
 }
 
 #endif // META_CHUNKSERVER_H
