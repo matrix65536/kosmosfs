@@ -306,7 +306,8 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
         // and are giving up, we need the error to propogate
         int r;
         if ((r = DoAllocation(fd, true)) < 0) {
-            KFS_LOG_VA_INFO("Re-allocation on chunk %lld failed because of error code = %d", r);
+            KFS_LOG_VA_INFO("Re-allocation on chunk %lld failed because of error code = %d", 
+                            GetCurrChunk(fd)->chunkId, r);
             return r;
         }
     }
