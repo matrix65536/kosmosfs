@@ -1279,6 +1279,27 @@ LayoutManager::Dispatch()
 	pthread_mutex_unlock(&mChunkServersMutex);
 }
 
+class Heartbeater {
+public:
+	Heartbeater() { }
+	void operator() (ChunkServerPtr &c) {
+		c->Heartbeat();
+	}
+};
+
+void
+LayoutManager::HeartbeatChunkServers()
+{
+	// this method is called in the context of the network thread.
+	// lock out the request processor to prevent changes to the list.
+
+	pthread_mutex_lock(&mChunkServersMutex);
+
+	for_each(mChunkServers.begin(), mChunkServers.end(), Heartbeater());
+
+	pthread_mutex_unlock(&mChunkServersMutex);
+}
+
 bool
 LayoutManager::ValidServer(ChunkServer *c)
 {

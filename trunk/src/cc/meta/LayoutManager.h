@@ -461,6 +461,9 @@ namespace KFS
 		/// Execute planned rebalance for server c
 		void ExecuteRebalancePlan(ChunkServerPtr &c);
 
+		/// Send a heartbeat message to all responsive chunkservers
+		void HeartbeatChunkServers();
+
         protected:
 		/// A rolling counter for tracking leases that are issued to
 		/// to clients/chunkservers for reading/writing chunks
