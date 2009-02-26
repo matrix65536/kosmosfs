@@ -367,8 +367,11 @@ Tree::getDentry(fid_t fid)
         while (m != NULL) {
                 if (m->id() == fid) {
                         d = dynamic_cast<MetaDentry *>(m);
-                        if (d != NULL)
-                                break;
+                        if (d != NULL) {
+				string name = d->getName();
+				if ((name != ".") && (name != ".."))
+                                	break;
+			}
                 }
 
                 li.next();
