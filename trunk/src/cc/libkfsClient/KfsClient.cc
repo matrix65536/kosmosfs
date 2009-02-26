@@ -1050,7 +1050,7 @@ KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFiles
 	    return res;
     }
 
-    KFS_LOG_VA_INFO("Size of %s is %d", pathname, kfsattr.fileSize);
+    KFS_LOG_VA_DEBUG("Size of %s is %d", pathname, kfsattr.fileSize);
 
     memset(&result, 0, sizeof (struct stat));
     result.st_mode = kfsattr.isDirectory ? S_IFDIR : S_IFREG;
