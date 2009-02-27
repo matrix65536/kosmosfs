@@ -172,7 +172,7 @@ public class KosmosFileSystem extends FileSystem {
         }
         if (kfsImpl.isDirectory(srep)) {
             // System.out.println("Status of path: " + path + " is dir");
-            return new FileStatus(0, true, 1, 0, kfsImpl.getModificationTime(srep), 
+            return new FileStatus(kfsImpl.filesize(srep), true, 1, 0, kfsImpl.getModificationTime(srep), 
                                   path.makeQualified(this));
         } else {
             // System.out.println("Status of path: " + path + " is file");
