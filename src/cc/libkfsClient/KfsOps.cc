@@ -192,6 +192,7 @@ GetAllocOp::Request(ostringstream &os)
     os << "GETALLOC \r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Pathname: " << filename << "\r\n";
     os << "File-handle: " << fid << "\r\n";
     os << "Chunk-offset: " << fileOffset << "\r\n\r\n";
 }
@@ -356,6 +357,7 @@ LeaseAcquireOp::Request(ostringstream &os)
     os << "LEASE_ACQUIRE \r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Pathname: " << pathname << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n\r\n";
 }
 
@@ -365,6 +367,7 @@ LeaseRenewOp::Request(ostringstream &os)
     os << "LEASE_RENEW \r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Pathname: " << pathname << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Lease-id: " << leaseId << "\r\n";
     os << "Lease-type: READ_LEASE" << "\r\n\r\n";
