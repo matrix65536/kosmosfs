@@ -190,6 +190,7 @@ class Tree {
 		pathlink(Node *nn, int p): n(nn), pos(p) {}
 		pathlink(): n(0), pos(-1) { }
 	};
+	bool allowFidToPathConversion;	//!< fid->path translation is enabled?
 	Node *findLeaf(const Key &k) const;
 	void unlink(fid_t dir, const string fname, MetaFattr *fa, bool save_fa);
 	int link(fid_t dir, const string fname, FileType type, fid_t myID, 
@@ -207,6 +208,7 @@ public:
 		root->insertData(sentinel, NULL, 0);
 		first = root;
 		hgt = 1;
+		allowFidToPathConversion = true;
 	}
 	int new_tree()			//!< create a directory namespace
 	{
@@ -223,6 +225,10 @@ public:
 	void printleaves();			//!< print debugging info
 	MetaFattr *getFattr(fid_t fid);		//!< return attributes
 	MetaDentry *getDentry(fid_t fid);	//!< return dentry attributes
+	//!< turn off conversion from file-id to pathname---useful when we
+	//!< are going to compute the size of "/" and thereby each dir. in the tree
+	void disableFidToPathname() { allowFidToPathConversion = false; }
+	void enableFidToPathname() { allowFidToPathConversion = true; }
 	std::string getPathname(fid_t fid);	//!< return full pathname for a given file id
 	void recomputeDirSize();		//!< re-compute the size of each dir. in tree
 

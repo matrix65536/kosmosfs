@@ -91,6 +91,13 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
+    if (computeDirSize) {
+        // since we are going to recompute the size of each dir.,
+        // there is no need to update the size of a dir. when logs are replayed.
+        //
+        metatree.disableFidToPathname();
+    }
+
     logger_setup_paths(logdir);
     checkpointer_setup_paths(cpdir);
     status = restoreCheckpoint();
