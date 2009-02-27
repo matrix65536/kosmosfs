@@ -195,8 +195,10 @@ ChunkServer::HandleRequest(int code, void *data)
 		// Take out the server from write-allocation
 		mTotalSpace = mAllocSpace = mUsedSpace = 0;
 		
-		mNetConnection->Close();
-		mNetConnection.reset();
+		if (mNetConnection) {
+			mNetConnection->Close();
+			mNetConnection.reset();
+		}
 
 		mDown = true;
 		// force the server down thru the main loop to avoid races

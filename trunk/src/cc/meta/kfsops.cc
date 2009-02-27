@@ -438,6 +438,10 @@ Tree::getPathname(fid_t fid)
 {
 	MetaDentry *d;
 	string s = "";
+
+	if (!allowFidToPathConversion)
+		return "";
+
 	while (1) {
 		d = getDentry(fid);
 		if (d == NULL)

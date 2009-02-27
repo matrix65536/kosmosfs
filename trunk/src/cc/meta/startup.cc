@@ -117,6 +117,7 @@ KFS::kfs_startup(const string &logdir, const string &cpdir,
 	status = sigprocmask(SIG_BLOCK, &sset, NULL);
 	if (status != 0)
 		panic("kfs_startup: sigprocmask", true);
+	metatree.disableFidToPathname();
 	// get the paths setup before we get going
 	logger_setup_paths(logdir);
 	checkpointer_setup_paths(cpdir);
@@ -127,6 +128,9 @@ KFS::kfs_startup(const string &logdir, const string &cpdir,
 	status = replayer.playAllLogs();
 	if (status != 0)
 		panic("log replay failed", false);
+	metatree.enableFidToPathname();
+	// get the sizes of all dirs up-to-date
+	metatree.recomputeDirSize();
 	ChangeIncarnationNumber(NULL);
 	gLayoutManager.SetMinChunkserversToExitRecovery(minChunkServers);
 	// empty the dumpster dir on startup; if it doesn't exist, create it

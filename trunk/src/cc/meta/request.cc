@@ -383,6 +383,10 @@ public:
 		if (fa == NULL) {
 			return;
 		}
+		// when we readdir on "/", we get an entry for "/".  We need to
+		// supress that from the listing for "/".
+		if ((fa->id() == ROOTFID) && (entry->getName() == "/"))
+			return;
 
 		os << "Name: " << entry->getName() << "\r\n";
 		os << "File-handle: " << toString(fa->id()) << "\r\n";
