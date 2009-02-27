@@ -233,8 +233,9 @@ struct MetaRemove: public MetaRequest {
 	fid_t dir;	//!< parent directory fid
 	string name;	//!< name to remove
 	string pathname; //!< full pathname to remove
+	off_t filesize;	//!< size of file that was freed (debugging info)
 	MetaRemove(seq_t s, fid_t d, string n):
-		MetaRequest(META_REMOVE, s, true), dir(d), name(n) { }
+		MetaRequest(META_REMOVE, s, true), dir(d), name(n), filesize(0) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
 	string Show()
@@ -242,7 +243,7 @@ struct MetaRemove: public MetaRequest {
 		ostringstream os;
 
 		os << "remove: path = " << pathname << " (name = " << name << ")";
-		os << " (parent fid = " << dir << ")";
+		os << " (parent fid = " << dir << ") : filesize: " << filesize;
 		return os.str();
 	}
 };
@@ -316,6 +317,7 @@ struct MetaGetalloc: public MetaRequest {
 	chunkId_t chunkId; //!< Id of the chunk corresponding to offset
 	seq_t chunkVersion; //!< version # assigned to this chunk
 	vector<ServerLocation> locations; //!< where the copies of the chunks are
+	std::string pathname; //!< pathname of the file (useful to print in debug msgs)
 	MetaGetalloc(seq_t s, fid_t f, chunkOff_t o):
 		MetaRequest(META_GETALLOC, s, false), fid(f), offset(o) { }
 	int log(ofstream &file) const;
@@ -324,7 +326,7 @@ struct MetaGetalloc: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "getalloc: fid = " << fid;
+		os << "getalloc: " << pathname << " (fid = " << fid << ")";
 		os << " offset = " << offset;
 		return os.str();
 	}
@@ -447,7 +449,7 @@ struct MetaRename: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "rename: oldname = " << oldpath << "(oldname = " << oldname << ")";
+		os << "rename: oldname = " << oldpath << "(name = " << oldname << ")";
 		os << " (fid = " << dir << ")";
 		os << " newname = " << newname;
 		return os.str();
@@ -988,19 +990,20 @@ struct MetaChunkCorrupt: public MetaRequest {
  * \brief Op for acquiring a lease on a chunk of a file.
  */
 struct MetaLeaseAcquire: public MetaRequest {
-	chunkId_t chunkId; //!< input
 	LeaseType leaseType; //!< input
+	std::string pathname;   //!< full pathname of the file that owns chunk
+	chunkId_t chunkId; //!< input
 	int64_t leaseId; //!< result
 	MetaLeaseAcquire(seq_t s, chunkId_t c):
 		MetaRequest(META_LEASE_ACQUIRE, s, false),
-		chunkId(c), leaseType(READ_LEASE), leaseId(-1) { }
+		leaseType(READ_LEASE), chunkId(c), leaseId(-1) { }
 	int log(ofstream &file) const;
 	void response(ostringstream &os);
 	string Show()
 	{
 		ostringstream os;
 
-		os << "lease acquire: ";
+		os << "lease acquire: " << pathname << " ";
 		if (leaseType == READ_LEASE)
 			os << "read lease ";
 		else
@@ -1016,6 +1019,7 @@ struct MetaLeaseAcquire: public MetaRequest {
  */
 struct MetaLeaseRenew: public MetaRequest {
 	LeaseType leaseType; //!< input
+	std::string pathname;   //!< full pathname of the file that owns chunk
 	chunkId_t chunkId; //!< input
 	int64_t leaseId; //!< input
 	MetaLeaseRenew(seq_t s, LeaseType t, chunkId_t c, int64_t l):
@@ -1027,7 +1031,7 @@ struct MetaLeaseRenew: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "lease renew: ";
+		os << "lease renew: " << pathname << " ";
 		if (leaseType == READ_LEASE)
 			os << "read lease ";
 		else

@@ -309,7 +309,7 @@ handle_remove(MetaRequest *r)
 		req->status = -EPERM;
 		return;
 	}
-	req->status = metatree.remove(req->dir, req->name, req->pathname);
+	req->status = metatree.remove(req->dir, req->name, req->pathname, &req->filesize);
 }
 
 static void
@@ -1741,13 +1741,19 @@ parseHandlerGetalloc(Properties &prop, MetaRequest **r)
 	fid_t fid;
 	seq_t seq;
 	chunkOff_t offset;
+	const char *pathname;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
 	fid = prop.getValue("File-handle", (fid_t) -1);
 	offset = prop.getValue("Chunk-offset", (chunkOff_t) -1);
+	pathname = prop.getValue("Pathname", (const char *) NULL);
 	if ((fid < 0) || (offset < 0))
 		return -1;
 	*r = new MetaGetalloc(seq, fid, offset);
+	if (pathname != NULL) {
+		MetaGetalloc *mg = static_cast<MetaGetalloc *> (*r);
+		mg->pathname = pathname;
+	}
 	return 0;
 }
 
@@ -1974,8 +1980,13 @@ parseHandlerLeaseAcquire(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
 	chunkId_t chunkId = prop.getValue("Chunk-handle", (chunkId_t) -1);
+	const char *pathname = prop.getValue("Pathname", (const char *) NULL);
 
 	*r = new MetaLeaseAcquire(seq, chunkId);
+	if (pathname != NULL) {
+		MetaLeaseAcquire *mla = static_cast<MetaLeaseAcquire *> (*r);
+		mla->pathname = pathname;
+	}
 	return 0;
 }
 
@@ -1989,6 +2000,7 @@ parseHandlerLeaseRenew(Properties &prop, MetaRequest **r)
 	chunkId_t chunkId = prop.getValue("Chunk-handle", (chunkId_t) -1);
 	int64_t leaseId = prop.getValue("Lease-id", (int64_t) -1);
 	string leaseTypeStr = prop.getValue("Lease-type", "READ_LEASE");
+	const char *pathname = prop.getValue("Pathname", (const char *) NULL);
 	LeaseType leaseType;
 
 	if (leaseTypeStr == "WRITE_LEASE")
@@ -1997,6 +2009,10 @@ parseHandlerLeaseRenew(Properties &prop, MetaRequest **r)
 		leaseType = READ_LEASE;
 
 	*r = new MetaLeaseRenew(seq, leaseType, chunkId, leaseId);
+	if (pathname != NULL) {
+		MetaLeaseRenew *mlr = static_cast<MetaLeaseRenew *> (*r);
+		mlr->pathname = pathname;
+	}
 	return 0;
 }
 

@@ -193,7 +193,7 @@ Tree::unlink(fid_t dir, const string fname, MetaFattr *fa, bool save_fa)
  * \return		status code (zero on success)
  */
 int
-Tree::remove(fid_t dir, const string &fname, const string &pathname)
+Tree::remove(fid_t dir, const string &fname, const string &pathname, off_t *filesize)
 {
 	MetaFattr *fa = lookup(dir, fname);
 	if (fa == NULL)
@@ -208,6 +208,9 @@ Tree::remove(fid_t dir, const string &fname, const string &pathname)
 			string pn = getPathname(dir);
 			updateSpaceUsageForPath(pn, -fa->filesize);
 		}
+
+		if (filesize != NULL)
+			*filesize = fa->filesize;
 	}
 
 	if (fa->chunkcount > 0) {
