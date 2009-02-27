@@ -136,24 +136,9 @@ public class KosmosFileSystem extends FileSystem {
     public long getContentLength(Path path)  throws IOException {
 	Path absolute = makeAbsolute(path);
         String srep = absolute.toUri().getPath();
-
-	if (kfsImpl.isFile(srep))
-	    return kfsImpl.filesize(srep);
-
-        FileStatus[] entries = listStatus(path);
-
-        if (entries == null)
-            return 0;
-
-        long dirSize = 0;
-        for (int i = 0; i < entries.length; i++) {
-            if (entries[i].isDir()) {
-                dirSize += getContentLength(entries[i].getPath());
-                continue;
-            }
-            dirSize += entries[i].getLen();
-        }
-        return dirSize;
+        
+        // since KFS stores sizes at each level of the tree, just stat the dir and done
+        return kfsImpl.filesize(srep);
     }
 
     public FileStatus[] listStatus(Path path) throws IOException {
