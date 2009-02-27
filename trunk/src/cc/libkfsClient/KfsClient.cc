@@ -1656,6 +1656,7 @@ KfsClientImpl::LocateChunk(int fd, int chunkNum)
 
     GetAllocOp op(nextSeq(), mFileTable[fd]->fattr.fileId,
 		  (off_t) chunkNum * KFS::CHUNKSIZE);
+    op.filename = mFileTable[fd]->pathname;
     (void)DoMetaOpWithRetry(&op);
     if (op.status < 0) {
 	string errstr = ErrorCodeToStr(op.status);
@@ -2679,14 +2680,14 @@ KFS::ErrorCodeToStr(int status)
 }
 
 int
-KfsClientImpl::GetLease(kfsChunkId_t chunkId)
+KfsClientImpl::GetLease(kfsChunkId_t chunkId, const string &pathname)
 {
     int res;
 
     assert(chunkId >= 0);
 
     for (int i = 0; i < 3; i++) {		// XXX Evil constant
-	LeaseAcquireOp op(nextSeq(), chunkId);
+	LeaseAcquireOp op(nextSeq(), chunkId, pathname.c_str());
 	res = DoOpCommon(&op, &mMetaServerSock);
 	if (op.status == 0)
 		mLeaseClerk.RegisterLease(op.chunkId, op.leaseId);
@@ -2703,7 +2704,7 @@ KfsClientImpl::GetLease(kfsChunkId_t chunkId)
 }
 
 void
-KfsClientImpl::RenewLease(kfsChunkId_t chunkId)
+KfsClientImpl::RenewLease(kfsChunkId_t chunkId, const string &pathname)
 {
     int64_t leaseId;
 
@@ -2711,7 +2712,7 @@ KfsClientImpl::RenewLease(kfsChunkId_t chunkId)
     if (res < 0)
 	return;
 
-    LeaseRenewOp op(nextSeq(), chunkId, leaseId);
+    LeaseRenewOp op(nextSeq(), chunkId, leaseId, pathname.c_str());
     res = DoOpCommon(&op, &mMetaServerSock);
     if (op.status == 0) {
 	mLeaseClerk.LeaseRenewed(op.chunkId);

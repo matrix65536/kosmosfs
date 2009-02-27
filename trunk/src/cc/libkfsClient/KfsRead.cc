@@ -200,20 +200,20 @@ KfsClientImpl::IsChunkReadable(int fd)
         return false;
 
 
-    return IsChunkLeaseGood(chunk->chunkId);
+    return IsChunkLeaseGood(chunk->chunkId, mFileTable[fd]->pathname);
 }
 
 bool
-KfsClientImpl::IsChunkLeaseGood(kfsChunkId_t chunkId)
+KfsClientImpl::IsChunkLeaseGood(kfsChunkId_t chunkId, const string &pathname)
 {
     if (chunkId > 0) {
 	if ((!mLeaseClerk.IsLeaseValid(chunkId)) &&
-	    (GetLease(chunkId) < 0)) {
+	    (GetLease(chunkId, pathname) < 0)) {
 	    // couldn't get a valid lease
 	    return false;
 	}
 	if (mLeaseClerk.ShouldRenewLease(chunkId)) {
-	    RenewLease(chunkId);
+	    RenewLease(chunkId, pathname);
 	}
     }
     return true;
@@ -625,7 +625,7 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
         KFS_LOG_VA_DEBUG("Reading from %s", os.str().c_str());
     }
 
-    ssize_t numIO = DoPipelinedRead(ops, pos->preferredServer);
+    ssize_t numIO = DoPipelinedRead(fd, ops, pos->preferredServer);
     /*
     if (numIO < 0) {
 	KFS_LOG_DEBUG("Pipelined read from server failed...");
@@ -701,7 +701,7 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
 /// @retval 0 on success; -1 on failure
 ///
 int
-KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
+KfsClientImpl::DoPipelinedRead(int fd, vector<ReadOp *> &ops, TcpSocket *sock)
 {
     vector<ReadOp *>::size_type first = 0, next, minOps;
     int res = 0;
@@ -738,7 +738,7 @@ KfsClientImpl::DoPipelinedRead(vector<ReadOp *> &ops, TcpSocket *sock)
 
 	op = ops[next];
 
-	if (!IsChunkLeaseGood(op->chunkId)) {
+	if (!IsChunkLeaseGood(op->chunkId, mFileTable[fd]->pathname)) {
 	    leaseExpired = true;
 	    break;
 	}

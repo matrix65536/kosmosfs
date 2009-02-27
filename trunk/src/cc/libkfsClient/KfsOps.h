@@ -382,6 +382,7 @@ struct GetAllocOp: public KfsOp {
     int64_t chunkVersion; // result
     // result: where the chunk is hosted name/port
     std::vector<ServerLocation> chunkServers;
+    std::string filename; // input
     GetAllocOp(kfsSeq_t s, kfsFileId_t f, off_t o) :
         KfsOp(CMD_GETALLOC, s), fid(f), fileOffset(o)
     {
@@ -669,9 +670,10 @@ struct WriteSyncOp : public KfsOp {
 
 struct LeaseAcquireOp : public KfsOp {
     kfsChunkId_t chunkId; // input
+    const char *pathname; // input    
     int64_t leaseId; // output
-    LeaseAcquireOp(kfsSeq_t s, kfsChunkId_t c) :
-        KfsOp(CMD_LEASE_ACQUIRE, s), chunkId(c), leaseId(-1)
+    LeaseAcquireOp(kfsSeq_t s, kfsChunkId_t c, const char *p) :
+        KfsOp(CMD_LEASE_ACQUIRE, s), chunkId(c), pathname(p), leaseId(-1)
     {
 
     }
@@ -689,8 +691,9 @@ struct LeaseAcquireOp : public KfsOp {
 struct LeaseRenewOp : public KfsOp {
     kfsChunkId_t chunkId; // input
     int64_t leaseId; // input
-    LeaseRenewOp(kfsSeq_t s, kfsChunkId_t c, int64_t l) :
-        KfsOp(CMD_LEASE_RENEW, s), chunkId(c), leaseId(l)
+    const char *pathname; // input    
+    LeaseRenewOp(kfsSeq_t s, kfsChunkId_t c, int64_t l, const char *p) :
+        KfsOp(CMD_LEASE_RENEW, s), chunkId(c), leaseId(l), pathname(p)
     {
 
     }

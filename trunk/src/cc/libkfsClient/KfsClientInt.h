@@ -694,8 +694,9 @@ private:
     /// new one.
     /// @param[in] chunkId  The chunk for which we are trying to get a
     /// "good" lease.
+    /// @param[in] pathname  The full path to the file that contains the chunk.
     /// @retval true if our lease is good; false otherwise.
-    bool IsChunkLeaseGood(kfsChunkId_t chunkId);
+    bool IsChunkLeaseGood(kfsChunkId_t chunkId, const std::string &pathname);
 
 
     /// Helper function that reads from the "current" chunk.
@@ -839,7 +840,7 @@ private:
     /// Do the work for pipelined read: send a few
     /// requests to plumb the pipe and then whenever an op finishes,
     /// submit a new one.
-    int DoPipelinedRead(std::vector<ReadOp *> &ops, TcpSocket *sock);
+    int DoPipelinedRead(int fd, std::vector<ReadOp *> &ops, TcpSocket *sock);
 
     int DoPipelinedWrite(int fd, std::vector<WritePrepareOp *> &ops, TcpSocket *masterSock);
 
@@ -895,8 +896,8 @@ private:
 
     /// Helper functions that interact with the leaseClerk to
     /// get/renew leases
-    int GetLease(kfsChunkId_t chunkId);
-    void RenewLease(kfsChunkId_t chunkId);
+    int GetLease(kfsChunkId_t chunkId, const std::string &pathname);
+    void RenewLease(kfsChunkId_t chunkId, const std::string &pathname);
     void RelinquishLease(kfsChunkId_t chunkId);
 
     bool GetDataChecksums(const ServerLocation &loc, 
