@@ -70,13 +70,10 @@ ClientSM::SendResponse(MetaRequest *op)
 
 	if (op->op == META_ALLOCATE) {
 		MetaAllocate *alloc = static_cast<MetaAllocate *>(op);
-		ostringstream o;
 
-		o << "alloc: " << alloc->chunkId << ' ' << alloc->chunkVersion << ' ';
 		for (uint32_t i = 0; i < alloc->servers.size(); i++) {
 			os << alloc->servers[i]->ServerID() << ' ';
 		}
-		KFS_LOG_VA_INFO("Client = %s, Allocate: %s", mClientIP.c_str(), o.str().c_str());
 	}
 
 	if (op->op != META_LOOKUP) {

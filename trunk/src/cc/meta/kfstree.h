@@ -234,7 +234,9 @@ public:
 
 	int create(fid_t dir, const string &fname, fid_t *newFid, 
 			int16_t numReplicas, bool exclusive);
-	int remove(fid_t dir, const string &fname, const string &pathname);
+	//!< final argument is optional: when non-null, this call will return
+	//!< the size of the file (if known)
+	int remove(fid_t dir, const string &fname, const string &pathname, off_t *filesize = NULL);
 	int mkdir(fid_t dir, const string &dname, fid_t *newFid);
 	int rmdir(fid_t dir, const string &dname, const string &pathname);
 	int readdir(fid_t dir, vector <MetaDentry *> &result);
