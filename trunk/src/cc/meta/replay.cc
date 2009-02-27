@@ -382,8 +382,11 @@ replay_size(deque <string> &c)
 				// two.
 				delta -= fa->filesize;
 			}
-			string pn = metatree.getPathname(fid);
-			metatree.updateSpaceUsageForPath(pn, delta);
+
+			if (delta > 0) {
+				string pn = metatree.getPathname(fid);
+				metatree.updateSpaceUsageForPath(pn, delta);
+			}
 
 			fa->filesize = filesize;
 		}

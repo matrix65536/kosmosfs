@@ -862,16 +862,17 @@ handle_chunk_size_done(MetaRequest *r)
 		}
 		// stash the value away so that we can log it.
 		req->filesize = fa->filesize;
-		if (req->pathname == "") {
-			req->pathname = metatree.getPathname(req->fid);
-		}
-
 		//
 		// we possibly updated fa->filesize; so, compute the delta from
 		// before and after
 		//
 		spaceUsageDelta = fa->filesize - spaceUsageDelta;
-		metatree.updateSpaceUsageForPath(req->pathname, spaceUsageDelta);
+		if (spaceUsageDelta > 0) {
+			if (req->pathname == "") {
+				req->pathname = metatree.getPathname(req->fid);
+			}
+			metatree.updateSpaceUsageForPath(req->pathname, spaceUsageDelta);
+		}
 	}
 	req->status = 0;
 }
