@@ -1113,5 +1113,10 @@ extern void setClusterKey(const char *key);
 extern void setMD5SumFn(const char *md5sumFn);
 extern void setWORMMode(bool value);
 
+/* update counters for # of files/dirs/chunks in the system */
+extern void UpdateNumDirs(int count);
+extern void UpdateNumFiles(int count);
+extern void UpdateNumChunks(int count);
+
 }
 #endif /* !defined(KFS_REQUEST_H) */

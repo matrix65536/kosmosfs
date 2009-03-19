@@ -97,6 +97,7 @@ ParseHandlerMap gParseHandlers;
 typedef map<MetaOp, Counter *> OpCounterMap;
 typedef map<MetaOp, Counter *>::iterator OpCounterMapIter;
 OpCounterMap gCounters;
+Counter *gNumFiles, *gNumDirs, *gNumChunks;
 
 // see the comments in setClusterKey()
 string gClusterKey;
@@ -161,6 +162,14 @@ KFS::RegisterCounters()
 	// AddCounter("Chunkserver Retire Done", META_CHUNK_RETIRE_DONE);
 	AddCounter("Replication Checker ", META_CHUNK_REPLICATION_CHECK);
 	AddCounter("Replication Done ", META_CHUNK_REPLICATE);
+
+	gNumFiles = new Counter("Number of Files");
+	gNumDirs = new Counter("Number of Directories");
+	gNumChunks = new Counter("Number of Chunks");
+
+	globals().counterManager.AddCounter(gNumFiles);
+	globals().counterManager.AddCounter(gNumDirs);
+	globals().counterManager.AddCounter(gNumChunks);
 }
 
 static void
@@ -174,6 +183,42 @@ UpdateCounter(MetaOp opName)
 		return;
 	c = iter->second;
 	c->Update(1);
+}
+
+void
+KFS::UpdateNumDirs(int count)
+{
+	if (gNumDirs == NULL)
+		return;
+
+	if ((int64_t) gNumDirs->GetValue() + count < 0)
+		gNumDirs->Reset();
+	else
+		gNumDirs->Update(count);
+}
+
+void
+KFS::UpdateNumFiles(int count)
+{
+	if (gNumFiles == NULL)
+		return;
+
+	if ((int64_t) gNumDirs->GetValue() + count < 0)
+		gNumFiles->Reset();
+	else
+		gNumFiles->Update(count);
+}
+
+void
+KFS::UpdateNumChunks(int count)
+{
+	if (gNumChunks == NULL)
+		return;
+
+	if ((int64_t) gNumDirs->GetValue() + count < 0)
+		gNumChunks->Reset();
+	else
+		gNumChunks->Update(count);
 }
 
 /*
