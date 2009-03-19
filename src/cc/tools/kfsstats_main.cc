@@ -203,6 +203,9 @@ RpcStatsMetaServer(TcpSocket &metaServerSock, int numSecs)
         PrintRpcStat("Num Failed Replications", op.stats);
         PrintRpcStat("Total Num Replications", op.stats);
         PrintRpcStat("Num Stale Chunks", op.stats);
+        PrintRpcStat("Number of Directories", op.stats);
+        PrintRpcStat("Number of Files", op.stats);
+        PrintRpcStat("Number of Chunks", op.stats);
 
         cout << "----------------------------------" << endl;
         if (numSecs == 0)
