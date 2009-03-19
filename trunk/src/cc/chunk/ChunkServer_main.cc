@@ -31,6 +31,8 @@ extern "C" {
 #include <sys/mman.h>
 #include <openssl/hmac.h>
 #include <openssl/md5.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 }
 
 #include <string>
@@ -82,12 +84,25 @@ main(int argc, char **argv)
         KFS::MsgLogger::Init(NULL);
     }
 
+    // set the coredump size to unlimited
+    struct rlimit rlim;
+    int err;
+    rlim.rlim_cur = RLIM_INFINITY;
+    rlim.rlim_max = RLIM_INFINITY;
+    err = setrlimit(RLIMIT_CORE, &rlim);
+    if (err) {
+        KFS_LOG_VA_INFO("Unable to increase coredump file size: %d", err);
+    }
+
     if (ReadChunkServerProperties(argv[1]) != 0) {
         cout << "Bad properties file: " << argv[1] << " aborting...\n";
         exit(-1);
     }
+
     // Initialize things...
     libkfsio::InitGlobals();
+
+    KFS_LOG_INFO("Starting chunkserver...");
     
     // for writes, the client is sending WRITE_PREPARE with 64K bytes;
     // to enable the data to fit into a single buffer (and thereby get
@@ -103,7 +118,7 @@ main(int argc, char **argv)
     // compute the MD5 of the binary
     computeMD5(argv[0]);
 
-    cout << "md5sum that send to metaserver: " << gMD5Sum << endl;
+    KFS_LOG_VA_INFO("md5sum to send to metaserver: %s", gMD5Sum.c_str());
 
     gChunkServer.Init();
     gChunkManager.Init(gChunkDirs, gTotalSpace);
@@ -145,7 +160,7 @@ computeMD5(const char *pathname)
         for (uint32_t i = 0; i < MD5_DIGEST_LENGTH; i++)
             sprintf(md5digest + i * 2, "%02x", md5sum[i]);
         gMD5Sum = md5digest;
-        cout << "md5sum calculated from binary: " << gMD5Sum << endl;
+        KFS_LOG_VA_DEBUG("md5sum calculated from binary: %s", gMD5Sum.c_str());
     }
     close(fd);
 }
