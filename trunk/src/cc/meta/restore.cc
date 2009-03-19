@@ -167,6 +167,13 @@ restore_fattr(deque <string> &c)
 					0, numReplicas);
 	if (gotfilesize)
 		f->filesize = filesize;
+
+	if (type == KFS_DIR)
+		UpdateNumDirs(1);
+	else {
+		UpdateNumFiles(1);
+		UpdateNumChunks(chunkcount);
+	}
 	return (metatree.insert(f) == 0);
 }
 

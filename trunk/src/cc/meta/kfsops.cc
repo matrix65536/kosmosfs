@@ -161,6 +161,9 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 
 	if (*newFid == 0)
 		*newFid = fileID.genid();
+
+	UpdateNumFiles(1);
+
 	return link(dir, fname, KFS_FILE, *newFid, numReplicas);
 }
 
@@ -223,10 +226,15 @@ Tree::remove(fid_t dir, const string &fname, const string &pathname, off_t *file
 			KFS_LOG_VA_DEBUG("Moving %s to dumpster", fname.c_str());
 			return status;
 		}
+
+		UpdateNumChunks(-fa->chunkcount);
+
 		// fire-away...
 		for_each(chunkInfo.begin(), chunkInfo.end(),
 			 mem_fun(&MetaChunkInfo::DeleteChunk));
 	}
+
+	UpdateNumFiles(-1);
 
 	unlink(dir, fname, fa, false);
 	return 0;
@@ -262,6 +270,8 @@ Tree::mkdir(fid_t dir, const string &dname, fid_t *newFid)
 	status = link(myID, "..", KFS_DIR, dir, 1);
 	if (status != 0)
 		panic("link(..)", false);
+
+	UpdateNumDirs(1);
 
 	*newFid = myID;
 	return 0;
@@ -317,6 +327,8 @@ Tree::rmdir(fid_t dir, const string &dname, const string &pathname)
 			updateSpaceUsageForPath(pn, -fa->filesize);
 		}
 	}
+
+	UpdateNumDirs(-1);
 
 	unlink(myID, ".", fa, true);
 	unlink(myID, "..", fa, true);
@@ -745,6 +757,8 @@ Tree::assignChunkId(fid_t file, chunkOff_t offset,
 	// is finished.  so, until then....
 	fa->filesize = -1;
 
+	UpdateNumChunks(1);
+
 	gettimeofday(&fa->mtime, NULL);
 	return 0;
 }
@@ -810,6 +824,7 @@ Tree::truncate(fid_t file, chunkOff_t offset, chunkOff_t *allocOffset)
 		(*m)->DeleteChunk();
 		++m;
 		fa->chunkcount--;
+		UpdateNumChunks(-1);
 	}
 
 	gettimeofday(&fa->mtime, NULL);

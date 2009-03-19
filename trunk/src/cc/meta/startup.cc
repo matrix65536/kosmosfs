@@ -118,6 +118,7 @@ KFS::kfs_startup(const string &logdir, const string &cpdir,
 	if (status != 0)
 		panic("kfs_startup: sigprocmask", true);
 	metatree.disableFidToPathname();
+	RegisterCounters();
 	// get the paths setup before we get going
 	logger_setup_paths(logdir);
 	checkpointer_setup_paths(cpdir);
@@ -139,7 +140,6 @@ KFS::kfs_startup(const string &logdir, const string &cpdir,
 	// chunks of the file will get reclaimed: chunkservers will tell us
 	// about chunks we don't know and those will nuked due to staleness
 	emptyDumpsterDir();
-	RegisterCounters();
 	initialize_request_handlers();
 	request_processor.start(request_consumer, NULL);
 	logger_init();
