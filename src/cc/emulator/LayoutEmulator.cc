@@ -97,10 +97,10 @@ void LayoutEmulator::Parse(const char *line, bool addChunksToReplicationChecker)
     fid_t fid;
     int numServers;
     int rack;
-    size_t chunksize;
+    off_t chunksize;
 
     // format of the file:
-    // <chunkid> <fileid> <chunksize> <# of servers> [server location]
+    // <chunkid> <fileid> <# of servers> [server location]
     // \n
     // where, <server location>: replica-size name port rack#
     // and we have as many server locations as # of servers
@@ -113,20 +113,38 @@ void LayoutEmulator::Parse(const char *line, bool addChunksToReplicationChecker)
 
     ist >> numServers;
 
+    MetaFattr *fa = metatree.getFattr(fid);
+    
+    if (fa == NULL)
+        return;
+
+    // compute the chunk's size from the filesize
+    vector<MetaChunkInfo *> v;
+    metatree.getalloc(fid, v);
+    chunksize = 0;
+
+    if (v.size() > 0) {
+        MetaChunkInfo *lastChunk = v.back();
+        if (lastChunk->chunkId == cid) {
+            if (fa->filesize > 0) {
+                chunksize = fa->filesize - (fa->chunkcount - 1) * CHUNKSIZE;
+                if (chunksize < 0) {
+                    cout << "Resetting chunksize for chunk: " << cid << " filesize: " << fa->filesize << endl;
+                    chunksize = 0;
+                }
+            }
+        } else
+            chunksize = CHUNKSIZE;
+    }
+
     for (int i = 0; i < numServers; i++) {
         ServerLocation loc;
         vector <ChunkServerPtr>::iterator j;
 
-        ist >> chunksize;
         ist >> loc.hostname;
         ist >> loc.port;
         ist >> rack;
-        // 16K header, if considering chunksize to be
-        // same as filesize on disk
-        if (chunksize <= 16384)
-            chunksize = 0;
-        else 
-            chunksize -= 16384;
+
         if (mDoingRebalancePlanning) {
             // don't take chunks that are smaller than 1MB
             if (chunksize < (1 << 20))
@@ -144,6 +162,51 @@ void LayoutEmulator::Parse(const char *line, bool addChunksToReplicationChecker)
         c->HostingChunk(cid, chunksize);
         mChunkSize[cid].push_back(chunksize);
     }
+}
+
+// override what is in the layout manager (only for the emulator code)
+void
+LayoutEmulator::ChunkReplicationDone(MetaChunkReplicate *req)
+{
+    vector<ChunkServerPtr>::iterator source;
+
+    mOngoingReplicationStats->Update(-1);
+
+    // Book-keeping....
+    CSMapIter iter = mChunkToServerMap.find(req->chunkId);
+
+    if (iter != mChunkToServerMap.end()) {
+        iter->second.ongoingReplications--;
+        if (iter->second.ongoingReplications == 0)
+            // if all the replications for this chunk are done,
+            // then update the global counter.
+            mNumOngoingReplications--;
+
+        if (iter->second.ongoingReplications < 0)
+            // sanity...
+            iter->second.ongoingReplications = 0;
+    }
+
+    req->server->ReplicateChunkDone(req->chunkId);
+
+    source = find_if(mChunkServers.begin(), mChunkServers.end(),
+                     MatchingServer(req->srcLocation));
+    if (source !=  mChunkServers.end()) {
+        (*source)->UpdateReplicationReadLoad(-1);
+    }
+
+    if (req->status != 0) {
+        // Replication failed...we will try again later
+        KFS_LOG_VA_INFO("%s: re-replication for chunk %lld failed, code = %d",
+			req->server->GetServerLocation().ToString().c_str(),
+			req->chunkId, req->status);
+        mFailedReplicationStats->Update(1);
+        return;
+    }
+
+    // replication succeeded: book-keeping
+
+    UpdateChunkToServerMapping(req->chunkId, req->server.get());
 }
 
 void
@@ -214,16 +277,20 @@ LayoutEmulator::GetChunkSize(chunkId_t cid)
 }
 
 void
-LayoutEmulator::AddServer(const ServerLocation &loc, int rack, float totalSpaceGB)
+LayoutEmulator::AddServer(const ServerLocation &loc, int rack, uint64_t totalSpace, uint64_t usedSpace)
 {
     ChunkServerEmulatorPtr c;
     vector<RackInfo>::iterator rackIter;
-    uint64_t totalSpace = (uint64_t) (totalSpaceGB * 1024 * 1024 * 1024);
 
     c.reset(new ChunkServerEmulator(loc, rack));
-    c->SetSpace(totalSpace, 0, 0);
+    c->SetSpace(totalSpace, usedSpace, 0);
 
-    //cout << "Server: " << loc.ToString() << " total space: " << c->GetTotalSpace() << endl;
+    cout << "Server: " << loc.ToString() << " total space: " << c->GetTotalSpace() << " util: " << c->GetSpaceUtilization() << endl;
+
+    mAvgSpaceUtil += c->GetSpaceUtilization();
+
+    // we compute used space as we add chunks
+    c->SetSpace(totalSpace, 0, 0);
 
     mChunkServers.push_back(c);
 
@@ -267,6 +334,7 @@ public:
 int
 LayoutEmulator::BuildRebalancePlan()
 {
+    
     ChunkReplicationChecker();
     for_each(mChunkServers.begin(), mChunkServers.end(), OpDispatcher());
     return mChunkReplicationCandidates.size();
@@ -327,6 +395,12 @@ LayoutEmulator::ReadNetworkDefn(const string &networkFn)
         return;
     }
 
+    // for starters, we want the nodes between 30-70% full
+    mMinRebalanceSpaceUtilThreshold = 0.3;
+    mMaxRebalanceSpaceUtilThreshold = 0.6;
+    
+    mAvgSpaceUtil = 0.0;
+
     while (!file.eof()) {
         file.getline(line, MAXLINE);
 
@@ -335,15 +409,32 @@ LayoutEmulator::ReadNetworkDefn(const string &networkFn)
         istringstream ist(line);
         ServerLocation loc;
         int rack;
-        float totalSpaceGB;
+        uint64_t totalSpace;
+        uint64_t usedSpace;
 
         ist >> loc.hostname;
         ist >> loc.port;
         ist >> rack;
-        ist >> totalSpaceGB;
+        ist >> totalSpace;
+        ist >> usedSpace;
 
-        gLayoutEmulator.AddServer(loc, rack, totalSpaceGB);
+        AddServer(loc, rack, totalSpace, usedSpace);
     }
+
+    if (mChunkServers.size() == 0) {
+        mAvgSpaceUtil = 1.0;
+        return;
+    }
+
+    // Take the average utilizaiton in the cluster; any node that has
+    // utilizaiton outside the average is candidate for rebalancing
+    mAvgSpaceUtil /= mChunkServers.size();
+    mMinRebalanceSpaceUtilThreshold = mAvgSpaceUtil - (mAvgSpaceUtil * mPercentVariationFromMean);
+    mMaxRebalanceSpaceUtilThreshold = mAvgSpaceUtil + (mAvgSpaceUtil * mPercentVariationFromMean);
+
+    cout << "Thresholds: average: " << mAvgSpaceUtil << " min: " << mMinRebalanceSpaceUtilThreshold;
+    cout << " max: " << mMaxRebalanceSpaceUtilThreshold << endl;
+    
 }
 
 class RackAwareReplicationVerifier {

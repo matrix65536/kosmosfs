@@ -98,7 +98,7 @@ ChunkServerEmulator::Dispatch()
             mNumChunks--;
             assert(mChunks.count(mcd->chunkId) > 0);
             mChunks.erase(mcd->chunkId);
-            mUsedSpace -= CHUNKSIZE;
+            mUsedSpace -= gLayoutEmulator.GetChunkSize(mcd->chunkId);
         } else {
             KFS_LOG_VA_INFO("Unexpected op: %d", r->op);
         }
