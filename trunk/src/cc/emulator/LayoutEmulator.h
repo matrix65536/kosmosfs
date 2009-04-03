@@ -30,6 +30,7 @@
 #define EMULATOR_LAYOUTEMULATOR_H
 
 #include <string>
+#include "common/cxxutil.h"
 #include <map>
 #include <tr1/unordered_map>
 #include "meta/LayoutManager.h"
@@ -39,7 +40,7 @@ namespace KFS
 
     class LayoutEmulator : public LayoutManager {
     public:
-        LayoutEmulator() {
+        LayoutEmulator() : mPercentVariationFromMean(0.1) {
             SetMinChunkserversToExitRecovery(0);
             ToggleRebalancing(true);
         };
@@ -48,14 +49,17 @@ namespace KFS
         //
         int LoadChunkmap(const std::string &chunkLocationFn, bool addChunksToReplicationChecker = false);
 
-        void AddServer(const ServerLocation &loc, int rack, float totalSpaceGB);
+        void AddServer(const ServerLocation &loc, int rack, uint64_t totalSpace, uint64_t usedSpace);
 
-        void SetupForRebalancePlanning() {
+        void SetupForRebalancePlanning(int utilVariationFromMean) {
             mDoingRebalancePlanning = true;
+            mPercentVariationFromMean = utilVariationFromMean / 100.0;
         }
         int SetRebalancePlanOutFile(const std::string &rebalancePlanFn);
         int BuildRebalancePlan();
 
+        void ChunkReplicationDone(MetaChunkReplicate *req);
+        
         void ExecuteRebalancePlan();
 
         void PrintChunkserverBlockCount();
@@ -74,6 +78,13 @@ namespace KFS
     private:
         void Parse(const char *line, bool addChunksToReplicationChecker);
         bool mDoingRebalancePlanning;
+
+        // for the purposes of rebalancing, we compute the cluster
+        // wide average space utilization; then we take into the
+        // desired variation from mean to compute thresholds that determine
+        // which nodes are candidates for migration.
+        float mPercentVariationFromMean;
+        double mAvgSpaceUtil;
 
         struct ChunkIdHash
             : public std::unary_function<chunkId_t, std::size_t>

@@ -49,8 +49,11 @@ main(int argc, char **argv)
     char optchar;
     bool help = false;
     int status;
+    // we tolerate a 10% variation in average disk utilization in the
+    // cluster.  Nodes outside the 10% window are candidates for rebalancing
+    int variationFromAvg = 10;
 
-    while ((optchar = getopt(argc, argv, "c:l:n:b:r:h")) != -1) {
+    while ((optchar = getopt(argc, argv, "c:l:n:b:r:t:h")) != -1) {
         switch (optchar) {
             case 'l': 
                 logdir = optarg;
@@ -70,6 +73,9 @@ main(int argc, char **argv)
             case 'h':
                 help = true;
                 break;
+            case 't':
+                variationFromAvg = atoi(optarg);
+                break;
             default:
                 KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
@@ -79,11 +85,11 @@ main(int argc, char **argv)
 
     if (help) {
         cout << "Usage: " << argv[0] << " [-l <logdir>] [-c <cpdir>] [-n <network def>] "
-             << "[-b <chunkmap file>] [-r <rebalance plan file>]" << endl;
+             << "[-b <chunkmap file>] [-r <rebalance plan file>] [-t <% variation from avg util. (def = 10%)>]" << endl;
         exit(-1);
     }
 
-    gLayoutEmulator.SetupForRebalancePlanning();
+    gLayoutEmulator.SetupForRebalancePlanning(variationFromAvg);
 
     EmulatorSetup(logdir, cpdir, networkFn, chunkmapFn);
 
@@ -96,6 +102,7 @@ main(int argc, char **argv)
     gLayoutEmulator.PrintChunkserverBlockCount();
     // now the testing can start...
 
+    cout << "------" << endl;
     int ndone = 0;
     while (1) {
         ndone = gLayoutEmulator.BuildRebalancePlan();
