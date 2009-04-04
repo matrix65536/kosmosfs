@@ -471,7 +471,7 @@ struct MetaChangeFileReplication: public MetaRequest {
 		ostringstream os;
 
 		os << "change-file-replication: fid = " << fid;
-		os << "new # of replicas: " << numReplicas;
+		os << "new # of replicas: " << numReplicas << ' ';
 		return os.str();
 	}
 };
@@ -1112,6 +1112,7 @@ extern void RegisterCounters();
 extern void setClusterKey(const char *key);
 extern void setMD5SumFn(const char *md5sumFn);
 extern void setWORMMode(bool value);
+extern void setMaxReplicasPerFile(int16_t value);
 
 /* update counters for # of files/dirs/chunks in the system */
 extern void UpdateNumDirs(int count);

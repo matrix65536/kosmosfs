@@ -61,11 +61,19 @@ namespace KFS
         /// The op (if any) that is currently being executed
         MetaRequest		*mOp;
 
+	/// If the client sends multiple requests, after the first
+	/// request, keep the rest pending; when one op finishes, submit the
+	/// next one.
+	std::list<MetaRequest *> mPending;
+
         /// Given a (possibly) complete op in a buffer, run it.
         void		HandleClientCmd(IOBuffer *iobuf, int cmdLen);
 
         /// Op has finished execution.  Send a response to the client.
         void		SendResponse(MetaRequest *op);
+
+	/// submit an op for execution to the request processor
+	void		SubmitOp();
 
 	/// log out client ip addr. for debugging purposes
 	std::string	mClientIP;

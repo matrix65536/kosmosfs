@@ -127,6 +127,7 @@ main(int argc, char **argv)
 int
 ReadMetaServerProperties(char *fileName)
 {
+	int16_t maxReplicasPerFile;
 	string logLevel;
 #ifdef NDEBUG
 	const char *defLogLevel = "INFO";
@@ -168,7 +169,11 @@ ReadMetaServerProperties(char *fileName)
 
 	// desired min. # of replicas per file
 	gMinReplicasPerFile = gProp.getValue("metaServer.minReplicasPerFile", 1);
+	maxReplicasPerFile = gProp.getValue("metaServer.maxReplicasPerFile", MAX_REPLICAS_PER_FILE);
+	setMaxReplicasPerFile(maxReplicasPerFile);
+
 	cout << "min. # of replicas per file: " << gMinReplicasPerFile << endl;
+	cout << "max. # of replicas per file: " << maxReplicasPerFile << endl;
 
 	if (wormMode) {
 		cout << "Enabling WORM mode" << endl;
