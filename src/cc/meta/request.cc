@@ -1309,7 +1309,7 @@ MetaChangeChunkVersionInc::log(ofstream &file) const
 int
 MetaChangeFileReplication::log(ofstream &file) const
 {
-	file << "setrep/fid/" << fid << "/replicas/" << numReplicas << '\n';
+	file << "setrep/file/" << fid << "/replicas/" << numReplicas << '\n';
 	return file.fail() ? -EIO : 0;
 }
 
