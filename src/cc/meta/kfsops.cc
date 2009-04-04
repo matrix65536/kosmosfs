@@ -445,6 +445,40 @@ Tree::recomputeDirSize(fid_t dir)
 }
 
 /*
+ * Given a dir, do a depth first traversal updating the replication count for
+ * all files in the dir. tree to the specified value.
+ * @param[in] dir  The directory we are processing
+ */
+int
+Tree::changeDirReplication(fid_t dir, int16_t numReplicas)
+{
+	vector<MetaDentry *> entries;
+	MetaFattr *dirattr = getFattr(dir);
+
+	if ((dirattr == NULL) || (dirattr->type != KFS_DIR))
+		return -ENOTDIR;
+
+	readdir(dir, entries);
+	for (uint32_t i = 0; i < entries.size(); i++) {
+		string entryname = entries[i]->getName();
+		if ((entryname == ".") || (entryname == "..") ||
+			(entries[i]->id() == dir))
+			continue;
+
+		MetaFattr *fa = getFattr(entries[i]->id());
+		if (fa == NULL)
+			continue;
+		if (fa->type == KFS_DIR) {
+			// Do a depth first traversal
+			changeDirReplication(fa->id(), numReplicas);
+			continue;
+		}
+		changeFileReplication(fa, numReplicas);
+	}
+	return 0;
+}
+
+/*
  * Given a file-id, returns its fully qualified pathname.  This involves
  * recursively traversing the metatree until the root directory.
  */
@@ -953,14 +987,25 @@ int
 Tree::changeFileReplication(fid_t fid, int16_t numReplicas)
 {
 	MetaFattr *fa = getFattr(fid);
-        vector<MetaChunkInfo*> chunkInfo;
 
 	if (fa == NULL)
 		return -ENOENT;
 
+	return changeFileReplication(fa, numReplicas);
+
+}
+
+int
+Tree::changeFileReplication(MetaFattr *fa, int16_t numReplicas)
+{
+	if (fa->type != KFS_FILE)
+		return -EINVAL;
+
+        vector<MetaChunkInfo*> chunkInfo;
+
 	fa->setReplication(numReplicas);
 
-        getalloc(fid, chunkInfo);
+        getalloc(fa->id(), chunkInfo);
 
         for (vector<ChunkLayoutInfo>::size_type i = 0; i < chunkInfo.size(); ++i) {
 		gLayoutManager.ChangeChunkReplication(chunkInfo[i]->chunkId);

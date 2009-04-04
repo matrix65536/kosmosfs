@@ -57,13 +57,14 @@ int main(int argc, char **argv)
     // use options: -l for logdir -c for checkpoint dir
     char optchar;
     bool help = false, computeDirSize = false;
+    int16_t numReplicasPerFile = -1;
     string logdir, cpdir;
     int status;
 
     KFS::MsgLogger::Init(NULL);
     KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
 
-    while ((optchar = getopt(argc, argv, "hpl:c:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hpl:c:r:")) != -1) {
         switch (optchar) {
             case 'l': 
                 logdir = optarg;
@@ -77,6 +78,9 @@ int main(int argc, char **argv)
             case 'p':
                 computeDirSize = true;
                 break;
+            case 'r':
+                numReplicasPerFile = (int16_t) atoi(optarg);
+                break;
             default:
                 KFS_LOG_VA_ERROR("Unrecognized flag %c", optchar);
                 help = true;
@@ -85,9 +89,10 @@ int main(int argc, char **argv)
     }
 
     if (help) {
-        cout << "Usage: " << argv[0] << " [-l <logdir>] [-c <cpdir>] {-p}"
+        cout << "Usage: " << argv[0] << " [-l <logdir>] [-c <cpdir>] {-p} {-r <# of replicas>}"
              << endl;
         cout << "where -p means recompute size of each directory in the tree" << endl;
+	cout << "where -r means change the replication for all files in the system to the specified value" << endl;
         exit(-1);
     }
 
@@ -108,6 +113,9 @@ int main(int argc, char **argv)
         if (computeDirSize) {
             metatree.recomputeDirSize();
         }
+	if (numReplicasPerFile > 0) {
+		metatree.changeDirReplication(ROOTFID, numReplicasPerFile);
+	}
         cp.do_CP();
     }
     exit(0);

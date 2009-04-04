@@ -200,6 +200,7 @@ class Tree {
 	bool is_descendant(fid_t src, fid_t dst);
 	void shift_path(vector <pathlink> &path);
 	off_t recomputeDirSize(fid_t dir);
+	int changeFileReplication(MetaFattr *fa, int16_t numReplicas);
 public:
 	Tree()
 	{
@@ -249,6 +250,7 @@ public:
 	void updateSpaceUsageForPath(const string &path, off_t nbytes);
 	int getChunkVersion(fid_t file, chunkId_t chunkId, seq_t *chunkVersion);
 	int changeFileReplication(fid_t file, int16_t numReplicas);
+	int changeDirReplication(fid_t dir, int16_t numReplicas);
 
 	int moveToDumpster(fid_t dir, const string &fname);
 	void cleanupDumpster();
