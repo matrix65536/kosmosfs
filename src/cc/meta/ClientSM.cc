@@ -42,10 +42,8 @@ using std::ostringstream;
 #include <boost/scoped_array.hpp>
 using boost::scoped_array;
 
-ClientSM::ClientSM(NetConnectionPtr &conn) 
+ClientSM::ClientSM(NetConnectionPtr &conn) : mNetConnection(conn), mOp(NULL)
 {
-	mNetConnection = conn;
-	mOp = NULL;
 	mClientIP = mNetConnection->GetPeerName();
 	SET_HANDLER(this, &ClientSM::HandleRequest);
 }
@@ -53,6 +51,11 @@ ClientSM::ClientSM(NetConnectionPtr &conn)
 ClientSM::~ClientSM()
 {
 	delete mOp;
+	while (!mPending.empty()) {
+		mOp = mPending.front();
+		mPending.pop_front();
+		delete mOp;
+	}
 }
 
 ///
@@ -120,6 +123,11 @@ ClientSM::HandleRequest(int code, void *data)
 		SendResponse(op);
 		delete mOp;
 		mOp = NULL;
+		if (!mPending.empty()) {
+			mOp = mPending.front();
+			mPending.pop_front();
+			SubmitOp();
+		}
 		break;
 
 	case EVENT_NET_ERROR:
@@ -180,11 +188,14 @@ void
 ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 {
 	scoped_array<char> buf(new char[cmdLen + 1]);
+	MetaRequest *op;
+
+	mClientIP = mNetConnection->GetPeerName();
 
 	iobuf->CopyOut(buf.get(), cmdLen);
 	buf[cmdLen] = '\0';
     
-	if (ParseCommand(buf.get(), cmdLen, &mOp) != 0) {
+	if (ParseCommand(buf.get(), cmdLen, &op) != 0) {
 		iobuf->Consume(cmdLen);
 
 		KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
@@ -192,22 +203,35 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 		return;
 	}
 
+	// Command is ready to be pushed down.  So remove the cmd from the buffer.
+	iobuf->Consume(cmdLen);
+
+	if (mOp != NULL) {
+		mPending.push_back(op);
+		return;
+	}
+
+	mOp = op;
+
+	SubmitOp();
+}
+
+void
+ClientSM::SubmitOp()
+{
+	
 	KFS_LOG_VA_DEBUG("Got command: %s", mOp->Show().c_str());
 
 	if (mOp->op == META_ALLOCATE) {
 		KFS_LOG_VA_INFO("Got allocate: %s", mOp->Show().c_str());
 	}
-
-	// Command is ready to be pushed down.  So remove the cmd from the buffer.
-	iobuf->Consume(cmdLen);
+	else if (mOp->op == META_GETLAYOUT) {
+		KFS_LOG_VA_INFO("Client = %s, Command %s",
+				mClientIP.c_str(), mOp->Show().c_str());
+	}
 
 	mOp->clnt = this;
 	// send it on its merry way
 	submit_request(mOp);
     
-	/*
-	if (iobuf->BytesConsumable() > 0) {
-		KFS_LOG_VA_DEBUG("More command data likely available for chunk: ");
-	}
-	*/
 }

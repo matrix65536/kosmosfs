@@ -103,6 +103,7 @@ Counter *gNumFiles, *gNumDirs, *gNumChunks;
 string gClusterKey;
 string gMD5SumFn;
 bool gWormMode = false;
+static int16_t gMaxReplicasPerFile = MAX_REPLICAS_PER_FILE;
 
 static bool
 file_exists(fid_t fid)
@@ -270,6 +271,12 @@ void
 KFS::setWORMMode(bool value)
 {
 	gWormMode = value;
+}
+
+void
+KFS::setMaxReplicasPerFile(int16_t val)
+{
+	gMaxReplicasPerFile = val;
 }
 
 /*
@@ -1297,12 +1304,13 @@ MetaChangeChunkVersionInc::log(ofstream &file) const
 }
 
 /*!
- * \brief log change file replication (nop)
+ * \brief log change file replication
  */
 int
 MetaChangeFileReplication::log(ofstream &file) const
 {
-	return 0;
+	file << "setrep/fid/" << fid << "/replicas/" << numReplicas << '\n';
+	return file.fail() ? -EIO : 0;
 }
 
 /*!
@@ -1600,6 +1608,8 @@ KFS::ParseCommand(char *cmdBuf, int cmdLen, MetaRequest **res)
 	ParseHandlerMapIter entry;
 	ParseHandler handler;
 
+	*res = NULL;
+
 	// get the first line and find the command name
 	ist >> cmdStr;
 	// trim the command
@@ -1683,7 +1693,7 @@ parseHandlerCreate(Properties &prop, MetaRequest **r)
 	if (name == NULL)
 		return -1;
 	// cap replication
-	numReplicas = min((int16_t) prop.getValue("Num-replicas", 1), MAX_REPLICAS_PER_FILE);
+	numReplicas = min((int16_t) prop.getValue("Num-replicas", 1), gMaxReplicasPerFile);
 	if (numReplicas <= 0)
 		return -1;
 	// by default, create overwrites the file; when it is turned off,
@@ -1885,7 +1895,7 @@ parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r)
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
 	fid = prop.getValue("File-handle", (fid_t) -1);
-	numReplicas = min((int16_t) prop.getValue("Num-replicas", 1), MAX_REPLICAS_PER_FILE);
+	numReplicas = min((int16_t) prop.getValue("Num-replicas", 1), gMaxReplicasPerFile);
 	if (numReplicas <= 0)
 		return -1;
 	*r = new MetaChangeFileReplication(seq, fid, numReplicas);

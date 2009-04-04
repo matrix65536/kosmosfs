@@ -395,6 +395,27 @@ replay_size(deque <string> &c)
 }
 
 /*!
+ * Replay a change file replication RPC.
+ * format: setrep/file/<fid>/replicas/<#>
+ */
+
+static bool
+replay_setrep(deque <string> &c)
+{
+	fid_t fid;
+	int16_t numReplicas;
+
+	c.pop_front();
+	bool ok = pop_fid(fid, "file", c, true);
+	ok = pop_short(numReplicas, "replicas", c, ok);
+	if (ok) {
+		metatree.changeFileReplication(fid, numReplicas);
+	}
+	return ok;
+}
+
+
+/*!
  * \brief restore time
  * format: time/<time>
  */
@@ -417,6 +438,7 @@ init_map(DiskEntry &e)
 	e.add_parser("rename", replay_rename);
 	e.add_parser("allocate", replay_allocate);
 	e.add_parser("truncate", replay_truncate);
+	e.add_parser("setrep", replay_setrep);
 	e.add_parser("size", replay_size);
 	e.add_parser("chunkVersionInc", restore_chunkVersionInc);
 	e.add_parser("time", restore_time);
