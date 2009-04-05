@@ -765,7 +765,7 @@ handle_change_file_replication(MetaRequest *r)
 {
 	MetaChangeFileReplication *req = static_cast <MetaChangeFileReplication *>(r);
 	if (file_exists(req->fid))
-		req->status = metatree.changeFileReplication(req->fid, req->numReplicas);
+		req->status = metatree.changePathReplication(req->fid, req->numReplicas);
 	else
 		req->status = -ENOENT;
 }

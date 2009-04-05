@@ -409,7 +409,7 @@ replay_setrep(deque <string> &c)
 	bool ok = pop_fid(fid, "file", c, true);
 	ok = pop_short(numReplicas, "replicas", c, ok);
 	if (ok) {
-		metatree.changeFileReplication(fid, numReplicas);
+		metatree.changePathReplication(fid, numReplicas);
 	}
 	return ok;
 }
