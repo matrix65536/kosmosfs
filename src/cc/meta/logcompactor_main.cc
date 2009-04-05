@@ -114,7 +114,7 @@ int main(int argc, char **argv)
             metatree.recomputeDirSize();
         }
 	if (numReplicasPerFile > 0) {
-		metatree.changeDirReplication(ROOTFID, numReplicasPerFile);
+		metatree.changePathReplication(ROOTFID, numReplicasPerFile);
 	}
         cp.do_CP();
     }

@@ -447,16 +447,17 @@ Tree::recomputeDirSize(fid_t dir)
 /*
  * Given a dir, do a depth first traversal updating the replication count for
  * all files in the dir. tree to the specified value.
- * @param[in] dir  The directory we are processing
+ * @param[in] dirattr  The directory we are processing
  */
 int
-Tree::changeDirReplication(fid_t dir, int16_t numReplicas)
+Tree::changeDirReplication(MetaFattr *dirattr, int16_t numReplicas)
 {
 	vector<MetaDentry *> entries;
-	MetaFattr *dirattr = getFattr(dir);
 
 	if ((dirattr == NULL) || (dirattr->type != KFS_DIR))
 		return -ENOTDIR;
+
+	fid_t dir = dirattr->id();
 
 	readdir(dir, entries);
 	for (uint32_t i = 0; i < entries.size(); i++) {
@@ -470,7 +471,7 @@ Tree::changeDirReplication(fid_t dir, int16_t numReplicas)
 			continue;
 		if (fa->type == KFS_DIR) {
 			// Do a depth first traversal
-			changeDirReplication(fa->id(), numReplicas);
+			changeDirReplication(fa, numReplicas);
 			continue;
 		}
 		changeFileReplication(fa, numReplicas);
@@ -984,12 +985,15 @@ Tree::rename(fid_t parent, const string &oldname, string &newname,
  * \return		status code (-errno on failure)
  */
 int
-Tree::changeFileReplication(fid_t fid, int16_t numReplicas)
+Tree::changePathReplication(fid_t fid, int16_t numReplicas)
 {
 	MetaFattr *fa = getFattr(fid);
 
 	if (fa == NULL)
 		return -ENOENT;
+
+	if (fa->type == KFS_DIR)
+		return changeDirReplication(fa, numReplicas);
 
 	return changeFileReplication(fa, numReplicas);
 
