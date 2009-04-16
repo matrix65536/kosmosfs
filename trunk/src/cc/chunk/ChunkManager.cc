@@ -943,7 +943,7 @@ ChunkManager::ReadChunkDone(ReadOp *op)
     bool mismatch = false;
 
     // figure out the block we are starting from and grab all the checksums
-    vector<uint32_t>::size_type i, checksumBlock = OffsetToChecksumBlockStart(op->offset);
+    vector<uint32_t>::size_type i, checksumBlock = OffsetToChecksumBlockNum(op->offset);
     vector<uint32_t> checksums = ComputeChecksums(op->dataBuf, op->dataBuf->BytesConsumable());
 
     // the checksums should be loaded...
