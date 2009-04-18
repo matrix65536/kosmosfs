@@ -48,7 +48,7 @@ using namespace KFS;
 int
 KFS::tools::handleFstat(const vector<string> &args)
 {
-    if ((args.size() >= 1) && (args[0] == "--help")) {
+    if ((args.size() == 0) || ((args.size() >= 1) && (args[0] == "--help"))) {
         cout << "Usage: stat {<path>} " << endl;
         return 0;
     }
