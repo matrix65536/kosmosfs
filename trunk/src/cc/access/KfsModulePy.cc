@@ -544,12 +544,12 @@ kfs_tell(PyObject *pself, PyObject *args)
 		return NULL;
 	}
 
-	int pos = cl->client->Tell(self->fd);
+	off_t pos = cl->client->Tell(self->fd);
 	if (pos < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-pos));
 		return NULL;
 	}
-	return Py_BuildValue("i", pos);
+	return Py_BuildValue("L", pos);
 }
 
 static PyMethodDef File_methods[] = {
@@ -1006,12 +1006,12 @@ kfs_stat(PyObject *pself, PyObject *args)
 	 */
 	PyObject *pstat = PyTuple_New(10);
 	PyTuple_SetItem(pstat, 0, PyInt_FromLong(s.st_mode));
-	PyTuple_SetItem(pstat, 1, PyInt_FromLong(s.st_ino));
+	PyTuple_SetItem(pstat, 1, PyLong_FromLongLong(s.st_ino));
 	PyTuple_SetItem(pstat, 2, PyLong_FromLong(s.st_dev));
 	PyTuple_SetItem(pstat, 3, PyInt_FromLong(s.st_nlink));
 	PyTuple_SetItem(pstat, 4, PyInt_FromLong(s.st_uid));
 	PyTuple_SetItem(pstat, 5, PyInt_FromLong(s.st_gid));
-	PyTuple_SetItem(pstat, 6, PyLong_FromLong(s.st_size));
+	PyTuple_SetItem(pstat, 6, PyLong_FromLongLong(s.st_size));
 	PyTuple_SetItem(pstat, 7, PyInt_FromLong(s.st_atime));
 	PyTuple_SetItem(pstat, 8, PyInt_FromLong(s.st_mtime));
 	PyTuple_SetItem(pstat, 9, PyInt_FromLong(s.st_ctime));
