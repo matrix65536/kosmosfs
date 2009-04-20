@@ -13,6 +13,7 @@ set (lib_srcs
     KfsPwd.cc
     KfsFstat.cc
     utils.cc
+    KfsToolsCommon.cc
 )
 
 add_library (tools STATIC ${lib_srcs})
@@ -35,6 +36,8 @@ kfsstats
 kfsfileenum
 kfsdataverify
 kfsretire
+kfscp
+kfsls
 )
 
 if (APPLE)

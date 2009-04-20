@@ -39,6 +39,7 @@ extern "C" {
 
 #include "libkfsClient/KfsClient.h"
 #include "tools/KfsShell.h"
+#include "tools/KfsToolsCommon.h"
 
 using std::cout;
 using std::endl;
@@ -47,13 +48,7 @@ using std::ostringstream;
 using std::vector;
 
 using namespace KFS;
-
-static int dirList(string kfsdirname, bool longMode, bool humanReadable, bool timeInSecs);
-static int doDirList(string kfsdirname);
-static int doDirListPlusAttr(string kfsdirname, bool humanReadable, bool timeInSecs);
-static void printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable, bool timeInSecs);
-static void getTimeString(time_t time, char *buf, int bufLen = 256);
-
+using namespace KFS::tools;
 
 // may want to do "ls -r"
 int
@@ -65,6 +60,14 @@ KFS::tools::handleLs(const vector<string> &args)
     if ((args.size() >= 1) && (args[0] == "--help")) {
         cout << "Usage: ls {-lht} {<dir>} " << endl;
         return 0;
+    }
+    
+     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
+
+    if (!kfsClient)
+    {
+	std::cerr << "Error: No default KFS client!\n";
+	return 0;
     }
 
     if (args.size() >= 1) {
@@ -87,125 +90,7 @@ KFS::tools::handleLs(const vector<string> &args)
     }
 
     if (args.size() > pathIndex)
-        return dirList(args[pathIndex], longMode, humanReadable, timeInSecs);
+        return DirList(kfsClient, args[pathIndex], longMode, humanReadable, timeInSecs);
     else
-        return dirList(".", longMode, humanReadable, timeInSecs);
-}
-
-int
-dirList(string kfsdirname, bool longMode, bool humanReadable, bool timeInSecs)
-{
-    if (longMode)
-        return doDirListPlusAttr(kfsdirname, humanReadable, timeInSecs);
-    else
-        return doDirList(kfsdirname);
-}
-
-int
-doDirList(string kfsdirname)
-{
-    string kfssubdir, subdir;
-    int res;
-    vector<string> entries;
-    vector<string>::size_type i;
-
-    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
-
-    if (kfsClient->IsFile((char *) kfsdirname.c_str())) {
-        cout << kfsdirname << endl;
-        return 0;
-    }
-        
-    if ((res = kfsClient->Readdir((char *) kfsdirname.c_str(), entries)) < 0) {
-        cout << "Readdir failed: " << ErrorCodeToStr(res) << endl;
-        return res;
-    }
-
-    // we could provide info of whether the thing is a dir...but, later
-    for (i = 0; i < entries.size(); ++i) {
-        if ((entries[i] == ".") || (entries[i] == ".."))
-            continue;
-        cout << entries[i] << endl;
-    }
-    return 0;
-}
-
-int
-doDirListPlusAttr(string kfsdirname, bool humanReadable, bool timeInSecs)
-{
-    string kfssubdir, subdir;
-    int res;
-    vector<KfsFileAttr> fileInfo;
-    vector<KfsFileAttr>::size_type i;
-
-    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
-
-    if (kfsClient->IsFile((char *) kfsdirname.c_str())) {
-        struct stat statInfo;
-
-        kfsClient->Stat(kfsdirname.c_str(), statInfo);
-        printFileInfo(kfsdirname, statInfo.st_mtime, statInfo.st_size, humanReadable, timeInSecs);
-        return 0;
-    }
-    if ((res = kfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
-        cout << "Readdir plus failed: " << ErrorCodeToStr(res) << endl;
-        return res;
-    }
-    
-    for (i = 0; i < fileInfo.size(); ++i) {
-        if (fileInfo[i].isDirectory) {
-            if ((fileInfo[i].filename == ".") ||
-                (fileInfo[i].filename == ".."))
-                continue;
-            char timeBuf[256];
-
-            getTimeString(fileInfo[i].mtime.tv_sec, timeBuf);
-
-            cout << fileInfo[i].filename << "/" << '\t' << timeBuf << '\t' << "(dir)" << endl;
-        } else {
-            printFileInfo(fileInfo[i].filename, fileInfo[i].mtime.tv_sec, 
-                          fileInfo[i].fileSize, humanReadable, timeInSecs);
-        }
-    }
-    return 0;
-}
-
-void
-printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable, bool timeInSecs)
-{
-    char timeBuf[256];
-
-    if (timeInSecs) {
-        ostringstream ost;
-
-        ost << mtime;
-        strncpy(timeBuf, ost.str().c_str(), 256);
-        timeBuf[255] = '\0';
-    }
-    else
-        getTimeString(mtime, timeBuf);
-
-    if (!humanReadable) {
-        cout << filename << '\t' << timeBuf << '\t' << filesize << endl;
-        return;
-    }
-    if (filesize < (1 << 20)) {
-        cout << filename << '\t' << timeBuf << '\t' << (float) (filesize) / (1 << 10) << " K";
-    }
-    else if (filesize < (1 << 30)) {
-        cout << filename << '\t' << timeBuf << '\t' << (float) (filesize) / (1 << 20) << " M";
-    }
-    else {
-        cout << filename << '\t' << timeBuf << '\t' << (float) (filesize) / (1 << 30) << " G";
-    }
-    cout << endl;
-}
-
-void
-getTimeString(time_t time, char *buf, int bufLen)
-{
-    struct tm locTime;
-
-    localtime_r(&time, &locTime);
-    strftime(buf, bufLen, "%b %e %H:%M", &locTime);
+        return DirList(kfsClient, ".", longMode, humanReadable, timeInSecs);
 }

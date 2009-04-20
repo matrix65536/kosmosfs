@@ -390,6 +390,11 @@ public:
         mDefaultClient = clnt;
     }
 
+    KfsClientPtr SetDefaultClient(const std::string metaServerHost, int metaServerPort) {                                                                                     
+        mDefaultClient = GetClient(metaServerHost, metaServerPort);                                                                                                           
+        return mDefaultClient;                                                                                                                                                
+    }
+    
     KfsClientPtr GetClient() {
 	// This HAS to be inside .h file!
 	checkClientOffSize(sizeof(off_t));

@@ -34,6 +34,8 @@
 #include <fstream>
 #include "libkfsClient/KfsClient.h"
 
+#include "KfsToolsCommon.h"
+
 using std::cout;
 using std::endl;
 using std::ifstream;
@@ -52,6 +54,8 @@ main(int argc, char **argv)
     bool verboseLogging = false;
     char optchar;
 
+    getEnvServer(serverHost, port);
+    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hs:p:v")) != -1) {
@@ -63,7 +67,7 @@ main(int argc, char **argv)
                 verboseLogging = true;
                 break;
             case 's':
-                serverHost = optarg;
+                parseServer(optarg, serverHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);

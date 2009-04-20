@@ -36,6 +36,7 @@ extern "C" {
 #include "common/log.h"
 
 #include "MonUtils.h"
+#include "KfsToolsCommon.h"
 
 using std::string;
 using std::cout;
@@ -51,24 +52,26 @@ int main(int argc, char **argv)
 {
     char optchar;
     bool help = false;
-    const char *server = NULL;
+    string serverHost = "";
     int port = -1;
     bool verboseLogging = false;
-	int toggle = -1;
+    int toggle = -1;
 
+    KFS::tools::getEnvServer(serverHost, port);
+    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hs:p:t:v")) != -1) {
         switch (optchar) {
             case 's':
-                server = optarg;
+                KFS::tools::parseServer(optarg, serverHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);
                 break;
-			case 't':
-				toggle = atoi(optarg);
-				break;
+	    case 't':
+		toggle = atoi(optarg);
+		break;
             case 'h':
                 help = true;
                 break;
@@ -88,13 +91,13 @@ int main(int argc, char **argv)
         KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
     } 
 
-    if (help || (server == NULL) || (port < 0) || 
-		(toggle != 0) && (toggle != 1)) {
+    if (help || (serverHost == "") || (port < 0) || 
+		((toggle != 0) && (toggle != 1)) ) {
         cout << "Usage: " << argv[0] << " -s <server name> -p <port> -t [1|0] {-v}\n\t-s : meta server\n\t-p : meta server port\n\t-t : toggle value\n\t-v : verbose" << endl;
         exit(-1);
     }
 
-    ServerLocation loc(server, port);
+    ServerLocation loc(serverHost, port);
 
     ToggleWORM(loc, toggle);
 }

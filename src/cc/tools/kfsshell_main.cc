@@ -32,6 +32,7 @@
 #include "libkfsClient/KfsClient.h"
 #include "common/log.h"
 #include "tools/KfsShell.h"
+#include "KfsToolsCommon.h"
 
 #include <iostream>
 #include <tr1/unordered_map>
@@ -66,10 +67,12 @@ main(int argc, char **argv)
     char optchar;
     bool verboseLogging = false;
 
+    getEnvServer(serverHost, port);
+    
     while ((optchar = getopt(argc, argv, "hqs:p:v")) != -1) {
         switch (optchar) {
             case 's':
-                serverHost = optarg;
+                parseServer(optarg, serverHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);
