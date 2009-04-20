@@ -47,6 +47,8 @@
 #include "concurrency.h"
 #include "KfsPendingOp.h"
 
+#include "KfsClient.h"
+
 namespace KFS {
 
 /// Set this to 1MB: 64K * 16
@@ -350,6 +352,18 @@ struct FileTableEntry {
 
     FileTableEntry(kfsFileId_t p, const char *n):
 	parentFid(p), name(n), lastAccessTime(0), validatedTime(0) { }
+};
+
+class MatchingServer {
+    ServerLocation loc;
+public:
+    MatchingServer(const ServerLocation &l) : loc(l) { }
+    bool operator()(KfsClientPtr &clnt) const {
+        return clnt->GetMetaserverLocation() == loc;
+    }
+    bool operator()(const ServerLocation &other) const {
+        return other == loc;
+    }
 };
 
 ///

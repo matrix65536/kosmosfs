@@ -52,10 +52,10 @@ KFS::libkfsio::InitGlobals()
     // Check if off_t has expected size. Otherwise print an error and exit the whole program!
     if (sizeof(off_t) != 8)
     {
-	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %u). "
+	KFS_LOG_VA_FATAL("Error! 'off_t' type needs to be 8 bytes long (instead of %zu). "
 	    "You need to recompile KFS with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
-	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", sizeof(off_t));
-	    exit(1);
+	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES", sizeof(off_t));
+	    exit(-1);
     }
 
     calledOnce = true;
