@@ -616,6 +616,8 @@ ChunkServer::TruncateChunk(chunkId_t chunkId, off_t s)
 
 	mAllocSpace -= (CHUNKSIZE - s);
 
+	// OFF_TYPE_CAST: off_t casted to size_t.
+	// Should be fine though since 's' contains single chunk size.
 	r = new MetaChunkTruncate(NextSeq(), this, chunkId, s);
 
 	// save a pointer to the request so that we can match up the
