@@ -46,6 +46,7 @@
 #include "common/log.h"
 #include "libkfsIO/FileHandle.h"
 #include "libkfsClient/KfsClient.h"
+#include "KfsToolsCommon.h"
 
 using std::cout;
 using std::endl;
@@ -70,16 +71,19 @@ int main(int argc, char **argv)
     bool help = false;
     ofstream cksumS;
     int port = -1, retval = -1;
-    const char *metaserver = NULL, *srcFn = NULL, *kfsFn = NULL;
+    const char *srcFn = NULL, *kfsFn = NULL;
+    string metaServerHost = "";
     const char *cksumFn = NULL;
     bool verboseLogging = false;
 
+    KFS::tools::getEnvServer(metaServerHost, port);
+    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "s:p:f:k:c:hv")) != -1) {
         switch (optchar) {
             case 's':
-                metaserver = optarg;
+                KFS::tools::parseServer(optarg, metaServerHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -103,7 +107,7 @@ int main(int argc, char **argv)
         }
     }
 
-    help = help || (!metaserver) || (port < 0);
+    help = help || (metaServerHost=="") || (port < 0);
 
     if (help) {
         cout << "Usage: " << argv[0] << " -s <metaserver> -p <port> "
@@ -119,7 +123,7 @@ int main(int argc, char **argv)
         KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
     } 
 
-    gKfsClient = getKfsClientFactory()->GetClient(metaserver, port);
+    gKfsClient = getKfsClientFactory()->GetClient(metaServerHost, port);
     if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(-1);

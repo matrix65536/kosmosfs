@@ -41,6 +41,7 @@ using std::endl;
 #include "common/log.h"
 
 #include "MonUtils.h"
+#include "KfsToolsCommon.h"
 
 using namespace KFS;
 using namespace KFS_MON;
@@ -75,10 +76,11 @@ int main(int argc, char **argv)
     char optchar;
     bool help = false, meta = false, chunk = false;
     bool rpcStats = false, verboseLogging = false;
-    const char *server = NULL;
+    string serverHost = "";
     int port = -1, numSecs = 10;
 
-
+    KFS::tools::getEnvServer(serverHost, port);
+    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hcmn:p:s:tv")) != -1) {
@@ -90,7 +92,7 @@ int main(int argc, char **argv)
                 chunk = true;
                 break;
             case 's':
-                server = optarg;
+                KFS::tools::parseServer(optarg, serverHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -116,7 +118,7 @@ int main(int argc, char **argv)
 
     help = help || (!meta && !chunk);
 
-    if (help || (server == NULL) || (port < 0)) {
+    if (help || (serverHost == "") || (port < 0)) {
         cout << "Usage: " << argv[0] << " [-m|-c] -s <server name> -p <port>" 
              << " [-n <secs>] [-t] {-v}"  << endl;
         cout << "Use -m for metaserver and -c for chunk server" << endl;
@@ -130,7 +132,7 @@ int main(int argc, char **argv)
         KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
     } 
 
-    ServerLocation location(server, port);
+    ServerLocation location(serverHost, port);
 
     if (meta)
         StatsMetaServer(location, rpcStats, numSecs);
