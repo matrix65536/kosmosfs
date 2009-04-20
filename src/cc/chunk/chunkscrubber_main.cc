@@ -151,6 +151,8 @@ static void scrubFile(string &fn, bool verbose)
         return;
     }
     if ((size_t) res != KFS::CHUNKSIZE) {
+	// OFF_TYPE_CAST: off_t casted to long.
+	// Should be fine though since 'size' contains single chunk size.
         long size = chunkInfo.chunkSize;
         if (res != chunkInfo.chunkSize) {
             cout << "Size mismatch: chunk header says: " << size 

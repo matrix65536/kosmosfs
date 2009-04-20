@@ -463,7 +463,7 @@ public:
     /// pulling KFS checksums from all the replicas for each chunk.
     /// @retval status code
     bool VerifyDataChecksums(const char *pathname, const std::vector<uint32_t> &checksums);
-    bool VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t numBytes);
+    bool VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes);
 
     ///
     /// Create a file which is specified by a complete path.
@@ -576,10 +576,10 @@ public:
     /// @param[out] locations	The location(s) of various chunks
     /// @retval status: 0 on success; -errno otherwise
     ///
-    int GetDataLocation(const char *pathname, off_t start, size_t len,
+    int GetDataLocation(const char *pathname, off_t start, off_t len,
                         std::vector< std::vector <std::string> > &locations);
 
-    int GetDataLocation(int fd, off_t start, size_t len,
+    int GetDataLocation(int fd, off_t start, off_t len,
                         std::vector< std::vector <std::string> > &locations);
 
     ///

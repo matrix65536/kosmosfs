@@ -132,9 +132,11 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	}
 
 	nwrote += numIO;
-	numIO = Seek(fd, numIO, SEEK_CUR);
-	if (numIO < 0) {
-	    // KFS_LOG_VA_DEBUG("Seek(%lld)", numIO);
+	
+	off_t newPos = Seek(fd, numIO, SEEK_CUR);
+
+	if (newPos < 0) {
+	    // KFS_LOG_VA_DEBUG("Seek(%lld)", newPos);
 	    break;
 	}
     }
