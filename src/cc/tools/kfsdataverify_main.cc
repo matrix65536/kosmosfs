@@ -168,7 +168,7 @@ static int verifyChecksums(const char *cksumFn)
         while (ist >> cksum) {
             cksums.push_back(cksum);
         }
-        if (!gKfsClient->VerifyDataChecksums(kfsFn.c_str(), cksums)) {
+        if (!gKfsClient->VerifyDataChecksums(kfsFn, cksums)) {
             cout << "Checksum mismatch in file: " << srcFn << " kfsfn: " << kfsFn << endl;
         }
     }

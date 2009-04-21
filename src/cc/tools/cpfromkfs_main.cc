@@ -116,7 +116,7 @@ main(int argc, char **argv)
         KFS::MsgLogger::SetLevel(log4cpp::Priority::WARN);
     } 
 
-    if (kfsClient->Stat(kfsPath.c_str(), statInfo) < 0) {
+    if (kfsClient->Stat(kfsPath, statInfo) < 0) {
 	cout << "KFS path: " << kfsPath << " is non-existent!" << endl;
 	exit(-1);
     }

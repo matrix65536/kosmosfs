@@ -38,12 +38,12 @@ using namespace KFS;
 // Make the directory hierarchy in KFS defined by path.
 
 int
-KFS::tools::doMkdirs(const char *path)
+KFS::tools::doMkdirs(const string & path)
 {
     int res;
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
-    res = kfsClient->Mkdirs((char *) path);
+    res = kfsClient->Mkdirs(path);
     if ((res < 0) && (res != -EEXIST)) {
         cout << "Mkdir failed: " << ErrorCodeToStr(res) << endl;
         return res;
@@ -54,7 +54,7 @@ KFS::tools::doMkdirs(const char *path)
 // remove a single directory in kfs
 
 int
-KFS::tools::doRmdir(const char *dirname)
+KFS::tools::doRmdir(const string & dirname)
 {
     int res;
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();

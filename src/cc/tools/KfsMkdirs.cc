@@ -56,5 +56,5 @@ KFS::tools::handleMkdirs(const vector<string> &args)
         return 0;
     }
 
-    return doMkdirs(args[0].c_str());
+    return doMkdirs(args[0]);
 }

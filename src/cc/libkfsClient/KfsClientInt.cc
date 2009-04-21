@@ -129,7 +129,7 @@ KfsClientImpl::~KfsClientImpl()
     mPendingOp.Stop();
 }
 
-int KfsClientImpl::Init(const string metaServerHost, int metaServerPort)
+int KfsClientImpl::Init(const string & metaServerHost, int metaServerPort)
 {
     // Initialize the logger
     MsgLogger::Init(NULL);
@@ -186,21 +186,21 @@ KfsClientImpl::ConnectToMetaServer()
 /// A notion of "cwd" in KFS.
 ///
 int
-KfsClientImpl::Cd(const char *pathname)
+KfsClientImpl::Cd(const string & pathname)
 {
     MutexLock l(&mMutex);
 
     struct stat s;
     string path = build_path(mCwd, pathname);
-    int status = Stat(path.c_str(), s);
+    int status = Stat(path, s);
 
     if (status < 0) {
-	KFS_LOG_VA_DEBUG("Non-existent path: %s", pathname);
+	KFS_LOG_VA_DEBUG("Non-existent path: %s", pathname.c_str());
 	return -ENOENT;
     }
 
     if (!S_ISDIR(s.st_mode)) {
-	KFS_LOG_VA_DEBUG("Non-existent dir: %s", pathname);
+	KFS_LOG_VA_DEBUG("Non-existent dir: %s", pathname.c_str());
 	return -ENOTDIR;
     }
 
@@ -230,12 +230,11 @@ KfsClientImpl::GetCwd()
 /// Make a directory hierarchy in KFS.
 ///
 int
-KfsClientImpl::Mkdirs(const char *pathname)
+KfsClientImpl::Mkdirs(const string & pathname)
 {
     MutexLock l(&mMutex);
 
     int res;
-    string path = pathname;
     string component;
     const char slash = '/';
     string::size_type startPos = 1, endPos;
@@ -247,20 +246,20 @@ KfsClientImpl::Mkdirs(const char *pathname)
     // the path is a file, error out.
     //
     while (!done) {
-        endPos = path.find(slash, startPos);
+        endPos = pathname.find(slash, startPos);
         if (endPos == string::npos) {
             done = true;
             component = pathname;
         } else {
-            component = path.substr(0, endPos);
+            component = pathname.substr(0, endPos);
             startPos = endPos + 1;
         }
-	if (Exists(component.c_str())) {
-	    if (IsFile(component.c_str()))
+	if (Exists(component)) {
+	    if (IsFile(component))
 		return -ENOTDIR;
 	    continue;
 	}
-	res = Mkdir(component.c_str());
+	res = Mkdir(component);
         if (res == -EEXIST) {
             // when there are multiple clients trying to make the same
             // directory hierarchy, the first one wins; the subsequent
@@ -279,7 +278,7 @@ KfsClientImpl::Mkdirs(const char *pathname)
 /// @param[in] pathname		The full pathname such as /.../dir
 /// @retval 0 if mkdir is successful; -errno otherwise
 int
-KfsClientImpl::Mkdir(const char *pathname)
+KfsClientImpl::Mkdir(const string & pathname)
 {
     MutexLock l(&mMutex);
 
@@ -296,7 +295,7 @@ KfsClientImpl::Mkdir(const char *pathname)
     }
 
     // Everything is good now...
-    int fte = ClaimFileTableEntry(parentFid, dirname.c_str(), pathname);
+    int fte = ClaimFileTableEntry(parentFid, dirname, pathname);
     if (fte < 0)	// Too many open files
 	return -EMFILE;
 
@@ -312,7 +311,7 @@ KfsClientImpl::Mkdir(const char *pathname)
 /// @param[in] pathname		The full pathname such as /.../dir
 /// @retval 0 if rmdir is successful; -errno otherwise
 int
-KfsClientImpl::Rmdir(const char *pathname)
+KfsClientImpl::Rmdir(const string & pathname)
 {
     MutexLock l(&mMutex);
 
@@ -322,10 +321,10 @@ KfsClientImpl::Rmdir(const char *pathname)
     if (res < 0)
 	return res;
 
-    int fte = LookupFileTableEntry(parentFid, dirname.c_str());
+    int fte = LookupFileTableEntry(parentFid, dirname);
     if (fte > 0)
 	ReleaseFileTableEntry(fte);
-    RmdirOp op(nextSeq(), parentFid, dirname.c_str(), pathname);
+    RmdirOp op(nextSeq(), parentFid, dirname.c_str(), pathname.c_str());
     (void)DoMetaOpWithRetry(&op);
     return op.status;
 }
@@ -335,7 +334,7 @@ KfsClientImpl::Rmdir(const char *pathname)
 /// @param[in] pathname		The full pathname such as /.../dir
 /// @retval 0 if rmdir is successful; -errno otherwise
 int
-KfsClientImpl::Rmdirs(const char *pathname)
+KfsClientImpl::Rmdirs(const string & pathname)
 {
     MutexLock l(&mMutex);
 
@@ -359,9 +358,9 @@ KfsClientImpl::Rmdirs(const char *pathname)
         
         d += "/" + entries[i].filename;
         if (entries[i].isDirectory) {
-            res = Rmdirs(d.c_str());
+            res = Rmdirs(d);
         } else {
-            res = Remove(d.c_str());
+            res = Remove(d);
         }
         if (res < 0)
             break;
@@ -388,7 +387,7 @@ KfsClientImpl::Rmdirs(const char *pathname)
 /// @param[out] result	The filenames in the directory
 /// @retval 0 if readdir is successful; -errno otherwise
 int
-KfsClientImpl::Readdir(const char *pathname, vector<string> &result)
+KfsClientImpl::Readdir(const string & pathname, vector<string> &result)
 {
     MutexLock l(&mMutex);
 
@@ -436,7 +435,7 @@ KfsClientImpl::Readdir(const char *pathname, vector<string> &result)
 /// @param[out] result	The filenames in the directory and their attributes
 /// @retval 0 if readdir is successful; -errno otherwise
 int
-KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
+KfsClientImpl::ReaddirPlus(const string & pathname, vector<KfsFileAttr> &result,
                            bool computeFilesize)
 {
     MutexLock l(&mMutex);
@@ -568,7 +567,7 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
                 continue;
             }
 
-            int fte = LookupFileTableEntry(dirFid, result[i].filename.c_str());
+            int fte = LookupFileTableEntry(dirFid, result[i].filename);
 
             if (fte >= 0) {
                 result[i].fileSize = mFileTable[fte]->fattr.fileSize;
@@ -595,7 +594,7 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
         dirname.erase(len - 1);
     
     for (uint32_t i = 0; i < result.size(); i++) {
-        int fte = LookupFileTableEntry(dirFid, result[i].filename.c_str());
+        int fte = LookupFileTableEntry(dirFid, result[i].filename);
 
         if (fte >= 0) {
             // if we computed the filesize, then we stash it; otherwise, we'll
@@ -611,7 +610,7 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
             else
                 fullpath = dirname + "/" + result[i].filename;
 
-            fte = AllocFileTableEntry(dirFid, result[i].filename.c_str(), fullpath);
+            fte = AllocFileTableEntry(dirFid, result[i].filename, fullpath);
             if (fte < 0)
                 continue;
         }
@@ -643,7 +642,7 @@ KfsClientImpl::ReaddirPlus(const char *pathname, vector<KfsFileAttr> &result,
 /// @param[out] numBytes # of bytes used by the directory tree
 /// @retval 0 if getdirsummary is successful; -errno otherwise
 int
-KfsClientImpl::GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t &numBytes)
+KfsClientImpl::GetDirSummary(const string & pathname, uint64_t &numFiles, uint64_t &numBytes)
 {
     MutexLock l(&mMutex);
 
@@ -671,7 +670,7 @@ KfsClientImpl::GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t 
 }
 
 int
-KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFilesize)
+KfsClientImpl::Stat(const string & pathname, struct stat &result, bool computeFilesize)
 {
     MutexLock l(&mMutex);
 
@@ -694,13 +693,13 @@ KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFiles
 	string filename;
 	int res = GetPathComponents(pathname, &parentFid, filename);
 	if (res == 0) {
-	    res = LookupAttr(parentFid, filename.c_str(), kfsattr, computeFilesize);
+	    res = LookupAttr(parentFid, filename, kfsattr, computeFilesize);
         }
 	if (res < 0)
 	    return res;
     }
 
-    KFS_LOG_VA_DEBUG("Size of %s is %d", pathname, kfsattr.fileSize);
+    KFS_LOG_VA_DEBUG("Size of %s is %d", pathname.c_str(), kfsattr.fileSize);
 
     memset(&result, 0, sizeof (struct stat));
     result.st_mode = kfsattr.isDirectory ? S_IFDIR : S_IFREG;
@@ -712,7 +711,7 @@ KfsClientImpl::Stat(const char *pathname, struct stat &result, bool computeFiles
 }
 
 bool
-KfsClientImpl::Exists(const char *pathname)
+KfsClientImpl::Exists(const string & pathname)
 {
     MutexLock l(&mMutex);
 
@@ -722,7 +721,7 @@ KfsClientImpl::Exists(const char *pathname)
 }
 
 bool
-KfsClientImpl::IsFile(const char *pathname)
+KfsClientImpl::IsFile(const string & pathname)
 {
     MutexLock l(&mMutex);
 
@@ -735,7 +734,7 @@ KfsClientImpl::IsFile(const char *pathname)
 }
 
 bool
-KfsClientImpl::IsDirectory(const char *pathname)
+KfsClientImpl::IsDirectory(const string & pathname)
 {
     MutexLock l(&mMutex);
 
@@ -748,7 +747,7 @@ KfsClientImpl::IsDirectory(const char *pathname)
 }
 
 int
-KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
+KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const string & filename,
 	              KfsFileAttr &result, bool computeFilesize)
 {
     MutexLock l(&mMutex);
@@ -757,7 +756,7 @@ KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
 	return -EINVAL;
     
     int fte = LookupFileTableEntry(parentFid, filename);
-    LookupOp op(nextSeq(), parentFid, filename);
+    LookupOp op(nextSeq(), parentFid, filename.c_str());
 
     (void)DoMetaOpWithRetry(&op);
     if (op.status < 0)
@@ -795,7 +794,7 @@ KfsClientImpl::LookupAttr(kfsFileId_t parentFid, const char *filename,
 }
 
 int
-KfsClientImpl::Create(const char *pathname, int numReplicas, bool exclusive)
+KfsClientImpl::Create(const string & pathname, int numReplicas, bool exclusive)
 {
     MutexLock l(&mMutex);
 
@@ -803,7 +802,7 @@ KfsClientImpl::Create(const char *pathname, int numReplicas, bool exclusive)
     string filename;
     int res = GetPathComponents(pathname, &parentFid, filename);
     if (res < 0) {
-	KFS_LOG_VA_DEBUG("status %d for pathname %s", res, pathname);
+	KFS_LOG_VA_DEBUG("status %d for pathname %s", res, pathname.c_str());
 	return res;
     }
 
@@ -818,7 +817,7 @@ KfsClientImpl::Create(const char *pathname, int numReplicas, bool exclusive)
     }
 
     // Everything is good now...
-    int fte = ClaimFileTableEntry(parentFid, filename.c_str(), pathname);
+    int fte = ClaimFileTableEntry(parentFid, filename, pathname);
     if (fte < 0) {	// XXX Too many open files
 	KFS_LOG_VA_DEBUG("status %d from ClaimFileTableEntry", fte);
 	return fte;
@@ -834,7 +833,7 @@ KfsClientImpl::Create(const char *pathname, int numReplicas, bool exclusive)
 }
 
 int
-KfsClientImpl::Remove(const char *pathname)
+KfsClientImpl::Remove(const string & pathname)
 {
     MutexLock l(&mMutex);
 
@@ -844,17 +843,17 @@ KfsClientImpl::Remove(const char *pathname)
     if (res < 0)
 	return res;
 
-    int fte = LookupFileTableEntry(parentFid, filename.c_str());
+    int fte = LookupFileTableEntry(parentFid, filename);
     if (fte > 0)
 	ReleaseFileTableEntry(fte);
 
-    RemoveOp op(nextSeq(), parentFid, filename.c_str(), pathname);
+    RemoveOp op(nextSeq(), parentFid, filename.c_str(), pathname.c_str());
     (void)DoMetaOpWithRetry(&op);
     return op.status;
 }
 
 int
-KfsClientImpl::Rename(const char *oldpath, const char *newpath, bool overwrite)
+KfsClientImpl::Rename(const string & oldpath, const string & newpath, bool overwrite)
 {
     MutexLock l(&mMutex);
 
@@ -866,18 +865,17 @@ KfsClientImpl::Rename(const char *oldpath, const char *newpath, bool overwrite)
 
     string absNewpath = build_path(mCwd, newpath);
     RenameOp op(nextSeq(), parentFid, oldfilename.c_str(),
-                absNewpath.c_str(), oldpath, overwrite);
+                absNewpath.c_str(), oldpath.c_str(), overwrite);
     (void)DoMetaOpWithRetry(&op);
 
     KFS_LOG_VA_DEBUG("Status of renaming %s -> %s is: %d", 
-                     oldpath, newpath, op.status);
+                     oldpath.c_str(), newpath.c_str(), op.status);
 
     // update the path cache
     if (op.status == 0) {
-        int fte = LookupFileTableEntry(parentFid, oldfilename.c_str());
+        int fte = LookupFileTableEntry(parentFid, oldfilename);
         if (fte > 0) {
-            string oldn = string(oldpath);
-            NameToFdMapIter iter = mPathCache.find(oldn);
+            NameToFdMapIter iter = mPathCache.find(oldpath);
         
             if (iter != mPathCache.end())
                 mPathCache.erase(iter);
@@ -891,7 +889,7 @@ KfsClientImpl::Rename(const char *oldpath, const char *newpath, bool overwrite)
 }
 
 int
-KfsClientImpl::Fileno(const char *pathname)
+KfsClientImpl::Fileno(const string & pathname)
 {
     kfsFileId_t parentFid;
     string filename;
@@ -899,11 +897,11 @@ KfsClientImpl::Fileno(const char *pathname)
     if (res < 0)
 	return res;
 
-    return LookupFileTableEntry(parentFid, filename.c_str());
+    return LookupFileTableEntry(parentFid, filename);
 }
 
 int
-KfsClientImpl::Open(const char *pathname, int openMode, int numReplicas)
+KfsClientImpl::Open(const string & pathname, int openMode, int numReplicas)
 {
     MutexLock l(&mMutex);
 
@@ -931,7 +929,7 @@ KfsClientImpl::Open(const char *pathname, int openMode, int numReplicas)
             return -EEXIST;
     }
 
-    int fte = AllocFileTableEntry(parentFid, filename.c_str(), pathname);
+    int fte = AllocFileTableEntry(parentFid, filename, pathname);
     if (fte < 0)		// Too many open files
 	return fte;
 
@@ -1047,7 +1045,7 @@ KfsClientImpl::Truncate(int fd, off_t offset)
 }
 
 int
-KfsClientImpl::GetDataLocation(const char *pathname, off_t start, off_t len,
+KfsClientImpl::GetDataLocation(const string & pathname, off_t start, off_t len,
                            vector< vector <string> > &locations)
 {
     MutexLock l(&mMutex);
@@ -1100,7 +1098,7 @@ KfsClientImpl::GetDataLocation(int fd, off_t start, off_t len,
 }
 
 int16_t
-KfsClientImpl::GetReplicationFactor(const char *pathname)
+KfsClientImpl::GetReplicationFactor(const string & pathname)
 {
     MutexLock l(&mMutex);
 
@@ -1123,7 +1121,7 @@ KfsClientImpl::GetReplicationFactor(const char *pathname)
 }
 
 int16_t
-KfsClientImpl::SetReplicationFactor(const char *pathname, int16_t numReplicas)
+KfsClientImpl::SetReplicationFactor(const string & pathname, int16_t numReplicas)
 {
     MutexLock l(&mMutex);
 
@@ -2071,7 +2069,7 @@ class FTMatcher {
     kfsFileId_t parentFid;
     string myname;
 public:
-    FTMatcher(kfsFileId_t f, const char *n): parentFid(f), myname(n) { }
+    FTMatcher(kfsFileId_t f, const string & n): parentFid(f), myname(n) { }
     bool operator () (FileTableEntry *ft) {
 	return (ft != NULL &&
 	        ft->parentFid == parentFid &&
@@ -2100,7 +2098,7 @@ KfsClientImpl::IsFileTableEntryValid(int fte)
 }
 
 int
-KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
+KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const string & name)
 {
     FTMatcher match(parentFid, name);
     vector <FileTableEntry *>::iterator i;
@@ -2113,7 +2111,7 @@ KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
         return fte;
 
     KFS_LOG_VA_DEBUG("Entry for <%lld, %s> is likely stale; forcing revalidation", 
-                     parentFid, name);
+                     parentFid, name.c_str());
     // the entry maybe stale; force revalidation
     ReleaseFileTableEntry(fte);
 
@@ -2122,10 +2120,9 @@ KfsClientImpl::LookupFileTableEntry(kfsFileId_t parentFid, const char *name)
 }
 
 int
-KfsClientImpl::LookupFileTableEntry(const char *pathname)
+KfsClientImpl::LookupFileTableEntry(const string & pathname)
 {
-    string p(pathname);
-    NameToFdMapIter iter = mPathCache.find(p);
+    NameToFdMapIter iter = mPathCache.find(pathname);
 
     if (iter != mPathCache.end()) {
         int fte = iter->second;
@@ -2144,12 +2141,12 @@ KfsClientImpl::LookupFileTableEntry(const char *pathname)
     if (res < 0)
 	return res;
 
-    return LookupFileTableEntry(parentFid, name.c_str());
+    return LookupFileTableEntry(parentFid, name);
 }
 
 int
-KfsClientImpl::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name,
-                                   string pathname)
+KfsClientImpl::ClaimFileTableEntry(kfsFileId_t parentFid, const string & name,
+                                   const string & pathname)
 {
     int fte = LookupFileTableEntry(parentFid, name);
     if (fte >= 0)
@@ -2159,8 +2156,8 @@ KfsClientImpl::ClaimFileTableEntry(kfsFileId_t parentFid, const char *name,
 }
 
 int
-KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name,
-                                   string pathname)
+KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const string & name,
+                                   const string & pathname)
 {
     int fte = FindFreeFileTableEntry();
 
@@ -2175,7 +2172,7 @@ KfsClientImpl::AllocFileTableEntry(kfsFileId_t parentFid, const char *name,
         mFileTable[fte]->validatedTime = mFileTable[fte]->lastAccessTime = 
             time(NULL);
         if (pathname != "") {
-            string fullpath = build_path(mCwd, pathname.c_str());
+            string fullpath = build_path(mCwd, pathname);
             mPathCache[pathname] = fte;
             // mFileTable[fte]->pathCacheIter = mPathCache.find(pathname);
         }
@@ -2208,13 +2205,13 @@ KfsClientImpl::ReleaseFileTableEntry(int fte)
 /// save it in the file table.
 ///
 int
-KfsClientImpl::Lookup(kfsFileId_t parentFid, const char *name)
+KfsClientImpl::Lookup(kfsFileId_t parentFid, const string & name)
 {
     int fte = LookupFileTableEntry(parentFid, name);
     if (fte >= 0)
 	return fte;
 
-    LookupOp op(nextSeq(), parentFid, name);
+    LookupOp op(nextSeq(), parentFid, name.c_str());
     (void) DoOpCommon(&op, &mMetaServerSock);
     if (op.status < 0) {
 	return op.status;
@@ -2240,7 +2237,7 @@ KfsClientImpl::Lookup(kfsFileId_t parentFid, const char *name)
 /// @retval 0 on success; -errno on failure
 ///
 int
-KfsClientImpl::GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
+KfsClientImpl::GetPathComponents(const string & pathname, kfsFileId_t *parentFid,
 	                     string &name)
 {
     const char slash = '/';
@@ -2288,7 +2285,7 @@ KfsClientImpl::GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
 	if (next == start)
 	    return -EINVAL;		// don't allow "//" in path
 	string component(pathstr, start, next - start);
-	int fte = Lookup(*parentFid, component.c_str());
+	int fte = Lookup(*parentFid, component);
 	if (fte < 0)
 	    return fte;
 	else if (!FdAttr(fte)->isDirectory)
@@ -2392,7 +2389,7 @@ KfsClientImpl::RelinquishLease(kfsChunkId_t chunkId)
 }
 
 int
-KfsClientImpl::EnumerateBlocks(const char *pathname)
+KfsClientImpl::EnumerateBlocks(const string & pathname)
 {
     struct stat s;
     int res, fte;
@@ -2413,7 +2410,7 @@ KfsClientImpl::EnumerateBlocks(const char *pathname)
     fte = LookupFileTableEntry(pathname);
     assert(fte >= 0);
 
-    KFS_LOG_VA_DEBUG("Fileid for %s is: %d", pathname, FdAttr(fte)->fileId);
+    KFS_LOG_VA_DEBUG("Fileid for %s is: %d", pathname.c_str(), FdAttr(fte)->fileId);
 
     GetLayoutOp lop(nextSeq(), FdAttr(fte)->fileId);
     (void)DoMetaOpWithRetry(&lop);
@@ -2480,7 +2477,7 @@ bool KfsClientImpl::GetDataChecksums(const ServerLocation &loc,
 }
 
 bool
-KfsClientImpl::VerifyDataChecksums(const char *pathname, const vector<uint32_t> &checksums)
+KfsClientImpl::VerifyDataChecksums(const string & pathname, const vector<uint32_t> &checksums)
 {
     struct stat s;
     int res, fte;

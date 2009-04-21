@@ -128,7 +128,7 @@ main(int argc, char **argv)
     }
 
     if (!S_ISDIR(statInfo.st_mode)) {
-	BackupFile(kfsClient, sourcePath.c_str(), kfsPath);
+	BackupFile(kfsClient, sourcePath, kfsPath);
 	exit(0);
     }
 
@@ -138,9 +138,9 @@ main(int argc, char **argv)
     }
 
     // when doing cp -r a/b kfs://c, we need to create c/b in KFS.
-    MakeKfsLeafDir(kfsClient, sourcePath.c_str(), kfsPath);
+    MakeKfsLeafDir(kfsClient, sourcePath, kfsPath);
 
-    BackupDir(kfsClient, sourcePath.c_str(), kfsPath);
+    BackupDir(kfsClient, sourcePath, kfsPath);
 
     closedir(dirp);
 }
