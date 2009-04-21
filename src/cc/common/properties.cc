@@ -92,13 +92,6 @@ int Properties::loadProperties(std::istream &ist, char delimiter, bool verbose, 
     return 0;
 }
 
-
-
-void Properties::setValue(const string & key, const string & value) {
-    (*propmap)[key] = value;
-    return;
-}
-
 string Properties::removeLTSpaces(string str){
 
     char const* delims = " \t\r\n";
@@ -111,46 +104,6 @@ string Properties::removeLTSpaces(string str){
    notwhite = str.find_last_not_of(delims);
    str.erase(notwhite+1);
    return(str);
-}
-
-string Properties::getValue(const string & key, const string & def) const
-{
-    if(propmap->find(key) == propmap->end()) return def;
-        return (*propmap)[key];
-}
-const char* Properties::getValue(const string & key, const char* def) const
-{
-    if(propmap->find(key) == propmap->end()) return def;
-        return (((*propmap)[key]).c_str());
-}
-
-int Properties::getValue(const string & key, int def)
-{
-    if(propmap->find(key) == propmap->end()) return def;
-        return (atoi(((*propmap)[key]).c_str()));
-}
-long Properties::getValue(const string & key, long def)
-{
-    if(propmap->find(key) == propmap->end()) return def;
-        return (atoll(((*propmap)[key]).c_str()));
-}
-
-long long Properties::getValue(const string & key, long long def)
-{
-    if(propmap->find(key) == propmap->end()) return def;
-        return (atoll(((*propmap)[key]).c_str()));
-}
-
-uint64_t Properties::getValue(const string & key, uint64_t def)
-{
-    if(propmap->find(key) == propmap->end()) return def;
-        return (atoll(((*propmap)[key]).c_str()));
-}
-
-double Properties::getValue(const string & key, double def)
-{
-    if(propmap->find(key) == propmap->end()) return def;
-        return (atof(((*propmap)[key]).c_str()));
 }
 
 void Properties::getList(string &outBuf, const string & linePrefix) const {
@@ -167,4 +120,22 @@ void Properties::getList(string &outBuf, const string & linePrefix) const {
   }
 
   return;
+}
+
+string Properties::getValue ( const std::string & key, const std::string & defaultValue ) const
+{
+  std::map<std::string, std::string>::const_iterator it = propmap->find ( key );
+
+  if ( it == propmap->end() ) return defaultValue;
+
+  return it->second;
+}
+
+const char* Properties::getValue ( const std::string & key, const char* defaultValue ) const
+{
+  std::map<std::string, std::string>::const_iterator it = propmap->find ( key );
+
+  if ( it == propmap->end() ) return defaultValue;
+
+  return ( it->second ).c_str();
 }
