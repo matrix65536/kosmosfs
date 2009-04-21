@@ -769,7 +769,7 @@ kfs_cd(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Stat(path.c_str(), s);
+	int status = self->client->Stat(path, s);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -778,7 +778,7 @@ kfs_cd(PyObject *pself, PyObject *args)
 		PyErr_SetString(PyExc_IOError, strerror(ENOTDIR));
 		return NULL;
 	}
-	PyObject *newcwd = PyString_FromString(path.c_str());
+	PyObject *newcwd = PyString_FromString(path);
 	if (newcwd != NULL) {
 		Py_DECREF(self->cwd);
 		self->cwd = newcwd;
@@ -809,7 +809,7 @@ kfs_isdir(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	bool res = self->client->IsDirectory(path.c_str());
+	bool res = self->client->IsDirectory(path);
         return Py_BuildValue("b", res);
 }
 
@@ -823,7 +823,7 @@ kfs_isfile(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	bool res = self->client->IsFile(path.c_str());
+	bool res = self->client->IsFile(path);
         return Py_BuildValue("b", res);
 }
 
@@ -837,7 +837,7 @@ kfs_mkdir(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status  = self->client->Mkdir(path.c_str());
+	int status  = self->client->Mkdir(path);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -855,7 +855,7 @@ kfs_mkdirs(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status  = self->client->Mkdirs(path.c_str());
+	int status  = self->client->Mkdirs(path);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -873,7 +873,7 @@ kfs_rmdir(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Rmdir(path.c_str());
+	int status = self->client->Rmdir(path);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -891,7 +891,7 @@ kfs_rmdirs(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Rmdirs(path.c_str());
+	int status = self->client->Rmdirs(path);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -917,7 +917,7 @@ kfs_readdir(PyObject *pself, PyObject *args)
 
 	string path = build_path(self->cwd, patharg);
 	vector <string> result;
-	int status = self->client->Readdir(path.c_str(), result);
+	int status = self->client->Readdir(path, result);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -969,7 +969,7 @@ kfs_readdirplus(PyObject *pself, PyObject *args)
 	string path = build_path(self->cwd, patharg);
 
 	vector <KfsFileAttr> result;
-	int status = self->client->ReaddirPlus(path.c_str(), result);
+	int status = self->client->ReaddirPlus(path, result);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -994,7 +994,7 @@ kfs_stat(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Stat(path.c_str(), s, true);
+	int status = self->client->Stat(path, s, true);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -1028,7 +1028,7 @@ kfs_create(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int fd = self->client->Create(path.c_str());
+	int fd = self->client->Create(path);
 	if (fd < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-fd));
 		return NULL;
@@ -1051,7 +1051,7 @@ kfs_remove(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Remove(path.c_str());
+	int status = self->client->Remove(path);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -1071,7 +1071,7 @@ kfs_rename(PyObject *pself, PyObject *args)
 
 	string spath = build_path(self->cwd, srcpath);
 	string dpath = build_path(self->cwd, dstpath);
-	int status = self->client->Rename(spath.c_str(), dpath.c_str(), overwrite);
+	int status = self->client->Rename(spath, dpath, overwrite);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;

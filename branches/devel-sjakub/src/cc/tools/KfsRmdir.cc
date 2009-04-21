@@ -56,5 +56,5 @@ KFS::tools::handleRmdir(const vector<string> &args)
         return 0;
     }
 
-    return doRmdir(args[0].c_str());
+    return doRmdir(args[0]);
 }

@@ -73,7 +73,7 @@ KFS::tools::handleChangeReplication(const vector<string> &args)
         return -EINVAL;
     }
 
-    if ((res = kfsClient->SetReplicationFactor(args[0].c_str(), numReplicas)) < 0) {
+    if ((res = kfsClient->SetReplicationFactor(args[0], numReplicas)) < 0) {
 	cout << "Set replication failed: " << ErrorCodeToStr(res) << endl;
         return res;
     } 

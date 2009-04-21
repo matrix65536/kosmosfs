@@ -42,8 +42,8 @@ using namespace KFS;
 
 int numReplicas = 3;
 KfsClientPtr gKfsClient;
-static bool doMkdirs(const char *dirname);
-static off_t doWrite(const string &kfspathname, int numMBytes, size_t writeSizeBytes, double sleepSec);
+static bool doMkdirs(const string & dirname);
+static off_t doWrite(const string & kfspathname, int numMBytes, size_t writeSizeBytes, double sleepSec);
 
 int
 main(int argc, char **argv)
@@ -112,7 +112,7 @@ main(int argc, char **argv)
 
     kfsdirname.assign(kfspathname, 0, slash);
     kfsfilename.assign(kfspathname, slash + 1, kfspathname.size());
-    doMkdirs(kfsdirname.c_str());
+    doMkdirs(kfsdirname);
 
     struct timeval startTime, endTime;
     double timeTaken;
@@ -133,7 +133,7 @@ main(int argc, char **argv)
 }
 
 bool
-doMkdirs(const char *dirname)
+doMkdirs(const string & dirname)
 {
     int fd;
 
@@ -166,8 +166,8 @@ doWrite(const string &filename, int numMBytes, size_t writeSizeBytes, double sle
     for (bytesWritten = 0; bytesWritten < mByte; bytesWritten++) {
         dataBuf[bytesWritten] = 'a' + bytesWritten % 26;
     }
-    // fd = gKfsClient->Open(filename.c_str(), O_CREAT|O_RDWR);
-    fd = gKfsClient->Create(filename.c_str(), numReplicas);
+    // fd = gKfsClient->Open(filename, O_CREAT|O_RDWR);
+    fd = gKfsClient->Create(filename, numReplicas);
     if (fd < 0) {
         cout << "Create failed: " << endl;
         exit(-1);

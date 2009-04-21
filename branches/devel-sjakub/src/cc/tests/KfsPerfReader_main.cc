@@ -155,7 +155,7 @@ doRead(const string &filename, int numMBytes,
         readSizeBytes = mByte;
     }
 
-    fd = gKfsClient->Open(filename.c_str(), O_RDONLY);
+    fd = gKfsClient->Open(filename, O_RDONLY);
     if (fd < 0) {
         cout << "Open failed: " << endl;
         exit(-1);

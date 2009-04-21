@@ -60,12 +60,12 @@ KFS::tools::handleCopy(const vector<string> &args)
 
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
-    if (!kfsClient->Exists(args[0].c_str())) {
+    if (!kfsClient->Exists(args[0])) {
 	cout << "Source path: " << args[0] << " is non-existent!" << endl;
         return -ENOENT;
     }
 
-    if (kfsClient->IsFile(args[0].c_str())) {
+    if (kfsClient->IsFile(args[0])) {
 	return CopyFile(kfsClient, args[0], args[1]);
     }
 

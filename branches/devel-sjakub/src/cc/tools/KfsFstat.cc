@@ -56,7 +56,7 @@ KFS::tools::handleFstat(const vector<string> &args)
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     struct stat statInfo;
-    kfsClient->Stat(args[0].c_str(), statInfo);
+    kfsClient->Stat(args[0], statInfo);
 
     cout << "File: " << args[0] << endl;
     cout << "ctime: " << statInfo.st_ctime << endl;

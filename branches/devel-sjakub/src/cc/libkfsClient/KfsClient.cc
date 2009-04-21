@@ -80,13 +80,13 @@ KFS::getKfsClientFactory()
 }
 
 KfsClientPtr
-KfsClientFactory::internalGetClient(const char *propFile)
+KfsClientFactory::internalGetClient(const string & propFile)
 {
     bool verbose = false;
 #ifdef DEBUG
     verbose = true;
 #endif
-    if (theProps().loadProperties(propFile, '=', verbose) != 0) {
+    if (theProps().loadProperties(propFile.c_str(), '=', verbose) != 0) {
         KfsClientPtr clnt;
 	return clnt;
     }
@@ -97,7 +97,7 @@ KfsClientFactory::internalGetClient(const char *propFile)
 }
 
 KfsClientPtr
-KfsClientFactory::internalGetClient(const std::string metaServerHost, int metaServerPort)
+KfsClientFactory::internalGetClient(const std::string & metaServerHost, int metaServerPort)
 {
     vector<KfsClientPtr>::iterator iter;
     ServerLocation loc(metaServerHost, metaServerPort);
@@ -175,7 +175,7 @@ KfsClient::IsInitialized()
 }
 
 int
-KfsClient::Cd(const char *pathname)
+KfsClient::Cd(const string & pathname)
 {
     return mImpl->Cd(pathname);
 }
@@ -187,79 +187,79 @@ KfsClient::GetCwd()
 }
 
 int
-KfsClient::Mkdirs(const char *pathname)
+KfsClient::Mkdirs(const string & pathname)
 {
     return mImpl->Mkdirs(pathname);
 }
 
 int 
-KfsClient::Mkdir(const char *pathname)
+KfsClient::Mkdir(const string & pathname)
 {
     return mImpl->Mkdir(pathname);
 }
 
 int 
-KfsClient::Rmdir(const char *pathname)
+KfsClient::Rmdir(const string & pathname)
 {
     return mImpl->Rmdir(pathname);
 }
 
 int 
-KfsClient::Rmdirs(const char *pathname)
+KfsClient::Rmdirs(const string & pathname)
 {
     return mImpl->Rmdirs(pathname);
 }
 
 int 
-KfsClient::Readdir(const char *pathname, std::vector<std::string> &result)
+KfsClient::Readdir(const string & pathname, std::vector<std::string> &result)
 {
     return mImpl->Readdir(pathname, result);
 }
 
 int 
-KfsClient::ReaddirPlus(const char *pathname, std::vector<KfsFileAttr> &result)
+KfsClient::ReaddirPlus(const string & pathname, std::vector<KfsFileAttr> &result)
 {
     return mImpl->ReaddirPlus(pathname, result);
 }
 
 int 
-KfsClient::GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t &numBytes)
+KfsClient::GetDirSummary(const string & pathname, uint64_t &numFiles, uint64_t &numBytes)
 {
     return mImpl->GetDirSummary(pathname, numFiles, numBytes);
 }
 
 int 
-KfsClient::Stat(const char *pathname, struct stat &result, bool computeFilesize)
+KfsClient::Stat(const string & pathname, struct stat &result, bool computeFilesize)
 {
     return mImpl->Stat(pathname, result, computeFilesize);
 }
 
 bool 
-KfsClient::Exists(const char *pathname)
+KfsClient::Exists(const string & pathname)
 {
     return mImpl->Exists(pathname);
 }
 
 bool 
-KfsClient::IsFile(const char *pathname)
+KfsClient::IsFile(const string & pathname)
 {
     return mImpl->IsFile(pathname);
 }
 
 bool 
-KfsClient::IsDirectory(const char *pathname)
+KfsClient::IsDirectory(const string & pathname)
 {
     return mImpl->IsDirectory(pathname);
 }
 
 int
-KfsClient::EnumerateBlocks(const char *pathname)
+KfsClient::EnumerateBlocks(const string & pathname)
 {
     return mImpl->EnumerateBlocks(pathname);
 }
 
 bool
-KfsClient::VerifyDataChecksums(const char *pathname, const vector<uint32_t> &checksums)
+KfsClient::VerifyDataChecksums(const string & pathname, const vector<uint32_t> &checksums)
 {
     return mImpl->VerifyDataChecksums(pathname, checksums);
 }
@@ -271,31 +271,31 @@ KfsClient::VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numB
 }
 
 int 
-KfsClient::Create(const char *pathname, int numReplicas, bool exclusive)
+KfsClient::Create(const string & pathname, int numReplicas, bool exclusive)
 {
     return mImpl->Create(pathname, numReplicas, exclusive);
 }
 
 int 
-KfsClient::Remove(const char *pathname)
+KfsClient::Remove(const string & pathname)
 {
     return mImpl->Remove(pathname);
 }
 
 int 
-KfsClient::Rename(const char *oldpath, const char *newpath, bool overwrite)
+KfsClient::Rename(const string & oldpath, const string & newpath, bool overwrite)
 {
     return mImpl->Rename(oldpath, newpath, overwrite);
 }
 
 int 
-KfsClient::Open(const char *pathname, int openFlags, int numReplicas)
+KfsClient::Open(const string & pathname, int openFlags, int numReplicas)
 {
     return mImpl->Open(pathname, openFlags, numReplicas);
 }
 
 int 
-KfsClient::Fileno(const char *pathname)
+KfsClient::Fileno(const string & pathname)
 {
     return mImpl->Fileno(pathname);
 }
@@ -349,7 +349,7 @@ KfsClient::Truncate(int fd, off_t offset)
 }
 
 int 
-KfsClient::GetDataLocation(const char *pathname, off_t start, off_t len,
+KfsClient::GetDataLocation(const string & pathname, off_t start, off_t len,
                            std::vector< std::vector <std::string> > &locations)
 {
     return mImpl->GetDataLocation(pathname, start, len, locations);
@@ -363,13 +363,13 @@ KfsClient::GetDataLocation(int fd, off_t start, off_t len,
 }
 
 int16_t 
-KfsClient::GetReplicationFactor(const char *pathname)
+KfsClient::GetReplicationFactor(const string & pathname)
 {
     return mImpl->GetReplicationFactor(pathname);
 }
 
 int16_t 
-KfsClient::SetReplicationFactor(const char *pathname, int16_t numReplicas)
+KfsClient::SetReplicationFactor(const string & pathname, int16_t numReplicas)
 {
     return mImpl->SetReplicationFactor(pathname, numReplicas);
 }

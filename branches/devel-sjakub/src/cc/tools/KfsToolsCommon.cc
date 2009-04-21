@@ -197,11 +197,11 @@ KFS::tools::parsePath(const string & pathDesc, string & serverHost,
 //     
 //     ifs.open(srcfilename.c_str(), ios_base::in);
 //     if (!ifs) {
-//         cout << "Unable to open: " << srcfilename.c_str() << endl;
+//         cout << "Unable to open: " << srcfilename << endl;
 //         exit(-1);
 //     }
 // 
-//     kfsfd = kfsClient->Create((char *) kfsfilename.c_str());
+//     kfsfd = kfsClient->Create((char *) kfsfilename);
 //     if (kfsfd < 0) {
 //         cout << "Create " << kfsfilename << " failed: " << kfsfd << endl;
 //         exit(-1);
@@ -248,11 +248,11 @@ BackupFile2(KfsClientPtr kfsClient, string srcfilename, string kfsfilename)
     else
         srcFd = open(srcfilename.c_str(), O_RDONLY);
     if (srcFd  < 0) {
-        cout << "Unable to open: " << srcfilename.c_str() << endl;
+        cout << "Unable to open: " << srcfilename << endl;
         exit(-1);
     }
 
-    kfsfd = kfsClient->Create((char *) kfsfilename.c_str());
+    kfsfd = kfsClient->Create(kfsfilename);
     if (kfsfd < 0) {
         cout << "Create " << kfsfilename << " failed: " << kfsfd << endl;
         exit(-1);
@@ -278,13 +278,13 @@ BackupFile2(KfsClientPtr kfsClient, string srcfilename, string kfsfilename)
 }
 
 static bool
-doMkdirs(KfsClientPtr kfsClient, const char *path)
+doMkdirs(KfsClientPtr kfsClient, const string & path)
 {
     int res;
 
     assert (kfsClient != 0);
     
-    res = kfsClient->Mkdirs((char *) path);
+    res = kfsClient->Mkdirs(path);
     if ((res < 0) && (res != -EEXIST)) {
         cout << "Mkdir failed: " << ErrorCodeToStr(res) << endl;
         return false;
@@ -314,7 +314,7 @@ KFS::tools::MakeKfsLeafDir(KfsClientPtr kfsClient, const string &sourcePath, str
         kfsPath += "/";
 
     kfsPath += leaf;
-    doMkdirs(kfsClient, kfsPath.c_str());
+    doMkdirs(kfsClient, kfsPath);
 }
 
 int
@@ -339,7 +339,7 @@ KFS::tools::BackupFile(KfsClientPtr kfsClient, const string &sourcePath, const s
     // for the dest side: if kfsPath is a dir, we are copying to
     // kfsPath with srcFilename; otherwise, kfsPath is a file (that
     // potentially exists) and we are ovewriting/creating it
-    if (kfsClient->IsDirectory(kfsPath.c_str())) {
+    if (kfsClient->IsDirectory(kfsPath)) {
         string dst = kfsPath;
 
         if (dst[kfsPath.size() - 1] != '/')
@@ -371,7 +371,7 @@ KFS::tools::BackupDir(KfsClientPtr kfsClient, const string &dirname, string &kfs
         exit(-1);
     }
 
-    if (!doMkdirs(kfsClient, kfsdirname.c_str())) {
+    if (!doMkdirs(kfsClient, kfsdirname)) {
         cout << "Unable to make kfs dir: " << kfsdirname << endl;
         closedir(dirp);
 	return 1;
@@ -413,7 +413,7 @@ RestoreFile2(KfsClientPtr kfsClient, string kfsfilename, string localfilename)
 
     assert (kfsClient != 0);
     
-    kfsfd = kfsClient->Open((char *) kfsfilename.c_str(), O_RDONLY);
+    kfsfd = kfsClient->Open(kfsfilename, O_RDONLY);
     if (kfsfd < 0) {
         cout << "Open failed: " << endl;
         exit(-1);
@@ -522,7 +522,7 @@ KFS::tools::RestoreDir(KfsClientPtr kfsClient, string &kfsdirname, string &dirna
 	exit(-1);
     }
     
-    if ((res = kfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
+    if ((res = kfsClient->ReaddirPlus(kfsdirname, fileInfo)) < 0) {
         cout << "RestoreDir::ReaddirPlus(" <<  kfsdirname << ") failed: " << res << endl;
         return res;
     }
@@ -583,13 +583,13 @@ CopyFile2(KfsClientPtr kfsClient, string srcfilename, string dstfilename)
     
     assert (kfsClient != 0);
     
-    srcfd = kfsClient->Open(srcfilename.c_str(), O_RDONLY);
+    srcfd = kfsClient->Open(srcfilename, O_RDONLY);
     if (srcfd < 0) {
-        cout << "Unable to open: " << srcfilename.c_str() << endl;
+        cout << "Unable to open: " << srcfilename << endl;
         return srcfd;
     }
 
-    dstfd = kfsClient->Create((char *) dstfilename.c_str());
+    dstfd = kfsClient->Create(dstfilename);
     if (dstfd < 0) {
         cout << "Create " << dstfilename << " failed: " << ErrorCodeToStr(dstfd) << endl;
         return dstfd;
@@ -637,7 +637,7 @@ KFS::tools::CopyFile(KfsClientPtr kfsClient, const string &srcPath, const string
     // for the dest side: if the dst is a dir, we are copying to
     // dstPath with srcFilename; otherwise, dst is a file (that
     // potenitally exists) and we are ovewriting/creating it
-    if (kfsClient->IsDirectory(dstPath.c_str())) {
+    if (kfsClient->IsDirectory(dstPath)) {
         string dst = dstPath;
 
         if (dst[dstPath.size() - 1] != '/')
@@ -664,13 +664,13 @@ KFS::tools::CopyDir(KfsClientPtr kfsClient, const string & srcDirname, string ds
 	exit(-1);
     }
     
-    if ((res = kfsClient->Readdir((char *) srcDirname.c_str(), dirEntries)) < 0)
+    if ((res = kfsClient->Readdir(srcDirname, dirEntries)) < 0)
     {
         cout << "Readdir(" << srcDirname << ") failed: " << res << endl;
         return res;
     }
 
-    if (!doMkdirs(kfsClient, dstDirname.c_str()))
+    if (!doMkdirs(kfsClient, dstDirname))
     {
 	cout << "Unable to make kfs dir: " << dstDirname << endl;
 	return res;
@@ -684,7 +684,7 @@ KFS::tools::CopyDir(KfsClientPtr kfsClient, const string & srcDirname, string ds
 	string src = srcDirname + "/" + dirEntries[i];
 	string dst = dstDirname + "/" + dirEntries[i];
 	
-        if (kfsClient->IsDirectory(src.c_str()))
+        if (kfsClient->IsDirectory(src))
 	{
 	    res = CopyDir(kfsClient, src, dst);
         }
@@ -748,12 +748,12 @@ doDirList(KfsClientPtr kfsClient, string kfsdirname)
     vector<string> entries;
     vector<string>::size_type i;
 
-    if (kfsClient->IsFile((char *) kfsdirname.c_str())) {
+    if (kfsClient->IsFile(kfsdirname)) {
         cout << kfsdirname << endl;
         return 0;
     }
         
-    if ((res = kfsClient->Readdir((char *) kfsdirname.c_str(), entries)) < 0) {
+    if ((res = kfsClient->Readdir(kfsdirname, entries)) < 0) {
         cout << "Readdir failed: " << ErrorCodeToStr(res) << endl;
         return res;
     }
@@ -775,14 +775,14 @@ doDirListPlusAttr(KfsClientPtr kfsClient, string kfsdirname, bool humanReadable,
     vector<KfsFileAttr> fileInfo;
     vector<KfsFileAttr>::size_type i;
 
-    if (kfsClient->IsFile((char *) kfsdirname.c_str())) {
+    if (kfsClient->IsFile(kfsdirname)) {
         struct stat statInfo;
 
-        kfsClient->Stat(kfsdirname.c_str(), statInfo);
+        kfsClient->Stat(kfsdirname, statInfo);
         printFileInfo(kfsdirname, statInfo.st_mtime, statInfo.st_size, humanReadable, timeInSecs);
         return 0;
     }
-    if ((res = kfsClient->ReaddirPlus((char *) kfsdirname.c_str(), fileInfo)) < 0) {
+    if ((res = kfsClient->ReaddirPlus(kfsdirname, fileInfo)) < 0) {
         cout << "doDirListPlusAttr::Readdir plus failed: " << ErrorCodeToStr(res) << endl;
         return res;
     }

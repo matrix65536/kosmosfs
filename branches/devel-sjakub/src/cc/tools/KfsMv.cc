@@ -62,15 +62,15 @@ KFS::tools::handleMv(const vector<string> &args)
 
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
-    if (!kfsClient->Exists(args[0].c_str())) {
+    if (!kfsClient->Exists(args[0])) {
 	cout << "Source path: " << args[0] << " is non-existent!" << endl;
         return -ENOENT;
     }
 
-    string target = args[1].c_str();
+    string target = args[1];
 
-    if (kfsClient->IsFile(args[0].c_str()) &&
-        kfsClient->IsDirectory(args[1].c_str())) {
+    if (kfsClient->IsFile(args[0]) &&
+        kfsClient->IsDirectory(args[1])) {
         string parent, filename;
 
         GetPathComponents(args[0], parent, filename);
@@ -78,7 +78,7 @@ KFS::tools::handleMv(const vector<string> &args)
         target += filename;
     }
     
-    if ((res = kfsClient->Rename(args[0].c_str(), target.c_str())) < 0) {
+    if ((res = kfsClient->Rename(args[0], target)) < 0) {
         cout << "Rename failed: " << ErrorCodeToStr(res) << endl;
         return res;
     }
