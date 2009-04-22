@@ -38,8 +38,11 @@
 
 extern "C" {
 #include <signal.h>
-#include <stdlib.h>
 }
+
+#include <cstdio>
+#include <cstdlib>
+
 #include <cerrno>
 #include <iostream>
 #include <string>
@@ -86,7 +89,7 @@ KFS::getKfsClientFactory()
 }
 
 KfsClientPtr
-KfsClientFactory::GetClient(const char *propFile)
+KfsClientFactory::internalGetClient(const char *propFile)
 {
     bool verbose = false;
 #ifdef DEBUG
@@ -97,7 +100,7 @@ KfsClientFactory::GetClient(const char *propFile)
 	return clnt;
     }
 
-    return GetClient(theProps().getValue("metaServer.name", ""),
+    return internalGetClient(theProps().getValue("metaServer.name", ""),
                      theProps().getValue("metaServer.port", -1));
 
 }
@@ -115,10 +118,19 @@ public:
 };
 
 KfsClientPtr
-KfsClientFactory::GetClient(const std::string metaServerHost, int metaServerPort)
+KfsClientFactory::internalGetClient(const std::string metaServerHost, int metaServerPort)
 {
     vector<KfsClientPtr>::iterator iter;
     ServerLocation loc(metaServerHost, metaServerPort);
+
+    // Check if off_t has expected size. Otherwise print an error and exit the whole program!
+    if (sizeof(off_t) != 8)
+    {
+	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %u). "
+	    "You need to recompile KFS with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
+	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", sizeof(off_t));
+	exit(1);
+    }
 
     iter = find_if(mClients.begin(), mClients.end(), MatchingServer(loc));
     if (iter != mClients.end())
@@ -137,6 +149,20 @@ KfsClientFactory::GetClient(const std::string metaServerHost, int metaServerPort
     return clnt;
 }
 
+void 
+KfsClientFactory::checkClientOffSize(size_t size)
+{
+    // This should be called from code in .h file inherited by the client,
+    // so we could test if program using KFS has correct size of off_t.
+    // Check if off_t has expected size. Otherwise print an error and exit the whole program!
+    if (size != 8)
+    {
+	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %u). "
+	    "You need to recompile your program with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
+	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", size);
+	exit(1);
+    }
+}
 
 KfsClient::KfsClient()
 {
@@ -260,7 +286,7 @@ KfsClient::VerifyDataChecksums(const char *pathname, const vector<uint32_t> &che
 }
 
 bool
-KfsClient::VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t numBytes)
+KfsClient::VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes)
 {
     return mImpl->VerifyDataChecksums(fd, offset, buf, numBytes);
 }
@@ -344,14 +370,14 @@ KfsClient::Truncate(int fd, off_t offset)
 }
 
 int 
-KfsClient::GetDataLocation(const char *pathname, off_t start, size_t len,
+KfsClient::GetDataLocation(const char *pathname, off_t start, off_t len,
                            std::vector< std::vector <std::string> > &locations)
 {
     return mImpl->GetDataLocation(pathname, start, len, locations);
 }
 
 int 
-KfsClient::GetDataLocation(int fd, off_t start, size_t len,
+KfsClient::GetDataLocation(int fd, off_t start, off_t len,
                            std::vector< std::vector <std::string> > &locations)
 {
     return mImpl->GetDataLocation(fd, start, len, locations);
@@ -1397,7 +1423,7 @@ KfsClientImpl::Truncate(int fd, off_t offset)
 }
 
 int
-KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
+KfsClientImpl::GetDataLocation(const char *pathname, off_t start, off_t len,
                            vector< vector <string> > &locations)
 {
     MutexLock l(&mMutex);
@@ -1422,14 +1448,14 @@ KfsClientImpl::GetDataLocation(const char *pathname, off_t start, size_t len,
 }
 
 int
-KfsClientImpl::GetDataLocation(int fd, off_t start, size_t len,
+KfsClientImpl::GetDataLocation(int fd, off_t start, off_t len,
                                vector< vector <string> > &locations)
 {
     MutexLock l(&mMutex);
 
     int res;
     // locate each chunk and get the hosts that are storing the chunk.
-    for (size_t pos = start; pos < start + len; pos += KFS::CHUNKSIZE) {
+    for (off_t pos = start; pos < start + len; pos += KFS::CHUNKSIZE) {
         ChunkAttr *chunkAttr;
         int chunkNum = pos / KFS::CHUNKSIZE;
 
@@ -2111,6 +2137,7 @@ struct RespondingServer2 {
             return -1;
         }
 
+	// OFF_TYPE_CAST: off_t casted to ssize_t.
         return sop.size;
     }
 };
@@ -2777,7 +2804,7 @@ KfsClientImpl::EnumerateBlocks(const char *pathname)
 	return -1;
     }
 
-    ssize_t filesize = 0;
+    off_t filesize = 0;
 
     for (vector<ChunkLayoutInfo>::const_iterator i = lop.chunks.begin();
          i != lop.chunks.end(); ++i) {
@@ -2854,7 +2881,7 @@ KfsClientImpl::VerifyDataChecksums(const char *pathname, const vector<uint32_t> 
 }    
 
 bool
-KfsClientImpl::VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t numBytes)
+KfsClientImpl::VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes)
 {
     MutexLock l(&mMutex);
     vector<uint32_t> checksums;
@@ -2867,7 +2894,7 @@ KfsClientImpl::VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t
     boost::scoped_array<char> tempBuf;
 
     tempBuf.reset(new char[CHECKSUM_BLOCKSIZE]);
-    for (off_t i = 0; i < (off_t) numBytes; i += CHECKSUM_BLOCKSIZE) {
+    for (off_t i = 0; i < numBytes; i += CHECKSUM_BLOCKSIZE) {
         uint32_t bytesToCopy = min(CHECKSUM_BLOCKSIZE, (uint32_t) (numBytes - i));
         if (bytesToCopy != CHECKSUM_BLOCKSIZE)
             memset(tempBuf.get(), 0, CHECKSUM_BLOCKSIZE);

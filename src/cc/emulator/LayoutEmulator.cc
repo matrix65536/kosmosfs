@@ -159,6 +159,9 @@ void LayoutEmulator::Parse(const char *line, bool addChunksToReplicationChecker)
         }
         ChunkServerEmulator *c = (ChunkServerEmulator *) ((*j).get());
         UpdateChunkToServerMapping(cid, c);
+
+	// OFF_TYPE_CAST: off_t casted to size_t (twice).
+	// Should be fine though since 'chunksize' contains single chunk size.
         c->HostingChunk(cid, chunksize);
         mChunkSize[cid].push_back(chunksize);
     }

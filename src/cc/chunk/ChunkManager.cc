@@ -869,6 +869,8 @@ ChunkManager::WriteChunk(WriteOp *op)
         // eat away the stuff at the beginning, so that we write out
         // exactly where we were asked from.
         off_t extra = op->offset - OffsetToChecksumBlockStart(op->offset);
+	
+	// OFF_TYPE_CAST: off_t casted to int.
         if (extra > 0)
             op->dataBuf->Consume(extra);
     }
