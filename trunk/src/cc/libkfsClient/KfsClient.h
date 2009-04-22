@@ -172,7 +172,7 @@ public:
     /// Helper variety of verifying checksums: given a region of a
     /// file, compute the checksums and verify them.  This is useful
     /// for testing purposes.
-    bool VerifyDataChecksums(int fd, off_t offset, const char *buf, size_t numBytes);
+    bool VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes);
 
     ///
     /// Create a file which is specified by a complete path.
@@ -285,10 +285,10 @@ public:
     /// @param[out] locations	The location(s) of various chunks
     /// @retval status: 0 on success; -errno otherwise
     ///
-    int GetDataLocation(const char *pathname, off_t start, size_t len,
+    int GetDataLocation(const char *pathname, off_t start, off_t len,
                         std::vector< std::vector <std::string> > &locations);
 
-    int GetDataLocation(int fd, off_t start, size_t len,
+    int GetDataLocation(int fd, off_t start, off_t len,
                         std::vector< std::vector <std::string> > &locations);
 
     ///
@@ -391,6 +391,8 @@ public:
     }
 
     KfsClientPtr GetClient() {
+	// This HAS to be inside .h file!
+	checkClientOffSize(sizeof(off_t));
         return mDefaultClient;
     }
 
@@ -398,7 +400,11 @@ public:
     /// @param[in] propFile that describes where the server is and
     /// other client configuration info.
     ///
-    KfsClientPtr GetClient(const char *propFile);
+    KfsClientPtr GetClient(const char *propFile) {
+	// This HAS to be inside .h file!
+	checkClientOffSize(sizeof(off_t));
+	return internalGetClient(propFile);
+    }
 
     ///
     /// Get the client object corresponding to the specified
@@ -408,7 +414,16 @@ public:
     /// @retval if connection to metaserver succeeds, a client object
     /// that is "ready" for use; NULL if there was an error
     ///
-    KfsClientPtr GetClient(const std::string metaServerHost, int metaServerPort);
+    KfsClientPtr GetClient(const std::string metaServerHost, int metaServerPort) {
+	// This HAS to be inside .h file!
+	checkClientOffSize(sizeof(off_t));
+	return internalGetClient(metaServerHost, metaServerPort);
+    }
+    
+    private:
+	static void checkClientOffSize(size_t size);
+	KfsClientPtr internalGetClient(const std::string metaServerHost, int metaServerPort);
+	KfsClientPtr internalGetClient(const char *propFile);
 };
 
 

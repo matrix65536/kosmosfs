@@ -27,6 +27,9 @@
 
 #include "Globals.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 using namespace KFS::libkfsio;
 
 Globals_t & KFS::libkfsio::globals()
@@ -45,6 +48,15 @@ KFS::libkfsio::InitGlobals()
 
     if (calledOnce) 
         return;
+
+    // Check if off_t has expected size. Otherwise print an error and exit the whole program!
+    if (sizeof(off_t) != 8)
+    {
+	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %u). "
+	    "You need to recompile KFS with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
+	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", sizeof(off_t));
+	    exit(1);
+    }
 
     calledOnce = true;
 

@@ -101,6 +101,8 @@ Replicator::HandleStartDone(int code, void *data)
     }
 
 
+    // OFF_TYPE_CAST: off_t casted to size_t.
+    // Should be fine though since 'chunkSize' contains single chunk size.
     mChunkSize = mChunkMetadataOp.chunkSize;
     mChunkVersion = mChunkMetadataOp.chunkVersion;
 
