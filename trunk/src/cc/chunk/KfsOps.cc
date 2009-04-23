@@ -1111,6 +1111,12 @@ ReadOp::Execute()
 {
     UpdateCounter(CMD_READ);
 
+    if (numBytes > CHUNKSIZE) {
+        status = -EINVAL;
+        gLogger.Submit(this);
+        return;
+    }
+   
     SET_HANDLER(this, &ReadOp::HandleChunkMetaReadDone);
     if (gChunkManager.ReadChunkMetadata(chunkId, this) < 0) {
         status = -EINVAL;
