@@ -340,6 +340,8 @@ parseHandlerRead(Properties &prop, KfsOp **c)
     rc->chunkVersion = prop.getValue("Chunk-version", (int64_t) -1);
     rc->offset = prop.getValue("Offset", (off_t) 0);
     rc->numBytes = prop.getValue("Num-bytes", (long long) 0);
+    if (rc->numBytes > CHUNKSIZE)
+        rc->numBytes = 131072;
     *c = rc;
 
     return 0;
