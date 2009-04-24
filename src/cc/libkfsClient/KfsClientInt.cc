@@ -706,6 +706,7 @@ KfsClientImpl::Stat(const string & pathname, KfsFileStat &result, bool computeFi
     result.atime = kfsattr.crtime.tv_sec;
     result.mtime = kfsattr.mtime.tv_sec;
     result.ctime = kfsattr.ctime.tv_sec;
+    result.replication = kfsattr.numReplicas;
     
     return 0;
 }

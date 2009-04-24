@@ -225,8 +225,9 @@ struct KfsFileStat
     time_t atime;
     time_t mtime;
     time_t ctime;
+    int16_t replication;
 
-    KfsFileStat(): mode(0), size(0), atime(0), mtime(0), ctime(0) {}
+    KfsFileStat(): mode(0), size(0), atime(0), mtime(0), ctime(0), replication(0) {}
     
     // This function needs to be in .h file, in case client uses wrong compilation options:
     void convert(struct stat & std_stat)
@@ -235,6 +236,14 @@ struct KfsFileStat
 	// if compiling with wrong length of st_size field
 	// on 32 bit architecture!
 	safeConvert(std_stat, std_stat.st_size);
+    }
+    
+    // And second function. If, for any reason, struct stat's 'size' field
+    // has correct length, we want to make sure, that off_t has correct length as well.
+    void fooOffLengthCheck_t(off_t & arg)
+    {
+	struct stat foo;
+	saveConvert(foo, arg);
     }
     
     private:
