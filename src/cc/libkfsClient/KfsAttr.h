@@ -243,7 +243,7 @@ struct KfsFileStat
     void fooOffLengthCheck_t(off_t & arg)
     {
 	struct stat foo;
-	saveConvert(foo, arg);
+	safeConvert(foo, arg);
     }
     
     private:
