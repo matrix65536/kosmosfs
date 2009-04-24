@@ -708,7 +708,7 @@ getTimeString(time_t time, char *buf, int bufLen)
 }
 
 static void
-printFileInfo(const string &filename, time_t mtime, off_t filesize, bool humanReadable, bool timeInSecs)
+printFileInfo(const string &filename, time_t mtime, kfsOff_t filesize, bool humanReadable, bool timeInSecs)
 {
     char timeBuf[256];
 
@@ -777,10 +777,10 @@ doDirListPlusAttr(KfsClientPtr kfsClient, string kfsdirname, bool humanReadable,
     vector<KfsFileAttr>::size_type i;
 
     if (kfsClient->IsFile(kfsdirname)) {
-        struct stat statInfo;
+        KfsFileStat statInfo;
 
         kfsClient->Stat(kfsdirname, statInfo);
-        printFileInfo(kfsdirname, statInfo.st_mtime, statInfo.st_size, humanReadable, timeInSecs);
+        printFileInfo(kfsdirname, statInfo.mtime, statInfo.size, humanReadable, timeInSecs);
         return 0;
     }
     if ((res = kfsClient->ReaddirPlus(kfsdirname, fileInfo)) < 0) {

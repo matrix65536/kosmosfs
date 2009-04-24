@@ -116,8 +116,8 @@ DoCat(const char *pathname)
     const int mByte = 1024 * 1024;
     char dataBuf[mByte];
     int res, fd;    
-    size_t bytesRead = 0;
-    struct stat statBuf;
+    kfsOff_t bytesRead = 0;
+    KfsFileStat statBuf;
 
     fd = gKfsClient->Open(pathname, O_RDONLY);
     if (fd < 0) {
@@ -133,7 +133,7 @@ DoCat(const char *pathname)
             break;
         cout << dataBuf;
         bytesRead += res;
-        if (bytesRead >= (size_t) statBuf.st_size)
+        if (bytesRead >= statBuf.size)
             break;
     }
     gKfsClient->Close(fd);

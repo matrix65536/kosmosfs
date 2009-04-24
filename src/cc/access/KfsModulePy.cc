@@ -761,7 +761,7 @@ build_path(PyObject *cwd, const char *input)
 static PyObject *
 kfs_cd(PyObject *pself, PyObject *args)
 {
-	struct stat s;
+	KfsFileStat s;
 	kfs_Client *self = (kfs_Client *)pself;
 	char *patharg;
 
@@ -774,7 +774,7 @@ kfs_cd(PyObject *pself, PyObject *args)
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
 	}
-	if (!S_ISDIR(s.st_mode)) {
+	if (!S_ISDIR(s.mode)) {
 		PyErr_SetString(PyExc_IOError, strerror(ENOTDIR));
 		return NULL;
 	}

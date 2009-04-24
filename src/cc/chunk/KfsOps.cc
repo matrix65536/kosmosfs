@@ -2228,7 +2228,7 @@ LeaseRelinquishOp::Request(ostringstream &os)
 int
 LeaseRelinquishOp::HandleDone(int code, void *data)
 {
-    KfsOp *op = (KfsOp *) data;
+    KfsOp UNUSED_ATTR *op = (KfsOp *) data;
 
     assert(op == this);
     delete this;
