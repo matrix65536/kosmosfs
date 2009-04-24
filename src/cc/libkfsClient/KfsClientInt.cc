@@ -799,6 +799,9 @@ KfsClientImpl::Create(const string & pathname, int numReplicas, bool exclusive)
 {
     MutexLock l(&mMutex);
 
+    if (numReplicas < 1)
+	return -EINVAL;
+	
     kfsFileId_t parentFid;
     string filename;
     int res = GetPathComponents(pathname, &parentFid, filename);
@@ -906,6 +909,9 @@ KfsClientImpl::Open(const string & pathname, int openMode, int numReplicas)
 {
     MutexLock l(&mMutex);
 
+    if (numReplicas < 1)
+	return -EINVAL;
+
     kfsFileId_t parentFid;
     string filename;
     int res = GetPathComponents(pathname, &parentFid, filename);
@@ -1005,6 +1011,9 @@ int
 KfsClientImpl::Truncate(int fd, off_t offset)
 {
     MutexLock l(&mMutex);
+    
+    if (offset  < 0)
+	return -EINVAL;
 
     if (!valid_fd(fd))
 	return -EBADF;
@@ -1051,6 +1060,9 @@ KfsClientImpl::GetDataLocation(const string & pathname, off_t start, off_t len,
 {
     MutexLock l(&mMutex);
 
+    if (start < 0 || len < 1)
+	return -EINVAL;
+
     int fd;
 
     // Non-existent
@@ -1075,6 +1087,9 @@ KfsClientImpl::GetDataLocation(int fd, off_t start, off_t len,
                                vector< vector <string> > &locations)
 {
     MutexLock l(&mMutex);
+
+    if (start < 0 || len < 1)
+	return -EINVAL;
 
     int res;
     // locate each chunk and get the hosts that are storing the chunk.
@@ -1125,6 +1140,9 @@ int16_t
 KfsClientImpl::SetReplicationFactor(const string & pathname, int16_t numReplicas)
 {
     MutexLock l(&mMutex);
+
+    if (numReplicas < 1)
+	return -EINVAL;
 
     int res, fd;
 
@@ -1183,7 +1201,11 @@ KfsClientImpl::Seek(int fd, off_t offset, int whence)
 	return (off_t) -EINVAL;
     }
 
+    if (newOff < 0) return (off_t) -EINVAL;
+    // TODO: Should we allow Seeking beyond file's end?
+	
     int32_t chunkNum = newOff / KFS::CHUNKSIZE;
+    
     // If we are changing chunks, we need to reset the socket so that
     // it eventually points to the right place
     if (pos->chunkNum != chunkNum) {
@@ -2508,6 +2530,8 @@ KfsClientImpl::VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t 
     MutexLock l(&mMutex);
     vector<uint32_t> checksums;
 
+    if (offset < 0 || numBytes < 1) return false;
+    
     if (FdAttr(fd)->isDirectory) {
         cout << "Can't verify checksums on a directory" << endl;
         return false;
