@@ -97,7 +97,7 @@ void dirListPlusAttr(const string &kfspathname)
 
     KFS_LOG_VA_INFO("Done getting replication factor for all entries on %s", kfspathname.c_str());
 
-    struct stat statbuf;
+    KfsFileStat statbuf;
     uint64_t dirsz = 0;
 
     for (uint32_t i = 0; i < fattrs.size(); i++) {
@@ -106,7 +106,7 @@ void dirListPlusAttr(const string &kfspathname)
         if (gKfsClient->IsFile(abspath)) {
             int res = gKfsClient->Stat(abspath, statbuf);
             if (res == 0)
-                dirsz += statbuf.st_size;
+                dirsz += statbuf.size;
         }
     }
 

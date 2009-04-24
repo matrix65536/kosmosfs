@@ -63,7 +63,7 @@ main(int argc, char **argv)
     bool help = false;
     bool verboseLogging = false;
     char optchar;
-    struct stat statInfo;
+    KfsFileStat statInfo;
 
     KFS::tools::getEnvServer(serverHost, port);
     
@@ -123,7 +123,7 @@ main(int argc, char **argv)
 
     int retval;
 
-    if (!S_ISDIR(statInfo.st_mode)) {
+    if (!S_ISDIR(statInfo.mode)) {
 	retval = RestoreFile(kfsClient, kfsPath, localPath);
     } else {
         retval = RestoreDir(kfsClient, kfsPath, localPath);

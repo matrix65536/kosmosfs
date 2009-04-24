@@ -63,7 +63,7 @@ main(int argc, char **argv)
     int port = -1;
     bool help = false;
     char optchar;
-    struct stat statInfo;
+    KfsFileStat statInfo;
 
     while ((optchar = getopt(argc, argv, "hp:s:")) != -1) {
         switch (optchar) {
@@ -163,7 +163,7 @@ main(int argc, char **argv)
             
     // Determine the file-size
     gKfsClient->Stat(tempFn, statInfo);
-    long sz = statInfo.st_size;
+    kfsOff_t sz = statInfo.size;
 
     if (sz != numBytes) {
         cout << "KFS thinks the file's size is: " << sz << " instead of " << numBytes << endl;

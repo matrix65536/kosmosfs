@@ -537,14 +537,14 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_filesize(
 {
     KfsClient *clnt = (KfsClient *) jptr;
 
-    struct stat result;
+    KfsFileStat result;
     string path;
     setStr(path, jenv, jpath);
     
     if (clnt->Stat(path, result) != 0)
         return -1;
     
-    return result.st_size;
+    return result.size;
 }
 
 jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
@@ -552,7 +552,7 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
 {
     KfsClient *clnt = (KfsClient *) jptr;
 
-    struct stat result;
+    KfsFileStat result;
     string path;
     setStr(path, jenv, jpath);
     
@@ -560,7 +560,7 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
         return -1;
     
     // The expected return value is in ms
-    return ((jlong) result.st_mtime) * 1000;
+    return ((jlong) result.mtime) * 1000;
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_getDataLocation(

@@ -55,13 +55,13 @@ KFS::tools::handleFstat(const vector<string> &args)
 
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
-    struct stat statInfo;
+    KfsFileStat statInfo;
     kfsClient->Stat(args[0], statInfo);
 
     cout << "File: " << args[0] << endl;
-    cout << "ctime: " << statInfo.st_ctime << endl;
-    cout << "mtime: " << statInfo.st_mtime << endl;
-    cout << "Size: " << statInfo.st_size << endl;
+    cout << "ctime: " << statInfo.ctime << endl;
+    cout << "mtime: " << statInfo.mtime << endl;
+    cout << "Size: " << statInfo.size << endl;
 
     return 0;
 }
