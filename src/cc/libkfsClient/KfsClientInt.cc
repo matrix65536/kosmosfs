@@ -190,7 +190,7 @@ KfsClientImpl::Cd(const string & pathname)
 {
     MutexLock l(&mMutex);
 
-    struct stat s;
+    KfsFileStat s;
     string path = build_path(mCwd, pathname);
     int status = Stat(path, s);
 
@@ -199,7 +199,7 @@ KfsClientImpl::Cd(const string & pathname)
 	return -ENOENT;
     }
 
-    if (!S_ISDIR(s.st_mode)) {
+    if (!S_ISDIR(s.mode)) {
 	KFS_LOG_VA_DEBUG("Non-existent dir: %s", pathname.c_str());
 	return -ENOTDIR;
     }
@@ -670,7 +670,7 @@ KfsClientImpl::GetDirSummary(const string & pathname, uint64_t &numFiles, uint64
 }
 
 int
-KfsClientImpl::Stat(const string & pathname, struct stat &result, bool computeFilesize)
+KfsClientImpl::Stat(const string & pathname, KfsFileStat &result, bool computeFilesize)
 {
     MutexLock l(&mMutex);
 
@@ -701,12 +701,12 @@ KfsClientImpl::Stat(const string & pathname, struct stat &result, bool computeFi
 
     KFS_LOG_VA_DEBUG("Size of %s is %d", pathname.c_str(), kfsattr.fileSize);
 
-    memset(&result, 0, sizeof (struct stat));
-    result.st_mode = kfsattr.isDirectory ? S_IFDIR : S_IFREG;
-    result.st_size = kfsattr.fileSize;
-    result.st_atime = kfsattr.crtime.tv_sec;
-    result.st_mtime = kfsattr.mtime.tv_sec;
-    result.st_ctime = kfsattr.ctime.tv_sec;
+    result.mode = kfsattr.isDirectory ? S_IFDIR : S_IFREG;
+    result.size = kfsattr.fileSize;
+    result.atime = kfsattr.crtime.tv_sec;
+    result.mtime = kfsattr.mtime.tv_sec;
+    result.ctime = kfsattr.ctime.tv_sec;
+    
     return 0;
 }
 
@@ -715,7 +715,7 @@ KfsClientImpl::Exists(const string & pathname)
 {
     MutexLock l(&mMutex);
 
-    struct stat dummy;
+    KfsFileStat dummy;
 
     return Stat(pathname, dummy, false) == 0;
 }
@@ -725,12 +725,12 @@ KfsClientImpl::IsFile(const string & pathname)
 {
     MutexLock l(&mMutex);
 
-    struct stat statInfo;
+    KfsFileStat statInfo;
 
     if (Stat(pathname, statInfo, false) != 0)
 	return false;
     
-    return S_ISREG(statInfo.st_mode);
+    return S_ISREG(statInfo.mode);
 }
 
 bool
@@ -738,12 +738,12 @@ KfsClientImpl::IsDirectory(const string & pathname)
 {
     MutexLock l(&mMutex);
 
-    struct stat statInfo;
+    KfsFileStat statInfo;
 
     if (Stat(pathname, statInfo, false) != 0)
 	return false;
     
-    return S_ISDIR(statInfo.st_mode);
+    return S_ISDIR(statInfo.mode);
 }
 
 int
@@ -2391,7 +2391,7 @@ KfsClientImpl::RelinquishLease(kfsChunkId_t chunkId)
 int
 KfsClientImpl::EnumerateBlocks(const string & pathname)
 {
-    struct stat s;
+    KfsFileStat s;
     int res, fte;
 
     MutexLock l(&mMutex);
@@ -2402,7 +2402,7 @@ KfsClientImpl::EnumerateBlocks(const string & pathname)
         return -ENOENT;
     }
 
-    if (S_ISDIR(s.st_mode)) {
+    if (S_ISDIR(s.mode)) {
         cout << "Path: " << pathname << " is a directory" << endl;
         return -EISDIR;
     }
@@ -2479,7 +2479,7 @@ bool KfsClientImpl::GetDataChecksums(const ServerLocation &loc,
 bool
 KfsClientImpl::VerifyDataChecksums(const string & pathname, const vector<uint32_t> &checksums)
 {
-    struct stat s;
+    KfsFileStat s;
     int res, fte;
 
     MutexLock l(&mMutex);
@@ -2490,7 +2490,7 @@ KfsClientImpl::VerifyDataChecksums(const string & pathname, const vector<uint32_
         return false;
     }
 
-    if (S_ISDIR(s.st_mode)) {
+    if (S_ISDIR(s.mode)) {
         cout << "Path: " << pathname << " is a directory" << endl;
         return false;
     }

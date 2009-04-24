@@ -457,7 +457,7 @@ public:
     /// file is computed and the value is returned in result.st_size
     /// @retval 0 if stat was successful; -errno otherwise
     ///
-    int Stat(const std::string & pathname, struct stat &result, bool computeFilesize = true);
+    int Stat(const std::string & pathname, KfsFileStat &result, bool computeFilesize = true);
 
     ///
     /// Helper APIs to check for the existence of (1) a path, (2) a
