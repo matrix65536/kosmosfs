@@ -32,10 +32,12 @@
 
 extern "C" {
 #include <sys/time.h>
+#include <sys/stat.h>
 }
 
 #include <string>
 #include <vector>
+
 using std::string;
 using std::vector;
 
@@ -58,26 +60,14 @@ struct ChunkAttr {
     /// did we request an allocation for this chunk?
     bool didAllocation;
     /// what is the size of this chunk
-    off_t	chunkSize;
+    kfsOff_t	chunkSize;
     ChunkAttr(): chunkId(-1), chunkVersion(-1), didAllocation(false),
                  chunkSize(0) { }
 
     // during reads, if we can't get data from a server, we avoid it
     // and look elsewhere.  when we avoid it, we take the server out
     // of the list of candidates.
-    void AvoidServer(ServerLocation &loc) {
-        std::vector<ServerLocation>::iterator iter;
-
-        iter = std::find(chunkServerLoc.begin(), chunkServerLoc.end(), loc);
-        if (iter != chunkServerLoc.end())
-            chunkServerLoc.erase(iter);
-
-        if (chunkServerLoc.size() == 0) {
-            // all the servers we could talk to are gone; so, we need
-            // to re-figure where the data is.
-            chunkId = -1;
-        }
-    }
+    void AvoidServer(ServerLocation &loc);
 };
 
 ///
@@ -92,7 +82,7 @@ struct KfsServerAttr {
     /// how many chunks does it have
     long long	chunkCount;
     /// server keeps a hint and will tell us....
-    off_t	fileSize; 
+    kfsOff_t	fileSize; 
     /// is this a directory?
     bool	isDirectory;
     /// what is the deg. of replication for this file
@@ -112,7 +102,7 @@ struct FileAttr {
     /// is this a directory?
     bool	isDirectory;
     /// the size of this file in bytes---computed value
-    off_t	fileSize;
+    kfsOff_t	fileSize;
     
     /// how many chunks does it have
     long long	chunkCount;
@@ -168,7 +158,7 @@ struct KfsFileAttr {
     /// is this a directory?
     bool	isDirectory;
     /// the size of this file in bytes
-    off_t	fileSize;
+    kfsOff_t	fileSize;
     /// what is the deg. of replication for this file
     int16_t numReplicas;
 
@@ -222,10 +212,33 @@ struct FileChunkInfo {
     int16_t numReplicas;
 
     /// file-offset corresponding to the last chunk
-    off_t lastChunkOffset;
+    kfsOff_t lastChunkOffset;
 
     /// info about a single chunk: typically the last chunk of the file
     ChunkAttr cattr;
+};
+
+struct KfsFileStat
+{
+    uint32_t mode;
+    kfsOff_t size;
+    time_t atime;
+    time_t mtime;
+    time_t ctime;
+
+    KfsFileStat(): mode(0), size(0), atime(0), mtime(0), ctime(0) {}
+    
+    // This function needs to be in .h file, in case client uses wrong compilation options:
+    void convert(struct stat & std_stat)
+    {
+	// This is done this weird way to get linker errors
+	// if compiling with wrong length of st_size field
+	// on 32 bit architecture!
+	safeConvert(std_stat, std_stat.st_size);
+    }
+    
+    private:
+	void safeConvert(struct stat & std_stat, kfsOff_t & std_size);
 };
 
 }

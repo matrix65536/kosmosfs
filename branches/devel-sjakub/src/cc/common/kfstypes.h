@@ -42,6 +42,8 @@ extern "C" {
 
 namespace KFS {
 
+typedef int64_t	kfsOff_t;
+
 typedef long long seq_t;        //!< request sequence no. for logging
 typedef long long seqid_t;      //!< sequence number id's for file/chunks
 typedef seqid_t fid_t;          //!< file ID

@@ -142,7 +142,17 @@ public:
     /// file is computed and the value is returned in result.st_size
     /// @retval 0 if stat was successful; -errno otherwise
     ///
-    int Stat(const std::string & pathname, struct stat &result, bool computeFilesize = true);
+    int Stat(const std::string & pathname, KfsFileStat &result, bool computeFilesize = true);
+    
+    // This function needs to be in .h file, in case client uses wrong compilation options
+    // which result in wrong length of st_size field on 32 bit architecture!
+    int Stat(const std::string & pathname, struct stat &result, bool computeFilesize = true)
+    {
+	KfsFileStat kfsStat;
+	int ret = Stat(pathname, kfsStat, computeFilesize);
+	kfsStat.convert(result);
+	return ret;
+    }
 
     ///
     /// Helper APIs to check for the existence of (1) a path, (2) a
@@ -172,7 +182,7 @@ public:
     /// Helper variety of verifying checksums: given a region of a
     /// file, compute the checksums and verify them.  This is useful
     /// for testing purposes.
-    bool VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes);
+    bool VerifyDataChecksums(int fd, kfsOff_t offset, const char *buf, kfsOff_t numBytes);
 
     ///
     /// Create a file which is specified by a complete path.
@@ -255,23 +265,23 @@ public:
     /// relative to whence.
     /// @param[in] whence one of SEEK_CUR, SEEK_SET, SEEK_END
     /// @retval On success, the offset to which the filer
-    /// pointer was moved to; (off_t) -1 on failure.
+    /// pointer was moved to; (kfsOff_t) -1 on failure.
     ///
-    off_t Seek(int fd, off_t offset, int whence);
+    kfsOff_t Seek(int fd, kfsOff_t offset, int whence);
     /// In this version of seek, whence == SEEK_SET
-    off_t Seek(int fd, off_t offset);
+    kfsOff_t Seek(int fd, kfsOff_t offset);
 
     /// Return the current position of the file pointer in the file.
     /// @param[in] fd that corresponds to a previously opened file
     /// @retval value returned is analogous to calling ftell()
-    off_t Tell(int fd);
+    kfsOff_t Tell(int fd);
 
     ///
     /// Truncate a file to the specified offset.
     /// @param[in] fd that corresponds to a previously opened file
     /// @param[in] offset  the offset to which the file should be truncated
     /// @retval status code
-    int Truncate(int fd, off_t offset);
+    int Truncate(int fd, kfsOff_t offset);
 
     ///
     /// Given a starting offset/length, return the location of all the
@@ -285,10 +295,10 @@ public:
     /// @param[out] locations	The location(s) of various chunks
     /// @retval status: 0 on success; -errno otherwise
     ///
-    int GetDataLocation(const std::string & pathname, off_t start, off_t len,
+    int GetDataLocation(const std::string & pathname, kfsOff_t start, kfsOff_t len,
                         std::vector< std::vector <std::string> > &locations);
 
-    int GetDataLocation(int fd, off_t start, off_t len,
+    int GetDataLocation(int fd, kfsOff_t start, kfsOff_t len,
                         std::vector< std::vector <std::string> > &locations);
 
     ///
@@ -390,14 +400,9 @@ public:
         mDefaultClient = clnt;
     }
 
-    KfsClientPtr SetDefaultClient(const std::string metaServerHost, int metaServerPort) {                                                                                     
-        mDefaultClient = GetClient(metaServerHost, metaServerPort);                                                                                                           
-        return mDefaultClient;                                                                                                                                                
-    }
+    KfsClientPtr SetDefaultClient(const std::string metaServerHost, int metaServerPort);
     
     KfsClientPtr GetClient() {
-	// This HAS to be inside .h file!
-	checkClientOffSize(sizeof(off_t));
         return mDefaultClient;
     }
 
@@ -405,11 +410,7 @@ public:
     /// @param[in] propFile that describes where the server is and
     /// other client configuration info.
     ///
-    KfsClientPtr GetClient(const std::string & propFile) {
-	// This HAS to be inside .h file!
-	checkClientOffSize(sizeof(off_t));
-	return internalGetClient(propFile);
-    }
+    KfsClientPtr GetClient(const std::string & propFile);
 
     ///
     /// Get the client object corresponding to the specified
@@ -419,16 +420,7 @@ public:
     /// @retval if connection to metaserver succeeds, a client object
     /// that is "ready" for use; NULL if there was an error
     ///
-    KfsClientPtr GetClient(const std::string & metaServerHost, int metaServerPort) {
-	// This HAS to be inside .h file!
-	checkClientOffSize(sizeof(off_t));
-	return internalGetClient(metaServerHost, metaServerPort);
-    }
-    
-    private:
-	static void checkClientOffSize(size_t size);
-	KfsClientPtr internalGetClient(const std::string & metaServerHost, int metaServerPort);
-	KfsClientPtr internalGetClient(const std::string & propFile);
+    KfsClientPtr GetClient(const std::string & metaServerHost, int metaServerPort);
 };
 
 

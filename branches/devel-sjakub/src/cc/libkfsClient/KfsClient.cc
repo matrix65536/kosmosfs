@@ -80,7 +80,14 @@ KFS::getKfsClientFactory()
 }
 
 KfsClientPtr
-KfsClientFactory::internalGetClient(const string & propFile)
+KfsClientFactory::SetDefaultClient(const std::string metaServerHost, int metaServerPort)
+{
+    mDefaultClient = GetClient(metaServerHost, metaServerPort);
+    return mDefaultClient;
+}
+    
+KfsClientPtr
+KfsClientFactory::GetClient(const string & propFile)
 {
     bool verbose = false;
 #ifdef DEBUG
@@ -91,25 +98,16 @@ KfsClientFactory::internalGetClient(const string & propFile)
 	return clnt;
     }
 
-    return internalGetClient(theProps().getValue("metaServer.name", ""),
+    return GetClient(theProps().getValue("metaServer.name", ""),
                      theProps().getValue("metaServer.port", -1));
 
 }
 
 KfsClientPtr
-KfsClientFactory::internalGetClient(const std::string & metaServerHost, int metaServerPort)
+KfsClientFactory::GetClient(const std::string & metaServerHost, int metaServerPort)
 {
     vector<KfsClientPtr>::iterator iter;
     ServerLocation loc(metaServerHost, metaServerPort);
-
-    // Check if off_t has expected size. Otherwise print an error and exit the whole program!
-    if (sizeof(off_t) != 8)
-    {
-	KFS_LOG_VA_FATAL("Error! 'off_t' type needs to be 8 bytes long (instead of %zu). "
-	    "You need to recompile KFS with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
-	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES", sizeof(off_t));
-	exit(-1);
-    }
 
     iter = find_if(mClients.begin(), mClients.end(), MatchingServer(loc));
     if (iter != mClients.end())
@@ -127,22 +125,7 @@ KfsClientFactory::internalGetClient(const std::string & metaServerHost, int meta
 
     return clnt;
 }
-
-void 
-KfsClientFactory::checkClientOffSize(size_t size)
-{
-    // This should be called from code in .h file inherited by the client,
-    // so we could test if program using KFS has correct size of off_t.
-    // Check if off_t has expected size. Otherwise print an error and exit the whole program!
-    if (size != 8)
-    {
-	KFS_LOG_VA_FATAL("Error! 'off_t' type needs to be 8 bytes long (instead of %zu). "
-	    "You need to recompile your program with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
-	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES", size);
-	exit(-1);
-    }
-}
-
+    
 KfsClient::KfsClient()
 {
     mImpl = new KfsClientImpl();
@@ -229,7 +212,7 @@ KfsClient::GetDirSummary(const string & pathname, uint64_t &numFiles, uint64_t &
 }
 
 int 
-KfsClient::Stat(const string & pathname, struct stat &result, bool computeFilesize)
+KfsClient::Stat(const string & pathname, KfsFileStat &result, bool computeFilesize)
 {
     return mImpl->Stat(pathname, result, computeFilesize);
 }
@@ -265,7 +248,7 @@ KfsClient::VerifyDataChecksums(const string & pathname, const vector<uint32_t> &
 }
 
 bool
-KfsClient::VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes)
+KfsClient::VerifyDataChecksums(int fd, kfsOff_t offset, const char *buf, kfsOff_t numBytes)
 {
     return mImpl->VerifyDataChecksums(fd, offset, buf, numBytes);
 }
@@ -324,39 +307,39 @@ KfsClient::Sync(int fd, bool flushOnlyIfHasFullChecksumBlock)
     return mImpl->Sync(fd, flushOnlyIfHasFullChecksumBlock);
 }
 
-off_t 
-KfsClient::Seek(int fd, off_t offset, int whence)
+kfsOff_t 
+KfsClient::Seek(int fd, kfsOff_t offset, int whence)
 {
     return mImpl->Seek(fd, offset, whence);
 }
 
-off_t 
-KfsClient::Seek(int fd, off_t offset)
+kfsOff_t 
+KfsClient::Seek(int fd, kfsOff_t offset)
 {
     return mImpl->Seek(fd, offset, SEEK_SET);
 }
 
-off_t 
+kfsOff_t 
 KfsClient::Tell(int fd)
 {
     return mImpl->Tell(fd);
 }
 
 int 
-KfsClient::Truncate(int fd, off_t offset)
+KfsClient::Truncate(int fd, kfsOff_t offset)
 {
     return mImpl->Truncate(fd, offset);
 }
 
 int 
-KfsClient::GetDataLocation(const string & pathname, off_t start, off_t len,
+KfsClient::GetDataLocation(const string & pathname, kfsOff_t start, kfsOff_t len,
                            std::vector< std::vector <std::string> > &locations)
 {
     return mImpl->GetDataLocation(pathname, start, len, locations);
 }
 
 int 
-KfsClient::GetDataLocation(int fd, off_t start, off_t len,
+KfsClient::GetDataLocation(int fd, kfsOff_t start, kfsOff_t len,
                            std::vector< std::vector <std::string> > &locations)
 {
     return mImpl->GetDataLocation(fd, start, len, locations);
