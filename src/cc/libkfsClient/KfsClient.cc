@@ -126,10 +126,10 @@ KfsClientFactory::internalGetClient(const std::string metaServerHost, int metaSe
     // Check if off_t has expected size. Otherwise print an error and exit the whole program!
     if (sizeof(off_t) != 8)
     {
-	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %u). "
+	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %d). "
 	    "You need to recompile KFS with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
-	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", sizeof(off_t));
-	exit(1);
+            "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", (int) sizeof(off_t));
+	exit(-1);
     }
 
     iter = find_if(mClients.begin(), mClients.end(), MatchingServer(loc));
@@ -157,10 +157,10 @@ KfsClientFactory::checkClientOffSize(size_t size)
     // Check if off_t has expected size. Otherwise print an error and exit the whole program!
     if (size != 8)
     {
-	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %u). "
+	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %d). "
 	    "You need to recompile your program with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
-	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", size);
-	exit(1);
+            "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", (int) size);
+	exit(-1);
     }
 }
 
