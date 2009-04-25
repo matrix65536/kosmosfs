@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/14
 // Author: Sriram Rao
@@ -26,19 +26,17 @@
 
 #include "Globals.h"
 #include "NetConnection.h"
-#include "Globals.h"
+#include "kfsutils.h"
 
 using namespace KFS;
 using namespace KFS::libkfsio;
 
-void NetConnection::HandleReadEvent(bool isSystemOverloaded)
+void NetConnection::HandleReadEvent()
 {
-    NetConnectionPtr conn;
-    TcpSocket *sock;
-    int nread;
-
-    if (mListenOnly) {
-        sock = mSock->Accept();
+    if (! IsGood()) {
+        KFS_LOG_DEBUG("Read event ignored: socket closed");
+    } else if (mListenOnly) {
+        TcpSocket* const sock = mSock->Accept();
 #ifdef DEBUG
         if (sock == NULL) {
             KFS_LOG_VA_DEBUG("# of open-fd's: disk=%d, net=%d",
@@ -46,117 +44,70 @@ void NetConnection::HandleReadEvent(bool isSystemOverloaded)
                              globals().ctrOpenNetFds.GetValue());
         }
 #endif
-        if (sock == NULL) 
-            return;
-        conn.reset(new NetConnection(sock, NULL));
-        mCallbackObj->HandleEvent(EVENT_NEW_CONNECTION, (void *) &conn);
-    }
-    else {
-        if (isSystemOverloaded && (!mEnableReadIfOverloaded))
-            return;
-
-        if (mInBuffer == NULL) {
-            mInBuffer = new IOBuffer();
+        if (sock) {
+            NetConnectionPtr conn(new NetConnection(sock, NULL));
+            conn->mTryWrite = true; // Should be connected, and good to write.
+            mCallbackObj->HandleEvent(EVENT_NEW_CONNECTION, (void *) &conn);
+            conn->Update();
         }
-        mLastActivityTime = time(0);
-
-        // XXX: Need to control how much we read...
-        nread = mInBuffer->Read(mSock->GetFd());
+    } else if (IsReadReady()) {
+        const int nread = mInBuffer.Read(mSock->GetFd());
         if (nread == 0) {
             KFS_LOG_DEBUG("Read 0 bytes...connection dropped");
             mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
         } else if (nread > 0) {
-            mCallbackObj->HandleEvent(EVENT_NET_READ, (void *) mInBuffer);
+            mCallbackObj->HandleEvent(EVENT_NET_READ, (void *)&mInBuffer);
         }
     }
+    Update();
 }
 
 void NetConnection::HandleWriteEvent()
 {
-    int nwrote;
-    
-    if (mDoingNonblockingConnect) {
-        // if non-blocking connect was set, then the first callback
-        // signaling write-ready means that connect() has succeeded.
-        mDoingNonblockingConnect = false;
-        mLastFlushResult = 0;
-        return;
+    if (IsWriteReady() && IsGood()) {
+        const int nwrote = mOutBuffer.Write(mSock->GetFd());
+        if (nwrote <= 0 && nwrote != -EAGAIN && nwrote != -EINTR) {
+            std::string const msg = KFSUtils::SysError(-nwrote);
+            KFS_LOG_VA_DEBUG("Wrote 0 bytes...connection dropped, error: %d",
+                -nwrote, msg.c_str());
+            mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
+        } else if (nwrote > 0) {
+            mCallbackObj->HandleEvent(EVENT_NET_WROTE, (void *)&mOutBuffer);
+        }
+        mTryWrite = mOutBuffer.IsEmpty();
     }
-
-    // clear the value so we can let flushes thru when possible
-    mLastFlushResult = 0;
-
-    if (!IsWriteReady())
-    	return;
-
-    mLastActivityTime = time(0);
-    // XXX: Need to pay attention to mNumBytesOut---that is, write out
-    // only as much as is asked for.
-    nwrote = mOutBuffer->Write(mSock->GetFd());
-    if (nwrote == 0) {
-        KFS_LOG_DEBUG("Wrote 0 bytes...connection dropped");
-        mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
-    } else if (nwrote > 0) {
-        mCallbackObj->HandleEvent(EVENT_NET_WROTE, (void *) mOutBuffer);
-    }
+    mNetManagerEntry.SetConnectPending(false);
+    Update();
 }
 
 void NetConnection::HandleErrorEvent()
 {
     KFS_LOG_DEBUG("Got an error on socket.  Closing connection");
-    mSock->Close();
+    Close();
     mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
+    Update();
 }
 
-bool NetConnection::IsReadReady(bool isSystemOverloaded)
+void NetConnection::HandleTimeoutEvent()
 {
-    if (mInactivityTimeoutSecs > 0) {
-        time_t now = time(0);
-
-        if (now - mLastActivityTime > mInactivityTimeoutSecs) {
-            KFS_LOG_DEBUG("No activity on socket...returning error");
-            mCallbackObj->HandleEvent(EVENT_INACTIVITY_TIMEOUT, NULL);
-            return false;
-        }
+    const int timeOut = GetInactivityTimeout();
+    if (timeOut < 0) {
+        KFS_LOG_VA_DEBUG("Ignoring timeout event, time out value: %d", timeOut);
+    } else {
+        KFS_LOG_DEBUG("No activity on socket...returning error");
+        mCallbackObj->HandleEvent(EVENT_INACTIVITY_TIMEOUT, NULL);
     }
-
-    if (!isSystemOverloaded)
-        return true;
-
-    // under load, this instance variable controls poll state
-    return mEnableReadIfOverloaded;
+    Update();
 }
 
-bool NetConnection::IsWriteReady()
+void NetConnection::Update(bool resetTimer)
 {
-    if (mDoingNonblockingConnect)
-        return true;
-    
-    if (mOutBuffer == NULL)
-    	return false;
-
-    return (mOutBuffer->BytesConsumable() > 0);
+    KFS::libkfsio::globals().netManager.Update(mNetManagerEntry,
+        IsGood() ? mSock->GetFd() : -1, resetTimer);
 }
 
-int NetConnection::GetNumBytesToWrite()
+NetConnection::NetManagerEntry* NetConnection::GetNetMangerEntry(NetManager& manager)
 {
-    // force addition to the poll vector
-    if (mDoingNonblockingConnect)
-        return 1;
-
-    if (!IsGood())
-        // if the socket has been closed, don't add to poll loop
-        return 0;
-
-    if (mOutBuffer == NULL)
-    	return 0;
-
-    return mOutBuffer->BytesConsumable();
+    assert(&manager == &KFS::libkfsio::globals().netManager);
+    return &mNetManagerEntry;
 }
-
-
-bool NetConnection::IsGood()
-{
-    return mSock->IsGood();
-}
-

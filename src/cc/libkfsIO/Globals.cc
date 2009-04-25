@@ -32,10 +32,15 @@
 
 using namespace KFS::libkfsio;
 
+// To make it easy to get globals with gdb.
+static Globals_t* gLibKfsGlobals = 0;
+
 Globals_t & KFS::libkfsio::globals()
 {
-    static Globals_t g;
-    return g;
+    if (! gLibKfsGlobals) {
+        gLibKfsGlobals = new Globals_t();
+    }
+    return *gLibKfsGlobals;
 }
 
 //
@@ -52,9 +57,9 @@ KFS::libkfsio::InitGlobals()
     // Check if off_t has expected size. Otherwise print an error and exit the whole program!
     if (sizeof(off_t) != 8)
     {
-	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %u). "
+	fprintf(stderr, "Error! 'off_t' type needs to be 8 bytes long (instead of %d). "
 	    "You need to recompile KFS with: -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE "
-	    "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", sizeof(off_t));
+                "-D_LARGEFILE64_SOURCE -D_LARGE_FILES\n", (int) sizeof(off_t));
 	    exit(1);
     }
 
@@ -62,8 +67,6 @@ KFS::libkfsio::InitGlobals()
 
     globals().diskManager.Init();
     globals().eventManager.Init();
-
-    globals().netKicker.Init(globals().netManager);
 
     globals().ctrOpenNetFds.SetName("Open network fds");
     globals().ctrOpenDiskFds.SetName("Open disk fds");

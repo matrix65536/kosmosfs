@@ -53,10 +53,7 @@ namespace KFS
 ///
 class ITimeout {
 public:
-    ITimeout() {
-        mIntervalMs = 0;
-        gettimeofday(&mLastCall, NULL);
-    }
+    ITimeout() : mIntervalMs(0), mLastCall(0) { }
     virtual ~ITimeout() { }
     
     /// Specify the interval in milli-seconds at which the timeout
@@ -66,37 +63,22 @@ public:
     }
 
     int GetTimeElapsed() {
+        return (NowMs() - mLastCall);
+    }
+
+    static int64_t NowMs() {
         struct timeval timeNow;
-
         gettimeofday(&timeNow, NULL);
-        return ((timeNow.tv_sec - mLastCall.tv_sec) * 1000 * 1000 +
-                (timeNow.tv_usec - mLastCall.tv_usec)) / 1000;
-
+        return (int64_t(timeNow.tv_sec) * 1000 + timeNow.tv_usec / 1000);
     }
 
     /// Whenever a timer expires (viz., a call to select returns),
     /// this method gets invoked.  Depending on the time-interval
     /// specified, the timeout is appropriately invoked.
-    void TimerExpired() {
-        int timeMs;
-        struct timeval timeNow;
-
-        if (mIntervalMs == 0) {
-            // aperiodic timeout.
+    void TimerExpired(int64_t nowMs) {
+        if (mIntervalMs <= 0 || nowMs >= mLastCall + mIntervalMs) {
             Timeout();
-            return;
-        }
-
-        // Periodic timeout.
-        gettimeofday(&timeNow, NULL);
-        timeMs = ((timeNow.tv_sec - mLastCall.tv_sec) * 1000 * 1000 +
-                  (timeNow.tv_usec - mLastCall.tv_usec)) / 1000;
-
-        if (timeMs >= mIntervalMs) {
-            Timeout();
-            // remember the last call time
-            mLastCall.tv_sec = timeNow.tv_sec;
-            mLastCall.tv_usec = timeNow.tv_usec;
+            mLastCall = nowMs;
         }
     }
     
@@ -105,7 +87,7 @@ public:
 protected:
     int		mIntervalMs;
 private:
-    struct timeval 	mLastCall;
+    int64_t 	mLastCall;
 };
 
 }
