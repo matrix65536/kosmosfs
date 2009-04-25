@@ -208,7 +208,7 @@ IOBuffer::~IOBuffer()
 
 }
 
-void IOBuffer::Append(IOBufferDataPtr &buf)
+void IOBuffer::Append(const IOBufferDataPtr &buf)
 {
     mBuf.push_back(buf);
 }
@@ -225,7 +225,7 @@ void IOBuffer::Append(IOBuffer *ioBuf)
     ioBuf->mBuf.clear();
 }
 
-void IOBuffer::Move(IOBuffer *other, int numBytes)
+int IOBuffer::Move(IOBuffer *other, int numBytes)
 {
     list<IOBufferDataPtr>::iterator iter;
     IOBufferDataPtr data, dataCopy;
@@ -255,6 +255,7 @@ void IOBuffer::Move(IOBuffer *other, int numBytes)
         }
         iter = other->mBuf.begin();
     }
+    return bytesMoved;
 }
 
 void IOBuffer::Splice(IOBuffer *other, int offset, int numBytes)
@@ -407,14 +408,13 @@ int IOBuffer::Write(int fd)
 }
 
 int
-IOBuffer::BytesConsumable()
+IOBuffer::BytesConsumable() const
 {
-    list<IOBufferDataPtr>::iterator iter;
-    IOBufferDataPtr data;
+    list<IOBufferDataPtr>::const_iterator iter;
     int numBytes = 0;
 
     for (iter = mBuf.begin(); iter != mBuf.end(); iter++) {
-        data = *iter;
+        const IOBufferDataPtr data = *iter;
         numBytes += data->BytesConsumable();
     }
     return numBytes;
@@ -544,4 +544,15 @@ IOBuffer *IOBuffer::Clone()
     }
 
     return clone;
+}
+
+bool IOBuffer::IsEmpty() const
+{
+    for (list<IOBufferDataPtr>::const_iterator iter = mBuf.begin(); 
+         iter != mBuf.end(); iter++) {
+        const IOBufferDataPtr data = *iter;
+        if (!data->IsEmpty())
+            return false;
+    }
+    return true;
 }

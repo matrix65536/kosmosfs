@@ -84,7 +84,7 @@ public:
 
     /// Return true if we were able to bind to the acceptor port
     bool IsAcceptorStarted() const {
-        return mConn->GetFd() > 0;
+        return mConn->IsGood();
     }
     ///
     /// Event handler to handle incoming connections.  @see KfsCallbackObj

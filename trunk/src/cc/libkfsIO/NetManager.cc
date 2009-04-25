@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/14
 // Author: Sriram Rao
@@ -33,6 +33,7 @@
 #include "Globals.h"
 
 #include "common/log.h"
+#include "kfsutils.h"
 
 using std::mem_fun;
 using std::list;
@@ -40,276 +41,341 @@ using std::list;
 using namespace KFS;
 using namespace KFS::libkfsio;
 
-NetManager::NetManager() : mDiskOverloaded(false), mNetworkOverloaded(false), mMaxOutgoingBacklog(0)
-{
-    pthread_mutexattr_t mutexAttr;
-    int rval;
-
-    rval = pthread_mutexattr_init(&mutexAttr);
-    assert(rval == 0);
-    rval = pthread_mutexattr_settype(&mutexAttr, PTHREAD_MUTEX_RECURSIVE);
-    assert(rval == 0);
-
-    mSelectTimeout.tv_sec = 10;
-    mSelectTimeout.tv_usec = 0;
-}
-
-NetManager::NetManager(const struct timeval &selectTimeout) : 
-    mDiskOverloaded(false), mNetworkOverloaded(false), mMaxOutgoingBacklog(0)
-{
-    mSelectTimeout.tv_sec = selectTimeout.tv_sec;
-    mSelectTimeout.tv_usec = selectTimeout.tv_usec;
-}
+NetManager::NetManager(int timeoutMs)
+    : mRemove(),
+      mTimerWheelBucketItr(mRemove.end()),
+      mCurConnection(0),
+      mCurTimerWheelSlot(0),
+      mConnectionsCount(0),
+      mDiskOverloaded(false),
+      mNetworkOverloaded(false),
+      mIsOverloaded(false),
+      mRunFlag(true),
+      mTimerRunningFlag(false),
+      mTimeoutMs(timeoutMs),
+      mNow(time(0)),
+      mMaxOutgoingBacklog(0),
+      mNumBytesToSend(0),
+      mPoll(*(new FdPoll()))
+{}
 
 NetManager::~NetManager()
 {
-    NetConnectionListIter_t iter;
-    NetConnectionPtr conn;
-    
-    mTimeoutHandlers.clear();
-    mConnections.clear();
+    NetManager::CleanUp();
+    delete &mPoll;
 }
 
 void
 NetManager::AddConnection(NetConnectionPtr &conn)
 {
-    mConnections.push_back(conn);
+    NetConnection::NetManagerEntry* const entry =
+        conn->GetNetMangerEntry(*this);
+    if (! entry) {
+        return;
+    }
+    if (! entry->mAdded) {
+        entry->mTimerWheelSlot = kTimerWheelSize;
+        entry->mListIt = mTimerWheel[kTimerWheelSize].insert(
+            mTimerWheel[kTimerWheelSize].end(), conn);
+        mConnectionsCount++;
+        assert(mConnectionsCount > 0);
+        entry->mAdded = true;
+    }
+    conn->Update();
 }
 
 void
 NetManager::RegisterTimeoutHandler(ITimeout *handler)
 {
+    list<ITimeout *>::iterator iter;
+    for (iter = mTimeoutHandlers.begin(); iter != mTimeoutHandlers.end(); 
+         ++iter) {
+        if (*iter == handler) {
+            return;
+        }
+    }
     mTimeoutHandlers.push_back(handler);
 }
 
 void
 NetManager::UnRegisterTimeoutHandler(ITimeout *handler)
 {
-    list<ITimeout *>::iterator iter;
-    ITimeout *tm;
-
     if (handler == NULL)
         return;
-    
+
+    list<ITimeout *>::iterator iter;
     for (iter = mTimeoutHandlers.begin(); iter != mTimeoutHandlers.end(); 
-         ++iter) {
-        tm = *iter;
-        if (tm == handler) {
-            mUnregisteredTimeoutHandlers.push_back(tm);
+            ++iter) {
+        if (*iter == handler) {
+            // Not not remove list element: this can be called when iterating
+            // trough the list.
+            *iter = 0;
             return;
         }
     }
 }
 
-void
-NetManager::RemoveUnregisteredTimeoutHandlers()
+inline void
+NetManager::UpdateTimer(NetConnection::NetManagerEntry& entry, int timeOut)
 {
-    list<ITimeout *>::iterator iter1, iter2;
-    ITimeout *i1, *i2;
+    assert(entry.mAdded);
 
-    for (iter1 = mUnregisteredTimeoutHandlers.begin(); iter1 != mUnregisteredTimeoutHandlers.end(); ++iter1) {
-        for (iter2 = mTimeoutHandlers.begin(); iter2 != mTimeoutHandlers.end(); ++iter2) {
-            i1 = *iter1;
-            i2 = *iter2;
-            if (i1 == i2) {
-                mTimeoutHandlers.erase(iter2);
-                break;
-            }
-        }
+    int timerWheelSlot;
+    if (timeOut < 0) {
+        timerWheelSlot = kTimerWheelSize;
+    } else if ((timerWheelSlot = mCurTimerWheelSlot +
+            // When the timer is running the effective wheel size "grows" by 1:
+            // leave (move) entries with timeouts >= kTimerWheelSize in (to) the
+            // current slot.
+            std::min((kTimerWheelSize - mTimerRunningFlag ? 0 : 1), timeOut)) >=
+            kTimerWheelSize) {
+        timerWheelSlot -= kTimerWheelSize;
     }
-    mUnregisteredTimeoutHandlers.clear();
+    // This method can be invoked from timeout handler.
+    // Make sure  that the entry doesn't get moved to the end of the current
+    // list, which can be traversed by the timer.
+    if (timerWheelSlot != entry.mTimerWheelSlot) {
+        if (mTimerWheelBucketItr == entry.mListIt) {
+            ++mTimerWheelBucketItr;
+        }
+        mTimerWheel[timerWheelSlot].splice(
+            mTimerWheel[timerWheelSlot].end(),
+            mTimerWheel[entry.mTimerWheelSlot], entry.mListIt);
+        entry.mTimerWheelSlot = timerWheelSlot;
+    }
 }
 
+inline static int CheckFatalSysError(int err, const char* msg)
+{
+    if (err) {
+        std::string const msg = KFSUtils::SysError(err);
+        KFS_LOG_VA_FATAL("%s: %d %s", err, msg.c_str());
+        abort();
+    }
+    return err;
+}
 
+void
+NetManager::Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTimer)
+{
+    if (! entry.mAdded) {
+        return;
+    }
+    assert(*entry.mListIt);
+    NetConnection& conn = **entry.mListIt;
+    assert(fd >= 0 || ! conn.IsGood());
+    // Always check if connection has to be removed: this method always
+    // called before socket fd gets closed.
+    if (! conn.IsGood() || fd < 0) {
+        if (entry.mFd >= 0) {
+            CheckFatalSysError(
+                mPoll.Remove(entry.mFd),
+                "failed to removed fd from poll set"
+            );
+            entry.mFd = -1;
+        }
+        assert(mConnectionsCount > 0 &&
+            entry.mWriteByteCount >= 0 &&
+            entry.mWriteByteCount <= mNumBytesToSend);
+        entry.mAdded = false;
+        mConnectionsCount--;
+        mNumBytesToSend -= entry.mWriteByteCount;
+        if (mTimerWheelBucketItr == entry.mListIt) {
+            ++mTimerWheelBucketItr;
+        }
+        mRemove.splice(mRemove.end(),
+            mTimerWheel[entry.mTimerWheelSlot], entry.mListIt);
+        return;
+    }
+    if (&conn == mCurConnection) {
+        // Defer all updates for the currently dispatched connection until the
+        // end of the event dispatch loop.
+        return;
+    }
+    // Update timer.
+    if (resetTimer) {
+        const int timeOut = conn.GetInactivityTimeout();
+        if (timeOut >= 0) {
+            entry.mExpirationTime = mNow + timeOut;
+        }
+        UpdateTimer(entry, timeOut);
+    }
+    // Update pending send.
+    assert(entry.mWriteByteCount >= 0 &&
+        entry.mWriteByteCount <= mNumBytesToSend);
+    mNumBytesToSend -= entry.mWriteByteCount;
+    entry.mWriteByteCount = std::max(0, conn.GetNumBytesToWrite());
+    mNumBytesToSend += entry.mWriteByteCount;
+    // Update poll set.
+    const bool in  = conn.IsReadReady() &&
+        (! mIsOverloaded || entry.mEnableReadIfOverloaded);
+    const bool out = conn.IsWriteReady() || entry.mConnectPending;
+    if (in != entry.mIn || out != entry.mOut) {
+        assert(fd >= 0);
+        const int op =
+            (in ? FdPoll::kOpTypeIn : 0) + (out ? FdPoll::kOpTypeOut : 0);
+        if (fd != entry.mFd && entry.mFd >= 0) {
+            CheckFatalSysError(
+                mPoll.Remove(entry.mFd),
+                "failed to removed fd from poll set"
+            );
+            entry.mFd = -1;
+        }
+        if (entry.mFd < 0) {
+            if (op && CheckFatalSysError(
+                    mPoll.Add(fd, op, &conn),
+                    "failed to add fd to poll set") == 0) {
+                entry.mFd = fd;
+            }
+        } else {
+            CheckFatalSysError(
+                mPoll.Set(fd, op, &conn),
+                "failed to change pool flags"
+            );
+        }
+        entry.mIn  = in  && entry.mFd >= 0;
+        entry.mOut = out && entry.mFd >= 0;
+    }
+}
 
 void
 NetManager::MainLoop()
 {
-    boost::scoped_array<struct pollfd> pollfds;
-    uint32_t pollFdSize = 1024;
-    int numPollFds, fd, res;
-    NetConnectionPtr conn;
-    NetConnectionListIter_t iter, eltToRemove;
-    int pollTimeoutMs;
-
-    // if we have too many bytes to send, throttle incoming
-    int64_t totalNumBytesToSend = 0;
-    bool overloaded = false;
-
-    pollfds.reset(new struct pollfd[pollFdSize]);
-    while (1) {
-
-        if (mConnections.size() > pollFdSize) {
-            pollFdSize = mConnections.size();
-            pollfds.reset(new struct pollfd[pollFdSize]);
-        }
-        // build poll vector: 
-
-        // make sure we are listening to the net kicker
-        fd = globals().netKicker.GetFd();
-        pollfds[0].fd = fd;
-        pollfds[0].events = POLLIN;
-        pollfds[0].revents = 0;
-
-        numPollFds = 1;
-
-        overloaded = IsOverloaded(totalNumBytesToSend);
-        int numBytesToSend;
-
-        totalNumBytesToSend = 0;
-
-        for (iter = mConnections.begin(); iter != mConnections.end(); ++iter) {
-            conn = *iter;
-            fd = conn->GetFd();
-
-            if (fd < 0) {
-                // we'll get rid of this connection in the while loop below
-                conn->mPollVectorIndex = -2;
-                continue;
-            }
-
-            if (fd == globals().netKicker.GetFd()) {
-                conn->mPollVectorIndex = -1;
-                continue;
-            }
-
-            conn->mPollVectorIndex = numPollFds;
-            pollfds[numPollFds].fd = fd;
-            pollfds[numPollFds].events = 0;
-            pollfds[numPollFds].revents = 0;
-            if (conn->IsReadReady(overloaded)) {
-                // By default, each connection is read ready.  We
-                // expect there to be 2-way data transmission, and so
-                // we are read ready.  In overloaded state, we only
-                // add the fd to the poll vector if the fd is given a
-                // special pass
-                pollfds[numPollFds].events |= POLLIN;
-            }
-
-            numBytesToSend = conn->GetNumBytesToWrite();
-            if (numBytesToSend > 0) {
-                totalNumBytesToSend += numBytesToSend;
-                // An optimization: if we are not sending any data for
-                // this fd in this round of poll, don't bother adding
-                // it to the poll vector.
-                pollfds[numPollFds].events |= POLLOUT;
-            }
-            numPollFds++;
-        }
-
-        if (!overloaded) {
-            overloaded = IsOverloaded(totalNumBytesToSend);
-            if (overloaded)
-                continue;
-        }
-
-        struct timeval startTime, endTime;
-
-        gettimeofday(&startTime, NULL);
-
-        pollTimeoutMs = mSelectTimeout.tv_sec * 1000;
-        res = poll(pollfds.get(), numPollFds, pollTimeoutMs);
-
-        if ((res < 0) && (errno != EINTR)) {
-            perror("poll(): ");
-            continue;
-        }
-
-        gettimeofday(&endTime, NULL);
-
-        // list of timeout handlers...call them back
-
-        fd = globals().netKicker.GetFd();
-        if (pollfds[0].revents & POLLIN) {
-            globals().netKicker.Drain();
-            globals().diskManager.ReapCompletedIOs();
-        }
-
-        RemoveUnregisteredTimeoutHandlers();
-        //
-        // This call can cause a handler to unregister itself.  Doing
-        // that while we are iterating thru this list is fatal.
-        // Hence, when a handler unregisters itself, we put that
-        // handler into a separate list.  After we called all the
-        // handlers, we cleanout the unregistered handlers.
-        //
-
-        for_each (mTimeoutHandlers.begin(), mTimeoutHandlers.end(), 
-                  mem_fun(&ITimeout::TimerExpired));
-
-        RemoveUnregisteredTimeoutHandlers();
-
-        iter = mConnections.begin();
-        while (iter != mConnections.end()) {
-            conn = *iter;
-            // Something happened and the connection has closed.  So,
-            // remove the connection from our list.
-            if (conn->GetFd() < 0) {
-                eltToRemove = iter;
-                ++iter;
-                mConnections.erase(eltToRemove);
-                continue;
-            }
-
-            if ((conn->GetFd() == globals().netKicker.GetFd()) ||
-                (conn->mPollVectorIndex < 0)) {
-                ++iter;
-                continue;
-            }
-
-            if (pollfds[conn->mPollVectorIndex].revents & POLLIN) {
-                fd = conn->GetFd();
-                if (fd > 0) {
-                    conn->HandleReadEvent(overloaded);
+    mNow = time(0);
+    time_t lastTimerTime = mNow;
+    CheckFatalSysError(
+        mPoll.Add(globals().netKicker.GetFd(), FdPoll::kOpTypeIn),
+        "failed to add net kicker's fd to poll set"
+    );
+    const int timerOverrunWarningTime(mTimeoutMs / (1000/2));
+    while (mRunFlag) {
+        const bool wasOverloaded = mIsOverloaded;
+        CheckIfOverloaded();
+        if (mIsOverloaded != wasOverloaded) {
+            KFS_LOG_VA_INFO(
+                "%s (%0.f bytes to send; %d disk IO's) ",
+                mIsOverloaded ?
+                    "System is now in overloaded state " :
+                    "Clearing system overload state",
+                double(mNumBytesToSend),
+                globals().diskManager.NumDiskIOOutstanding());
+            for (int i = 0; i <= kTimerWheelSize; i++) {
+                for (List::iterator c = mTimerWheel[i].begin();
+                        c != mTimerWheel[i].end(); ) {
+                    assert(*c);
+                    NetConnection& conn = **c;
+                    ++c;
+                    conn.Update(false);
                 }
             }
-            // conn could have closed due to errors during read.  so,
-            // need to re-get the fd and check that all is good
-            if (pollfds[conn->mPollVectorIndex].revents & POLLOUT) {
-                fd = conn->GetFd();
-                if (fd > 0) {
-                    conn->HandleWriteEvent();
-                }
-            }
-
-            if ((pollfds[conn->mPollVectorIndex].revents & POLLERR) ||
-                (pollfds[conn->mPollVectorIndex].revents & POLLHUP)) {
-                fd = conn->GetFd();
-                if (fd > 0) {
-                    conn->HandleErrorEvent();
-                }
-            }
-            ++iter;
         }
-
+        const int ret = mPoll.Poll(mConnectionsCount + 1, mTimeoutMs);
+        if (ret < 0 && ret != -EINTR && ret != -EAGAIN) {
+            std::string const msg = KFSUtils::SysError(-ret);
+            KFS_LOG_VA_ERROR("poll errror %d %s",  -ret, msg.c_str());
+        }
+        globals().netKicker.Drain();
+        const int64_t nowMs = ITimeout::NowMs();
+        mNow = time_t(nowMs / 1000);
+        globals().diskManager.ReapCompletedIOs();
+        // Unregister will set pointer to 0, but will never remove the list
+        // node, so that the iterator always remains valid.
+        for (std::list<ITimeout *>::iterator it = mTimeoutHandlers.begin();
+                it != mTimeoutHandlers.end(); ) {
+            if (*it) {
+                (*it)->TimerExpired(nowMs);
+            }
+            if (*it) {
+                ++it;
+            } else {
+                it = mTimeoutHandlers.erase(it);
+            }
+        }
+        /// Process poll events.
+        int   op;
+        void* ptr;
+        while (mPoll.Next(op, ptr)) {
+            if (op == 0 || ! ptr) {
+                continue;
+            }
+            NetConnection& conn = *reinterpret_cast<NetConnection*>(ptr);
+            assert(conn.GetNetMangerEntry(*this)->mAdded);
+            // Defer update for this connection.
+            mCurConnection = &conn;
+            if ((op & FdPoll::kOpTypeIn) != 0 && conn.IsGood()) {
+                conn.HandleReadEvent();
+            }
+            if ((op & FdPoll::kOpTypeOut) != 0 && conn.IsGood()) {
+                conn.HandleWriteEvent();
+            }
+            if ((op & (FdPoll::kOpTypeError | FdPoll::kOpTypeHup)) != 0 &&
+                    conn.IsGood()) {
+                conn.HandleErrorEvent();
+            }
+            // Try to write, if the last write was sucessfull.
+            conn.StartFlush();
+            // Update the connection.
+            mCurConnection = 0;
+            conn.Update();
+        }
+        mRemove.clear();
+        mNow = time(0);
+        int slotCnt = std::min(int(kTimerWheelSize), int(mNow - lastTimerTime));
+        if (slotCnt > timerOverrunWarningTime) {
+            KFS_LOG_VA_DEBUG("Timer overrun %d seconds detected", slotCnt - 1);
+        }
+        mTimerRunningFlag = true;
+        while (slotCnt-- > 0) {
+            List& bucket = mTimerWheel[mCurTimerWheelSlot];
+            mTimerWheelBucketItr = bucket.begin();
+            while (mTimerWheelBucketItr != bucket.end()) {
+                assert(*mTimerWheelBucketItr);
+                NetConnection& conn = **mTimerWheelBucketItr;
+                assert(conn.IsGood());
+                ++mTimerWheelBucketItr;
+                NetConnection::NetManagerEntry& entry =
+                    *conn.GetNetMangerEntry(*this);
+                const int timeOut = conn.GetInactivityTimeout();
+                if (timeOut < 0) {
+                    // No timeout, move it to the corresponding list.
+                    UpdateTimer(entry, timeOut);
+                } else if (entry.mExpirationTime <= mNow) {
+                    conn.HandleTimeoutEvent();
+                } else {
+                    // Not expired yet, move to the new slot, taking into the
+                    // account possible timer overrun.
+                    UpdateTimer(entry,
+                        slotCnt + int(entry.mExpirationTime - mNow));
+                }
+            }
+            if (++mCurTimerWheelSlot >= kTimerWheelSize) {
+                mCurTimerWheelSlot = 0;
+            }
+            mRemove.clear();
+        }
+        mTimerRunningFlag = false;
+        lastTimerTime = mNow;
+        mTimerWheelBucketItr = mRemove.end();
     }
+    CheckFatalSysError(
+        mPoll.Remove(globals().netKicker.GetFd()),
+        "failed to removed net kicker's fd from poll set"
+    );
+    CleanUp();
 }
 
-bool
-NetManager::IsOverloaded(int64_t numBytesToSend)
+void
+NetManager::CheckIfOverloaded()
 {
-    static bool wasOverloaded = false;
-
     if (mMaxOutgoingBacklog > 0) {
         if (!mNetworkOverloaded) {
-            mNetworkOverloaded = (numBytesToSend > mMaxOutgoingBacklog);
-        } else if (numBytesToSend <= mMaxOutgoingBacklog / 2) {
+            mNetworkOverloaded = (mNumBytesToSend > mMaxOutgoingBacklog);
+        } else if (mNumBytesToSend <= mMaxOutgoingBacklog / 2) {
             // network was overloaded and that has now cleared
             mNetworkOverloaded = false;
         }
     }
-
-    bool isOverloaded = mDiskOverloaded || mNetworkOverloaded;
-
-    if (!wasOverloaded && isOverloaded) {
-        KFS_LOG_VA_INFO("System is now in overloaded state (%ld bytes to send; %d disk IO's) ",
-                        numBytesToSend, globals().diskManager.NumDiskIOOutstanding());
-    } else if (wasOverloaded && !isOverloaded) {
-        KFS_LOG_VA_INFO("Clearing system overload state (%ld bytes to send; %d disk IO's)",
-                        numBytesToSend, globals().diskManager.NumDiskIOOutstanding());
-    }
-    wasOverloaded = isOverloaded;
-    return isOverloaded;
+    mIsOverloaded = mDiskOverloaded || mNetworkOverloaded;
 }
 
 void
@@ -318,4 +384,26 @@ NetManager::ChangeDiskOverloadState(bool v)
     if (mDiskOverloaded == v)
         return;
     mDiskOverloaded = v;
+}
+
+void
+NetManager::CleanUp()
+{
+    mTimeoutHandlers.clear();
+    for (int i = 0; i <= kTimerWheelSize; i++) {
+        for (mTimerWheelBucketItr = mTimerWheel[i].begin();
+                mTimerWheelBucketItr != mTimerWheel[i].end(); ) {
+            NetConnection* const conn = mTimerWheelBucketItr->get();
+            ++mTimerWheelBucketItr;
+            if (conn) {
+                if (conn->IsGood()) {
+                    conn->HandleErrorEvent();
+                }
+                conn->Close();
+            }
+        }
+        assert(mTimerWheel[i].empty());
+        mRemove.clear();
+    }
+    mTimerWheelBucketItr = mRemove.end();
 }

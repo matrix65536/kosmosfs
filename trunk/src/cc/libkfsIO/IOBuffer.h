@@ -160,8 +160,8 @@ public:
 
     /// Return the space available in the buffer
     size_t SpaceAvailable() const { return mEnd - mProducer; }
-    int IsFull() const { return mProducer == mEnd; }
-    int IsEmpty() const { return mProducer == mConsumer; }
+    int IsFull() const { return mProducer >= mEnd; }
+    int IsEmpty() const { return mProducer <= mConsumer; }
 
 private:
     /// Data buffer that is ref-counted for sharing.
@@ -192,7 +192,10 @@ struct IOBuffer {
     IOBuffer *Clone();
 
     /// Append the IOBufferData block to the list stored in this buffer.
-    void Append(IOBufferDataPtr &buf);
+    /// Unlike methods with IOBuffer as argument, this method will not
+    /// Consume() or change buf in any way, the underlying buffer will be
+    /// shared.
+    void Append(const IOBufferDataPtr &buf);
 
     /// Append the contents of ioBuf to this buffer.
     void Append(IOBuffer *ioBuf);
@@ -207,7 +210,7 @@ struct IOBuffer {
     /// @param[in] other  Buffer from which data has to be moved
     /// @param[in] numBytes  # of bytes of data to be moved over
     ///
-    void Move(IOBuffer *other, int numBytes);
+    int Move(IOBuffer *other, int numBytes);
 
     /// Splice data from other to "this".  The key here is that, data
     /// from other is inserted starting at the specified offset.  The
@@ -265,12 +268,15 @@ struct IOBuffer {
     void Consume(int nbytes);
 
     /// Returns the # of bytes that are available for consumption.
-    int BytesConsumable();
+    int BytesConsumable() const;
 
     /// Trim data from the end of the buffer to nbytes.  This is the
     /// converse of consume, where data is removed from the front of
     /// the buffer.
     void Trim(int nbytes);
+
+    /// Returns true if buffer has no data.
+    bool IsEmpty() const;
 
     /// List of IOBufferData blocks that comprise this buffer.
     std::list<IOBufferDataPtr> mBuf;
