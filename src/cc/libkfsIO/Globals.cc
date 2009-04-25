@@ -32,10 +32,15 @@
 
 using namespace KFS::libkfsio;
 
+// To make it easy to get globals with gdb.
+static Globals_t* gLibKfsGlobals = 0;
+
 Globals_t & KFS::libkfsio::globals()
 {
-    static Globals_t g;
-    return g;
+    if (! gLibKfsGlobals) {
+        gLibKfsGlobals = new Globals_t();
+    }
+    return *gLibKfsGlobals;
 }
 
 //
@@ -53,8 +58,6 @@ KFS::libkfsio::InitGlobals()
 
     globals().diskManager.Init();
     globals().eventManager.Init();
-
-    globals().netKicker.Init(globals().netManager);
 
     globals().ctrOpenNetFds.SetName("Open network fds");
     globals().ctrOpenDiskFds.SetName("Open disk fds");

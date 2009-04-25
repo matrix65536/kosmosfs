@@ -44,23 +44,14 @@ namespace KFS
     class NetKicker : public KfsCallbackObj {
     public:
         NetKicker();
-        /// Register the "read" part of the pipe with the net manager.
-        void Init(NetManager &netManager);
         /// The "write" portion of the pipe writes one byte on the fd.
         void Kick();
         /// This is the callback from the net-manager to drain out the
         /// bytes written on the pipe
         int Drain();
-        int GetFd() const {
-            return mNetConnection->GetFd();
-        }
+        int GetFd() const;
     private:
         int mPipeFds[2];
-        // the "read" part of the pipe needs to be made part of the
-        // poll loop.  the net-manager understands net connection
-        // objects; so, wrap the fd into a connection and hand that
-        // off to the net manager.
-        NetConnectionPtr mNetConnection;
     };
 
 }

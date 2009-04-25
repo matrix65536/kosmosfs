@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/14
 // Author: Sriram Rao
@@ -37,6 +37,7 @@ extern "C" {
 
 #include "ITimeout.h"
 #include "NetConnection.h"
+#include "fdpoll.h"
 
 namespace KFS
 {
@@ -45,24 +46,20 @@ namespace KFS
 /// \file NetManager.h
 /// The net manager provides facilities for multiplexing I/O on network
 /// connections.  It keeps a list of connections on which it has to
-/// call select.  Whenever an "event" occurs on a connection (viz.,
+/// call poll.  Whenever an "event" occurs on a connection (viz.,
 /// read/write/error), it calls back the connection to handle the
 /// event.  
 /// 
 /// The net manager also provides support for timeout notification.
-/// Whenever a call to select returns, that is an occurence of a
+/// Whenever a call to poll returns, that is an occurence of a
 /// timeout.  Interested handlers can register with the net manager to
 /// be notified of timeout.  In the current implementation, the
-/// timeout interval is mSelectTimeout.
+/// timeout interval is mPollTimeout.
 //
-
-typedef std::list<NetConnectionPtr> NetConnectionList_t;
-typedef std::list<NetConnectionPtr>::iterator NetConnectionListIter_t;
 
 class NetManager {
 public:
-    NetManager();
-    NetManager(const struct timeval &selectTimeout);
+    NetManager(int timeoutMs = 10000);
     ~NetManager();
     /// Add a connection to the net manager's list of connections that
     /// are used for building poll vector.
@@ -79,11 +76,9 @@ public:
     }
     void ChangeDiskOverloadState(bool v);
 
-    bool IsOverloaded(int64_t numBytesToSend);
-
     ///
     /// This function never returns.  It builds a poll vector, calls
-    /// select(), and then evaluates the result of select():  for
+    /// poll(), and then evaluates the result of poll():  for
     /// connections on which data is I/O is possible---either for
     /// reading or writing are called back.  In the callback, the
     /// connections should take appropriate action.  
@@ -93,27 +88,44 @@ public:
     /// the net manager's list of connections that are polled.
     ///  
     void MainLoop();
-    
-private:
 
-    /// List of connections that are used for building the poll vector.
-    NetConnectionList_t	mConnections;
-    /// timeout interval specified in the call to select().
-    struct timeval 	mSelectTimeout;
+    void Shutdown() { mRunFlag = false; }
+    /// Methods used by NetConnection only.
+    void Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTimer);
+private:
+    typedef NetConnection::NetManagerEntry::List List;
+    enum { kTimerWheelSize = (1 << 8) };
+
+    /// Timer wheel.
+    List                mTimerWheel[kTimerWheelSize + 1];
+    List                mRemove;
+    List::iterator      mTimerWheelBucketItr;
+    NetConnection*      mCurConnection;
+    int                 mCurTimerWheelSlot;
+    int                 mConnectionsCount;
     /// when the system is overloaded--either because of disk or we
     /// have too much network I/O backlogged---we avoid polling fd's for
     /// read.  this causes back-pressure and forces the clients to
     /// slow down
     bool		mDiskOverloaded;
     bool		mNetworkOverloaded;
+    bool                mIsOverloaded;
+    bool                mRunFlag;
+    bool                mTimerRunningFlag;
+    /// timeout interval specified in the call to poll().
+    const int           mTimeoutMs;
+    time_t              mNow;
     int64_t		mMaxOutgoingBacklog;
+    int64_t             mNumBytesToSend;
+    FdPoll&	        mPoll;
 
-    /// Handlers that are notified whenever a call to select()
+    /// Handlers that are notified whenever a call to poll()
     /// returns.  To the handlers, the notification is a timeout signal.
     std::list<ITimeout *>	mTimeoutHandlers;
-    /// see the comments in NetManager.cc in the MainLoop()
-    std::list<ITimeout *>	mUnregisteredTimeoutHandlers;
-    void		RemoveUnregisteredTimeoutHandlers();
+
+    void CheckIfOverloaded();
+    void CleanUp();
+    inline void UpdateTimer(NetConnection::NetManagerEntry& entry, int timeOut);
 };
 
 }

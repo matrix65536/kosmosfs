@@ -1,9 +1,10 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
 // $Id$
 //
-// Author: Sriram Rao
+// Created 2008/11/01
+// Author: Mike Ovsiannikov
 //
-// Copyright 2008 Quantcast Corp.
+// Copyright 2008,2009 Quantcast Corp.
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -18,49 +19,21 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
+//
 // 
-// Implementation of the net kicker object.
 //----------------------------------------------------------------------------
 
-#include "NetKicker.h"
-#include "Globals.h"
+#ifndef KFSDEBUG_H
+#define KFSDEBUG_H
 
-using namespace KFS;
-using namespace KFS::libkfsio;
+#include <assert.h>
 
-NetKicker::NetKicker()
-{
-    int res; 
+#define KFSASSERT(a) assert(a)
 
-    res = pipe(mPipeFds);
-    if (res < 0) {
-        perror("Pipe: ");
-        return;
-    }
-    fcntl(mPipeFds[0], F_SETFL, O_NONBLOCK);
-    fcntl(mPipeFds[1], F_SETFL, O_NONBLOCK);
-}
+#ifdef NDEBUG
+#   define KFSVERIFY(a) a
+#else
+#   define KFSVERIFY(a) KFSASSERT(a)
+#endif
 
-void
-NetKicker::Kick()
-{
-    char buf = 'k';
-        
-    write(mPipeFds[1], &buf, sizeof(char));
-}
-
-int 
-NetKicker::Drain()
-{
-    int bufsz = 512, res;
-    char buf[512];
-
-    res = read(mPipeFds[0], buf, bufsz);
-    return res;
-}
-
-int
-NetKicker::GetFd() const
-{
-    return mPipeFds[0];
-}
+#endif /* KFSDEBUG_H */
