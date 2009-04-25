@@ -383,7 +383,8 @@ PendingChunkRead::Start(int fd, size_t off)
     mReadOp.numBytes =
         OffsetToChecksumBlockStart(mReadOp.offset + mReadOp.numBytes) -
         mReadOp.offset;
-    if (mReadOp.numBytes > 0 && mSocket) {
+    if (mSocket && ((int) mReadOp.numBytes > 0) && 
+    		(mReadOp.numBytes < CHUNKSIZE)) {
         if (DoOpSend(&mReadOp, mSocket)) {
             chunk.chunkId = -1;
             pos.ResetServers();
