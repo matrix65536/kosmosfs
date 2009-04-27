@@ -26,6 +26,10 @@
 #if !defined(KFS_STARTUP_H)
 #define KFS_STARTUP_H
 
+extern "C" {
+#include <stdint.h>
+}
+
 #include <string>
 
 namespace KFS {

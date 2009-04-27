@@ -31,6 +31,7 @@ extern "C" {
 
 #include <iostream>
 #include <sstream>
+#include <cstdio>
 #include <cstdlib>
 #include <cerrno>
 #include "util.h"

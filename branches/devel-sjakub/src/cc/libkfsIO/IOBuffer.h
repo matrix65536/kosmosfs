@@ -27,6 +27,10 @@
 #ifndef _LIBIO_IOBUFFER_H
 #define _LIBIO_IOBUFFER_H
 
+extern "C" {
+#include <stdint.h>
+}
+
 #include <cassert>
 #include <list>
 #include <exception>
