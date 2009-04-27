@@ -27,6 +27,8 @@
 #ifndef _LIBIO_DISKEVENT_H
 #define _LIBIO_DISKEVENT_H
 
+#include <cstdio>
+
 #include <aio.h>
 #include <boost/shared_ptr.hpp>
 #include <string.h>
