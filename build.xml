@@ -3,7 +3,7 @@
 
   <property name="Name" value="KFS"/>
   <property name="name" value="kfs"/>
-  <property name="version" value="0.2.3"/>
+  <property name="version" value="0.3"/>
   <property name="final.name" value="${name}-${version}"/>
   <property name="year" value="2008"/>
 
