@@ -29,6 +29,10 @@
 #ifndef LIBKFSIO_COUNTER_H
 #define LIBKFSIO_COUNTER_H
 
+extern "C" {
+#include <stdint.h>
+}
+
 #include <algorithm>
 #include <string>
 #include <sstream>

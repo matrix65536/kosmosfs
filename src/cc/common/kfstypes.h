@@ -30,7 +30,9 @@
 
 extern "C" {
 #include <stdlib.h>
+#include <stdint.h>
 }
+
 #include <cerrno>
 #include <cassert>
 
