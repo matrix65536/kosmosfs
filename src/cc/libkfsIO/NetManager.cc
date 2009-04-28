@@ -148,8 +148,8 @@ NetManager::UpdateTimer(NetConnection::NetManagerEntry& entry, int timeOut)
 inline static int CheckFatalSysError(int err, const char* msg)
 {
     if (err) {
-        std::string const msg = KFSUtils::SysError(err);
-        KFS_LOG_VA_FATAL("%s: %d %s", err, msg.c_str());
+        std::string const sysMsg = KFSUtils::SysError(err);
+        KFS_LOG_VA_FATAL("%s: %d %s", msg ? msg : "", err, sysMsg.c_str());
         abort();
     }
     return err;
