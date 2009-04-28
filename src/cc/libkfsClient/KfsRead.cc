@@ -374,7 +374,12 @@ PendingChunkRead::Start(int fd, size_t off)
     mReadOp.chunkId       = chunk.chunkId;
     mReadOp.chunkVersion  = chunk.chunkVersion;
     mReadOp.offset        = pos.chunkOffset + off;
-    if (mReadOp.offset >= chunk.chunkSize) {
+    if ((mReadOp.offset >= chunk.chunkSize) || 
+    	(mReadOp.offset % CHECKSUM_BLOCKSIZE != 0)) {
+	// if the read-ahead isn't aligned, fail it; otherwise, subsequent reads
+	// can get unaligned and cause more perf problems: each read will
+	// require additional reads on the servers to pull in data such that
+	// reads are // aligned for checksum block boundaries
         mFd = -1;
         return false;
     }
