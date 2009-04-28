@@ -299,7 +299,10 @@ NetManager::MainLoop()
                 continue;
             }
             NetConnection& conn = *reinterpret_cast<NetConnection*>(ptr);
-            assert(conn.GetNetMangerEntry(*this)->mAdded);
+            if (! conn.GetNetMangerEntry(*this)->mAdded) {
+                // Skip stale event, the conection should be in mRemove list.
+                continue;
+            }
             // Defer update for this connection.
             mCurConnection = &conn;
             if ((op & FdPoll::kOpTypeIn) != 0 && conn.IsGood()) {
