@@ -2726,6 +2726,10 @@ KfsClientImpl::GetLease(kfsChunkId_t chunkId, const string &pathname)
 	KFS_LOG_DEBUG("Server says lease is busy...waiting");
 	// Server says the lease is busy...so wait
 	Sleep(LEASE_RETRY_DELAY_SECS);
+        // if all attempts failed, we need to propogate that;
+        // otherwise, we sent the RPC to the metaserver and report
+        // that the lease renew was successful.
+        res = -1;
     }
     return res;
 }
