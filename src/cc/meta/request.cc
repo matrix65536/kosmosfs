@@ -34,6 +34,7 @@
 #include "checkpoint.h"
 #include "util.h"
 #include "LayoutManager.h"
+#include "ChildProcessTracker.h"
 
 #include "libkfsIO/Globals.h"
 
@@ -45,8 +46,6 @@ using std::min;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
-
-MetaQueue <MetaRequest> requestList;
 
 typedef void (*ReqHandler)(MetaRequest *r);
 map <MetaOp, ReqHandler> handler;
@@ -80,6 +79,7 @@ static int parseHandlerHello(Properties &prop, MetaRequest **r);
 
 static int parseHandlerPing(Properties &prop, MetaRequest **r);
 static int parseHandlerStats(Properties &prop, MetaRequest **r);
+static int parseHandlerCheckLeases(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkReplicationCandidates(Properties &prop, MetaRequest **r);
 static int parseHandlerOpenFiles(Properties &prop, MetaRequest **r);
@@ -803,12 +803,6 @@ handle_execute_rebalanceplan(MetaRequest *r)
 }
 
 static void
-handle_log_rollover(MetaRequest *r)
-{
-	r->status = 0;
-}
-
-static void
 handle_hello(MetaRequest *r)
 {
 	MetaHello *req = static_cast <MetaHello *>(r);
@@ -971,10 +965,25 @@ static void
 handle_dump_chunkToServerMap(MetaRequest *r)
 {
 	MetaDumpChunkToServerMap *req = static_cast <MetaDumpChunkToServerMap *>(r);
+	pid_t pid;
 
-	req->status = 0;
-
-	gLayoutManager.DumpChunkToServerMap();
+	if ((pid = fork()) == 0) {
+		// let the child write out the map; if the map is large, this'll
+		// take several seconds.  we get the benefits of writing out the
+		// map in the background while the metaserver continues to
+		// process other RPCs
+		gLayoutManager.DumpChunkToServerMap();
+		exit(0);
+	}
+	KFS_LOG_VA_INFO("child that is writing out the chunk->server map has pid: %d", pid);
+	// if fork() failed, let the sender know
+	if (pid < 0) {
+		req->status = -1;
+		return;
+	}
+	// hold on to the request until the child  finishes
+	req->suspended = true;
+	gChildProcessTracker.Track(pid, req);
 }
 
 static void
@@ -987,6 +996,16 @@ handle_dump_chunkReplicationCandidates(MetaRequest *r)
 
 	gLayoutManager.DumpChunkReplicationCandidates(os);
 	req->blocks = os.str();
+}
+
+static void
+handle_check_leases(MetaRequest *r)
+{
+	MetaCheckLeases *req = static_cast <MetaCheckLeases *>(r);
+
+	req->status = 0;
+
+	gLayoutManager.CheckAllLeases();
 }
 
 static void
@@ -1032,7 +1051,6 @@ setup_handlers()
 	handler[META_TRUNCATE] = handle_truncate;
 	handler[META_RENAME] = handle_rename;
 	handler[META_CHANGE_FILE_REPLICATION] = handle_change_file_replication;
-	handler[META_LOG_ROLLOVER] = handle_log_rollover;
 	handler[META_CHUNK_SIZE] = handle_chunk_size_done;
 	handler[META_CHUNK_REPLICATE] = handle_chunk_replication_done;
 	handler[META_CHUNK_REPLICATION_CHECK] = handle_chunk_replication_check;
@@ -1057,6 +1075,7 @@ setup_handlers()
 	// Monitoring RPCs
 	handler[META_PING] = handle_ping;
 	handler[META_STATS] = handle_stats;
+	handler[META_CHECK_LEASES] = handle_check_leases;
 	handler[META_DUMP_CHUNKTOSERVERMAP] = handle_dump_chunkToServerMap;
 	handler[META_DUMP_CHUNKREPLICATIONCANDIDATES] = handle_dump_chunkReplicationCandidates;
 	handler[META_OPEN_FILES] = handle_open_files;
@@ -1093,6 +1112,7 @@ setup_handlers()
 	gParseHandlers["UPSERVERS"] = parseHandlerUpServers;
 	gParseHandlers["TOGGLE_WORM"] = parseHandlerToggleWORM;
 	gParseHandlers["STATS"] = parseHandlerStats;
+	gParseHandlers["CHECK_LEASES"] = parseHandlerCheckLeases;
 	gParseHandlers["DUMP_CHUNKTOSERVERMAP"] = parseHandlerDumpChunkToServerMap;
 	gParseHandlers["DUMP_CHUNKREPLICATIONCANDIDATES"] = parseHandlerDumpChunkReplicationCandidates;
 	gParseHandlers["OPEN_FILES"] = parseHandlerOpenFiles;
@@ -1111,9 +1131,8 @@ KFS::initialize_request_handlers()
  * \brief remove successive requests for the queue and carry them out.
  */
 void
-KFS::process_request()
+KFS::process_request(MetaRequest *r)
 {
-	MetaRequest *r = requestList.dequeue();
 	map <MetaOp, ReqHandler>::iterator h = handler.find(r->op);
 	if (h == handler.end())
 		r->status = -ENOSYS;
@@ -1122,18 +1141,36 @@ KFS::process_request()
 
 	if (!r->suspended) {
 		UpdateCounter(r->op);
-		oplog.add_pending(r);
+		oplog.dispatch(r);
 	}
 }
 
 /*!
- * \brief add a new request to the queue
+ * \brief add a new request to the queue: we used to have threads before; at
+ * that time, the requests would be dropped into the queue and the request
+ * processor would pick it up.  We have taken out threads; so this method is
+ * just pass thru
  * \param[in] r the request
  */
 void
 KFS::submit_request(MetaRequest *r)
 {
-	requestList.enqueue(r);
+	struct timeval s, e;
+	string op = r->Show();
+
+	gettimeofday(&s, NULL);
+
+	process_request(r);
+
+	gettimeofday(&e, NULL);
+
+	float timeSpent = ComputeTimeDiff(s, e);
+
+	// if we spend more than 200 ms/msg, inquiring minds'd like to know
+	if (timeSpent > 0.2) {
+		KFS_LOG_VA_INFO("Time spent processing %s is: %.3f",
+			op.c_str(), timeSpent);
+	}
 }
 
 /*!
@@ -1350,15 +1387,6 @@ MetaExecuteRebalancePlan::log(ofstream &file) const
 }
 
 /*!
- * \brief close log and open a new one
- */
-int
-MetaLogRollover::log(ofstream &file) const
-{
-	return oplog.finishLog();
-}
-
-/*!
  * \brief for a chunkserver hello, there is nothing to log
  */
 int
@@ -1505,6 +1533,15 @@ MetaStats::log(ofstream &file) const
  */
 int
 MetaDumpChunkToServerMap::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief for a check all leases request, there is nothing to log
+ */
+int
+MetaCheckLeases::log(ofstream &file) const
 {
 	return 0;
 }
@@ -2159,6 +2196,18 @@ parseHandlerStats(Properties &prop, MetaRequest **r)
 }
 
 /*!
+ * \brief Parse out a check leases request.
+ */
+int
+parseHandlerCheckLeases(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+
+	*r = new MetaCheckLeases(seq);
+	return 0;
+}
+
+/*!
  * \brief Parse out a dump server map request.
  */
 int
@@ -2552,6 +2601,14 @@ MetaStats::response(ostringstream &os)
 	os << "Cseq: " << opSeqno << "\r\n";
 	os << "Status: " << status << "\r\n";
 	os << stats << "\r\n";
+}
+
+void
+MetaCheckLeases::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n";
 }
 
 void

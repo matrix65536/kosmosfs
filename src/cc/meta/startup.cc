@@ -25,7 +25,6 @@
  *
  */
 #include "startup.h"
-#include "thread.h"
 #include "logger.h"
 #include "checkpoint.h"
 #include "kfstree.h"
@@ -70,20 +69,6 @@ setup_initial_tree(uint32_t minNumReplicasPerFile)
 		status = metatree.new_tree();
 	}
 	return status;
-}
-
-static MetaThread request_processor;	//<! request processing thread
-
-/*!
- * \brief request-processing main loop
- */
-static void *
-request_consumer(void *dummy)
-{
-	for (;;) {
-		process_request();
-	}
-	return NULL;
 }
 
 /*!
@@ -141,7 +126,6 @@ KFS::kfs_startup(const string &logdir, const string &cpdir,
 	// about chunks we don't know and those will nuked due to staleness
 	emptyDumpsterDir();
 	initialize_request_handlers();
-	request_processor.start(request_consumer, NULL);
 	logger_init();
 	checkpointer_init();
 }

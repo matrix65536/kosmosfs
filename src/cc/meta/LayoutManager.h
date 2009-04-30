@@ -400,6 +400,9 @@ namespace KFS
 		/// and remove out dead leases.
 		void LeaseCleanup();
 
+		/// Is an expensive call; use sparingly
+		void CheckAllLeases();
+
 		/// Cleanup the lease for a particular chunk
 		/// @param[in] chunkId  the chunk for which leases need to be cleaned up
 		/// @param[in] v   the placement/lease info for the chunk
@@ -540,6 +543,10 @@ namespace KFS
 
                 /// Candidate set of chunks whose replication needs checking
                 CRCandidateSet mChunkReplicationCandidates;
+
+		/// chunks to which a lease has been handed out; whenever we
+		/// cleanup the leases, this set is walked 
+		CRCandidateSet mChunksWithLeases;
 
 		/// Counters to track chunk replications
 		Counter *mOngoingReplicationStats;

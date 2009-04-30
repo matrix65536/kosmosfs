@@ -30,10 +30,10 @@
 #include <string>
 
 #include "kfstypes.h"
-#include "queue.h"
-#include "thread.h"
 #include "request.h"
 #include "util.h"
+
+#include "libkfsIO/ITimeout.h"
 
 using std::string;
 using std::ofstream;
@@ -43,14 +43,14 @@ namespace KFS {
 /*!
  * \brief Class for logging metadata updates
  *
- * This class consists of two threads: 
- *  - one thread that writes the updates to the logs and then dispatches the
- *  logged results to the network thread
- *  - another thread that runs a timer to cause periodic log rollover.  Whenever
+ *  - RPCs when they are done are logged (if necessary, such as, they mutate the
+ *  tree) and are then dispatched to the sender.
+ *  - a timer that periodically causes log rollover.  Whenever
  *  the log rollover occurs, after we close the log file, we create a link from
  *  "LAST" to the recently closed log file.  This is used by the log compactor
  *  to determine the set of files that can be compacted.
  */
+
 class Logger {
 	string logdir;		//!< directory where logs are kept
 	int lognum;		//!< for generating log file names
@@ -59,11 +59,6 @@ class Logger {
 	seq_t nextseq;		//!< next request sequence no.
 	seq_t committed;	//!< highest request known to be on disk
 	seq_t incp;		//!< highest request in a checkpoint
-	MetaQueue <MetaRequest> pending; //!< list of still-unlogged results
-	MetaQueue <MetaRequest> logged;	//!< list of logged results
-	MetaQueue <MetaRequest> cpdone; //!< completed CP (aka log rollover)
-	MetaThread thread;	//!< thread synchronization
-	MetaThread timer;	//!< timer to rollover log files
 	string genfile(int n)	//!< generate a log file name
 	{
 		std::ostringstream f(std::ostringstream::out);
@@ -96,34 +91,12 @@ public:
 	}
 	//!< log a request
 	int log(MetaRequest *r);
-	void add_pending(MetaRequest *r) { pending.enqueue(r); }
-	/*!
-	 * \brief get a pending request and assign it a sequence number
-	 * \return the request
-	 */
-	MetaRequest *get_pending()
-	{
-		MetaRequest *r = pending.dequeue();
-		r->seqno = ++nextseq;
-		return r;
-	}
-	bool isPendingEmpty()
-	{
-		return pending.empty();
-	}
-	MetaRequest *next_result();
-	MetaRequest *next_result_nowait();
+	//!< add to the log and dispatch downstream to netdispatcher
+	void dispatch(MetaRequest *r);
 	seq_t checkpointed() { return incp; }	//!< highest seqno in CP
-	void add_logged(MetaRequest *r) { logged.enqueue(r); }
-	void save_cp(MetaRequest *r) { cpdone.enqueue(r); }
-	MetaRequest *wait_for_cp() { return cpdone.dequeue(); }
-	void start(MetaThread::thread_start_t func)	//!< start thread
-	{
-		thread.start(func, NULL);
-	}
 	void setLog(int seqno);		//!< set the log filename based on seqno
 	int startLog(int seqno);	//!< start a new log file
-	int finishLog();		//!< tie off log file before CP
+	int finishLog();		//!< rollover the log file
 	const string name() const { return logname; }	//!< name of log file
 	/*!
 	 * \brief set initial sequence numbers at startup
@@ -133,13 +106,18 @@ public:
 	{
 		incp = committed = nextseq = last;
 	}
-	/*!
-	 * Use a timer to rollover the log files every N minutes
-	 */
-	void start_timer(MetaThread::thread_start_t func)
-	{
-		timer.start(func, NULL);
-	}
+};
+
+class LogRotater : public ITimeout {
+public:
+	LogRotater(int rotateIntervalSec = 600) {
+		// rotate logs once every 10 mins
+		SetTimeoutInterval(rotateIntervalSec * 1000);
+	};
+	void SetInterval(int rotateIntervalSec) {
+		SetTimeoutInterval(rotateIntervalSec * 1000);
+	};
+	void Timeout();
 };
 
 extern string LOGDIR;
@@ -148,7 +126,7 @@ const unsigned int LOG_ROLLOVER_MAXSEC = 600;	//!< max. seconds between CP's/log
 extern Logger oplog;
 extern void logger_setup_paths(const string &logdir);
 extern void logger_init();
-extern MetaRequest *next_result();
+// extern MetaRequest *next_result();
 
 }
 #endif // !defined(KFS_LOGGER_H)

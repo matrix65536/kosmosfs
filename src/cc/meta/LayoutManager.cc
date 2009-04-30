@@ -870,6 +870,8 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 
 	mChunkToServerMap[r->chunkId] = v;
 
+	mChunksWithLeases.insert(r->chunkId);
+
 	if (r->servers.size() < (uint32_t) r->numReplicas)
 		ChangeChunkReplication(r->chunkId);
 
@@ -955,6 +957,8 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 	v.chunkLeases.push_back(lease);
 	mChunkToServerMap[r->chunkId] = v;
 
+	mChunksWithLeases.insert(r->chunkId);
+
 	// when issuing a new lease, bump the version # by the increment
 	r->chunkVersion += chunkVersionInc;
 	r->master = r->servers[0];
@@ -994,6 +998,8 @@ LayoutManager::GetChunkReadLease(MetaLeaseAcquire *req)
 	v.chunkLeases.push_back(lease);
 	mChunkToServerMap[req->chunkId] = v;
 	req->leaseId = lease.leaseId;
+
+	mChunksWithLeases.insert(req->chunkId);
 
 	return 0;
 }
@@ -1071,6 +1077,7 @@ LayoutManager::LeaseRenew(MetaLeaseRenew *req)
 	}
 	l->expires = now + LEASE_INTERVAL_SECS;
 	mChunkToServerMap[req->chunkId] = v;
+	mChunksWithLeases.insert(req->chunkId);
 	return 0;
 }
 
@@ -1400,10 +1407,49 @@ public:
 
 };
 
-/// functor to that expires out leases
+void
+LayoutManager::LeaseCleanup()
+{
+	time_t now = time(0);
+
+	for (CRCandidateSetIter citer = mChunksWithLeases.begin(); 
+		citer != mChunksWithLeases.end(); ) {
+		chunkId_t chunkId = *citer;
+		CSMapIter iter = mChunkToServerMap.find(chunkId); 
+
+		if (iter == mChunkToServerMap.end()) {
+			CRCandidateSetIter toErase = citer;
+
+			++citer;
+			mChunksWithLeases.erase(toErase);
+			continue;
+		}
+
+		ChunkPlacementInfo c = iter->second;
+
+		vector<LeaseInfo>::iterator i;
+		i = remove_if(c.chunkLeases.begin(), c.chunkLeases.end(),
+			LeaseExpired(now));
+
+		for_each(i, c.chunkLeases.end(), DecChunkWriteCount(c.fid, chunkId));
+		// trim the list
+		c.chunkLeases.erase(i, c.chunkLeases.end());
+		mChunkToServerMap[chunkId] = c;
+		if (c.chunkLeases.size() == 0) {
+			CRCandidateSetIter toErase = citer;
+
+			++citer;
+			mChunksWithLeases.erase(toErase);
+		} else {
+			++citer;
+		}
+	}
+}
+
+/// functor to that cleans out expired leases
 class LeaseExpirer {
 	CSMap &cmap;
-	time_t now;
+	time_t now; 
 public:
 	LeaseExpirer(CSMap &m, time_t n): cmap(m), now(n) { }
 	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p)
@@ -1411,9 +1457,7 @@ public:
 		ChunkPlacementInfo c = p.second;
 		chunkId_t chunkId = p.first;
 		vector<LeaseInfo>::iterator i;
-
-		i = remove_if(c.chunkLeases.begin(), c.chunkLeases.end(),
-			LeaseExpired(now));
+		i = remove_if(c.chunkLeases.begin(), c.chunkLeases.end(), LeaseExpired(now));
 
 		for_each(i, c.chunkLeases.end(), DecChunkWriteCount(c.fid, chunkId));
 		// trim the list
@@ -1422,14 +1466,14 @@ public:
 	}
 };
 
+// Periodically, check the status of all the leases
+// This is an expensive call...use sparingly....
 void
-LayoutManager::LeaseCleanup()
+LayoutManager::CheckAllLeases()
 {
 	time_t now = time(0);
-
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
 		LeaseExpirer(mChunkToServerMap, now));
-
 }
 
 // Cleanup the leases for a particular chunk

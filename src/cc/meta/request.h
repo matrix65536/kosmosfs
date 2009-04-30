@@ -67,7 +67,6 @@ enum MetaOp {
 	META_ALLOCATE,
 	META_TRUNCATE,
 	META_RENAME,
-	META_LOG_ROLLOVER,
 	META_CHANGE_FILE_REPLICATION, //! < Client is asking for a change in file's replication factor
 	//!< Admin is notifying us to retire a chunkserver
 	META_RETIRE_CHUNKSERVER,
@@ -106,9 +105,9 @@ enum MetaOp {
 	META_STATS, //!< Print out whatever statistics/counters we have
 	META_DUMP_CHUNKTOSERVERMAP, //! < Dump out the chunk -> location map
 	META_DUMP_CHUNKREPLICATIONCANDIDATES, //! < Dump out the list of chunks being re-replicated
+	META_CHECK_LEASES, //! < Check all the leases and clear out expired ones
 	META_OPEN_FILES, //!< Print out open files---for which there is a valid read/write lease
 	META_UPSERVERS //!< Print out live chunk servers
-
 };
 
 /*!
@@ -542,19 +541,6 @@ struct MetaExecuteRebalancePlan : public MetaRequest {
 
 
 /*!
- * \brief close a log file and start a new one
- */
-struct MetaLogRollover: public MetaRequest {
-	MetaLogRollover():
-		MetaRequest(META_LOG_ROLLOVER, 0, true) { }
-	int log(ofstream &file) const;
-	string Show()
-	{
-		return "log rollover";
-	}
-};
-
-/*!
  * \brief change the number which is used to increment
  * chunk version numbers.  This is an internally
  * generated op whenever (1) the system restarts after a failure
@@ -929,6 +915,20 @@ struct MetaDumpChunkToServerMap: public MetaRequest {
 };
 
 /*!
+ * \brief For debugging purposes, check the status of all the leases
+ */
+struct MetaCheckLeases: public MetaRequest {
+	MetaCheckLeases(seq_t s):
+		MetaRequest(META_CHECK_LEASES, s, false) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		return "checking all leases";
+	}
+};
+
+/*!
  * \brief For debugging purposes, dump out the set of blocks that are currently
  * being re-replicated.
  */
@@ -944,8 +944,6 @@ struct MetaDumpChunkReplicationCandidates: public MetaRequest {
 		return "dump chunk replication candidates";
 	}
 };
-
-
 
 /*!
  * \brief For monitoring purposes, a client/tool can send a OPEN FILES
@@ -1103,7 +1101,7 @@ struct MetaChunkReplicationCheck : public MetaRequest {
 extern int ParseCommand(char *cmdBuf, int cmdLen, MetaRequest **res);
 
 extern void initialize_request_handlers();
-extern void process_request();
+extern void process_request(MetaRequest *r);
 extern void submit_request(MetaRequest *r);
 extern void printleaves();
 
