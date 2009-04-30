@@ -33,61 +33,26 @@
 #include "libkfsIO/Acceptor.h"
 #include "ChunkServerFactory.h"
 #include "ClientManager.h"
-#include "thread.h"
 
 namespace KFS
 {
-    class NetDispatchTimeoutImpl;
-    
     class NetDispatch {
     public:
         NetDispatch();
         ~NetDispatch();
         void Start(int clientAcceptPort, int chunkServerAcceptPort);
-	//!< Call this method to prevent spinning: the main thread
-	//!< calls this method and pauses.
-	void WaitToFinish() {
-		mWorker.join();
-	}
-        //!< Dispatch the results of RPC requests that have finished execution.
-        //!< Also, dispatch layout related RPCs to chunk servers.
-        void Dispatch();
+        //!< An RPC just finished execution.  Send it on its merry way
+        void Dispatch(MetaRequest *r);
         ChunkServerFactory *GetChunkServerFactory() {
             return mChunkServerFactory;
         }
 
     private:
-        //!< Timer that periodically checks to see if
-        //!< requests have completed execution/layout RPCs need to be
-        //!< dispatched.
-        NetDispatchTimeoutImpl *mNetDispatchTimeoutImpl;
         ClientManager *mClientManager; //!< tracks the connected clients
         ChunkServerFactory *mChunkServerFactory; //!< creates chunk servers when they connect
-        MetaThread mWorker; //!< runs the poll loop in the net manager
-    };
-
-    class NetDispatchTimeoutImpl : public ITimeout {
-    public:
-        NetDispatchTimeoutImpl(NetDispatch *dis) {
-            mNetDispatch = dis;
-            // poll the logger/layout-mgr for RPCs every 100ms
-            // SetTimeoutInterval(100);
-        };
-        ~NetDispatchTimeoutImpl() {
-            mNetDispatch = NULL;
-	};
-        // On a timeout call the network dispatcher to see if any
-        // RPC requests/replies are ready to be sent out.
-        void Timeout() {
-            mNetDispatch->Dispatch();
-        };
-    private:
-        NetDispatch *mNetDispatch; //!< pointer to the owner (dispatch)
     };
 
     extern NetDispatch gNetDispatch;
-
-
 }
 
 #endif // META_NETDISPATCH_H

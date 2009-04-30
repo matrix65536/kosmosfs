@@ -35,6 +35,7 @@
 #include "NetDispatch.h"
 #include "startup.h"
 #include "ChunkServer.h"
+#include "ChildProcessTracker.h"
 
 using namespace KFS;
 
@@ -64,8 +65,6 @@ using std::endl;
 int
 main(int argc, char **argv)
 {
-        fd_set rfds;
-
 	if (argc > 2) {
 		KFS::MsgLogger::Init(argv[2]);
 	} else {
@@ -93,24 +92,11 @@ main(int argc, char **argv)
         //
         signal(SIGPIPE, SIG_IGN);
 
-        gNetDispatch.Start(gClientPort, gChunkServerPort);
 	ChunkServerHeartbeaterInit();
-
-        while (1) {
-		struct timeval timeout;
-
-		timeout.tv_sec = 5;
-		timeout.tv_usec = 0;
-
-                FD_ZERO(&rfds);
-                FD_SET(0, &rfds);
-                select(1, &rfds, NULL, NULL, &timeout);
-        	// block the main thread without consuming too much CPU
-		// if the net dispatch thread has gotten going, this method
-		// never returns
-		gNetDispatch.WaitToFinish();
-        }
-
+	ChildProcessTrackerInit();
+	
+	// this never returns...
+        gNetDispatch.Start(gClientPort, gChunkServerPort);
 
         return 0;
 }

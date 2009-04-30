@@ -7,6 +7,7 @@ checkpoint.cc
 ChunkReplicator.cc
 ChunkServer.cc
 ChunkServerFactory.cc
+ChildProcessTracker.cc
 ClientSM.cc
 entry.cc
 kfsops.cc

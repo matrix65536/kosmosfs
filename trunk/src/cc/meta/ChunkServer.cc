@@ -124,9 +124,6 @@ ChunkServer::HandleHello(int code, void *data)
 			}
 			mHelloDone = true;
 			mLastHeard = time(NULL);
-			// Hello message successfully
-			// processed.  Setup to handle RPCs
-			SET_HANDLER(this, &ChunkServer::HandleRequest);
 		}
 		break;
 
@@ -323,6 +320,8 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
             // Message is ready to be pushed down.  So remove it.
             iobuf->Consume(msgLen);
         }
+	// Hello message successfully processed.  Setup to handle RPCs
+	SET_HANDLER(this, &ChunkServer::HandleRequest);
         // send it on its merry way
         submit_request(op);
         return 0;
@@ -568,7 +567,8 @@ void
 ChunkServer::Enqueue(MetaRequest *r) 
 {
         mPendingReqs.enqueue(r);
-	globals().netKicker.Kick();
+	// globals().netKicker.Kick();
+	Dispatch();
 }
 
 int
