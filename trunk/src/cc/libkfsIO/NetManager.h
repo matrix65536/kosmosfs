@@ -68,6 +68,9 @@ public:
     void RegisterTimeoutHandler(ITimeout *handler);
     void UnRegisterTimeoutHandler(ITimeout *handler);
 
+    void SetForkedChild() {
+        mIsForkedChild = true;
+    }
     /// This API can be used to limit the backlog of outgoing data.
     /// Whenever the backlog exceeds the threshold, poll vector bits
     /// are turned off for incoming traffic.
@@ -112,6 +115,7 @@ private:
     bool                mIsOverloaded;
     bool                mRunFlag;
     bool                mTimerRunningFlag;
+    bool                mIsForkedChild;
     /// timeout interval specified in the call to poll().
     const int           mTimeoutMs;
     time_t              mNow;

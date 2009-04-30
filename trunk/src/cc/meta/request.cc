@@ -968,6 +968,12 @@ handle_dump_chunkToServerMap(MetaRequest *r)
 	pid_t pid;
 
 	if ((pid = fork()) == 0) {
+		// In the child process, we didn't setup the poll vector.  To
+		// avoid random crashes due to the d'tors trying to clear out
+		// entres from the poll vector, update the netManager so that it
+		// can "fake out" the closes.
+		globals().netManager.SetForkedChild();
+
 		// let the child write out the map; if the map is large, this'll
 		// take several seconds.  we get the benefits of writing out the
 		// map in the background while the metaserver continues to

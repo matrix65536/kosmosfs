@@ -52,6 +52,7 @@ NetManager::NetManager(int timeoutMs)
       mIsOverloaded(false),
       mRunFlag(true),
       mTimerRunningFlag(false),
+      mIsForkedChild(false),
       mTimeoutMs(timeoutMs),
       mNow(time(0)),
       mMaxOutgoingBacklog(0),
@@ -158,7 +159,7 @@ inline static int CheckFatalSysError(int err, const char* msg)
 void
 NetManager::Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTimer)
 {
-    if (! entry.mAdded) {
+    if ((! entry.mAdded) || (mIsForkedChild)) {
         return;
     }
     assert(*entry.mListIt);
