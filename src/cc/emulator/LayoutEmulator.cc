@@ -190,6 +190,8 @@ LayoutEmulator::ChunkReplicationDone(MetaChunkReplicate *req)
             iter->second.ongoingReplications = 0;
     }
 
+    mNumBlksRebalanced++;
+
     req->server->ReplicateChunkDone(req->chunkId);
 
     source = find_if(mChunkServers.begin(), mChunkServers.end(),
@@ -357,16 +359,6 @@ LayoutEmulator::ExecuteRebalancePlan()
         if (mChunkReplicationCandidates.size() == 0)
             break;
         ++round;
-
-        /*
-          if (round == 100) {
-          ServerLocation loc;
-          loc.hostname = "mrs044";
-          loc.port = 30000;
-          MarkServerDown(loc);
-          }
-        */
-
     }
 }
 
@@ -479,13 +471,14 @@ public:
             seenRacks.insert(c.chunkServers[i]->GetRack());
         }
 
-        if (c.chunkServers.size() == 0) {
+        MetaFattr *fa = metatree.getFattr(c.fid);
+        if ((fa == NULL) || (c.chunkServers.size() == 0)) {
             string fileName = metatree.getPathname(c.fid);
             cout << "Chunk " << cid << " (File " << c.fid << " " << fileName << ")";
             cout << " No copies" << endl;
             ofs << fileName << endl;
             missing++;
-        } else if (c.chunkServers.size() < 3) {
+        } else if ((int) c.chunkServers.size() < fa->numReplicas) {
             underReplicated++;
             cout << "Chunk " << cid << " (File " << c.fid << " " << metatree.getPathname(c.fid) << ")";
             cout << " Under replicated chunk with only " << c.chunkServers.size() << " replicas" << endl;

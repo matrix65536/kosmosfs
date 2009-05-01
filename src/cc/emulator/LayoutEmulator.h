@@ -40,7 +40,7 @@ namespace KFS
 
     class LayoutEmulator : public LayoutManager {
     public:
-        LayoutEmulator() : mPercentVariationFromMean(0.1) {
+        LayoutEmulator() : mPercentVariationFromMean(0.1), mNumBlksRebalanced(0) {
             SetMinChunkserversToExitRecovery(0);
             ToggleRebalancing(true);
         };
@@ -75,6 +75,10 @@ namespace KFS
         vector<size_t> GetChunkSizes(chunkId_t cid);
 
         void MarkServerDown(const ServerLocation &loc);
+
+        int GetNumBlksRebalanced() const {
+            return mNumBlksRebalanced;
+        }
     private:
         void Parse(const char *line, bool addChunksToReplicationChecker);
         bool mDoingRebalancePlanning;
@@ -85,6 +89,8 @@ namespace KFS
         // which nodes are candidates for migration.
         float mPercentVariationFromMean;
         double mAvgSpaceUtil;
+
+        int mNumBlksRebalanced;
 
         struct ChunkIdHash
             : public std::unary_function<chunkId_t, std::size_t>
