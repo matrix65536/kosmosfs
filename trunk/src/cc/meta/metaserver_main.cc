@@ -166,6 +166,9 @@ ReadMetaServerProperties(char *fileName)
 		setWORMMode(wormMode);
 	}
 
+	string chunkmapDumpDir = gProp.getValue("metaServer.chunkmapDumpDir", ".");
+	setChunkmapDumpDir(chunkmapDumpDir);
+
 	logLevel = gProp.getValue("metaServer.loglevel", defLogLevel);
         if (logLevel == "INFO")
 	        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);

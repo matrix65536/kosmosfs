@@ -904,6 +904,7 @@ struct MetaStats: public MetaRequest {
  * to a file.
  */
 struct MetaDumpChunkToServerMap: public MetaRequest {
+	string chunkmapFile; //!< file to which the chunk map was written to
 	MetaDumpChunkToServerMap(seq_t s):
 		MetaRequest(META_DUMP_CHUNKTOSERVERMAP, s, false) { }
 	int log(ofstream &file) const;
@@ -1111,6 +1112,7 @@ extern void setClusterKey(const char *key);
 extern void setMD5SumFn(const char *md5sumFn);
 extern void setWORMMode(bool value);
 extern void setMaxReplicasPerFile(int16_t value);
+extern void setChunkmapDumpDir(string dir);
 
 /* update counters for # of files/dirs/chunks in the system */
 extern void UpdateNumDirs(int count);

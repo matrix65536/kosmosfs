@@ -24,6 +24,7 @@
  */
 
 #include <map>
+#include <boost/lexical_cast.hpp>
 
 #include "common/Version.h"
 
@@ -104,6 +105,7 @@ string gClusterKey;
 string gMD5SumFn;
 bool gWormMode = false;
 static int16_t gMaxReplicasPerFile = MAX_REPLICAS_PER_FILE;
+static string gChunkmapDumpDir = ".";
 
 static bool
 file_exists(fid_t fid)
@@ -277,6 +279,12 @@ void
 KFS::setMaxReplicasPerFile(int16_t val)
 {
 	gMaxReplicasPerFile = val;
+}
+
+void
+KFS::setChunkmapDumpDir(string d)
+{
+	gChunkmapDumpDir = d;
 }
 
 /*
@@ -978,7 +986,7 @@ handle_dump_chunkToServerMap(MetaRequest *r)
 		// take several seconds.  we get the benefits of writing out the
 		// map in the background while the metaserver continues to
 		// process other RPCs
-		gLayoutManager.DumpChunkToServerMap();
+		gLayoutManager.DumpChunkToServerMap(gChunkmapDumpDir);
 		exit(0);
 	}
 	KFS_LOG_VA_INFO("child that is writing out the chunk->server map has pid: %d", pid);
@@ -988,6 +996,7 @@ handle_dump_chunkToServerMap(MetaRequest *r)
 		return;
 	}
 	// hold on to the request until the child  finishes
+	req->chunkmapFile = gChunkmapDumpDir + "/chunkmap.txt." + boost::lexical_cast<string>(pid);
 	req->suspended = true;
 	gChildProcessTracker.Track(pid, req);
 }
@@ -2622,15 +2631,8 @@ MetaDumpChunkToServerMap::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
-
-	/*
-    	ostringstream v;
-	gLayoutManager.DumpChunkToServerMap(v);
-	os << "Content-length: " << v.str().length() << "\r\n\r\n";
-	if (v.str().length() > 0)
-	    os << v.str();
-	*/
+	os << "Status: " << status << "\r\n";
+	os << "Filename: " << chunkmapFile << "\r\n\r\n";
 }
 
 void
