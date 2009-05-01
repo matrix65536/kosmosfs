@@ -367,8 +367,11 @@ namespace KFS
 		}
 
 
-		/// Dump out the chunk location map to a file.
-		void DumpChunkToServerMap();
+		/// Dump out the chunk location map to a file.  The file is
+		/// written to the specified dir.  The filename: 
+		/// <dir>/chunkmap.txt.<pid>
+		///
+		void DumpChunkToServerMap(const std::string &dir);
 
 		/// Dump out the chunk location map to a string stream.
 		void DumpChunkToServerMap(ostringstream &os);

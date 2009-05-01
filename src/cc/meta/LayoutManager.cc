@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <functional>
 #include <sstream>
+#include <boost/lexical_cast.hpp>
 
 #include "LayoutManager.h"
 #include "kfstree.h"
@@ -362,22 +363,24 @@ public:
 // modes where we setup the block map and experiment.
 //
 void
-LayoutManager::DumpChunkToServerMap()
+LayoutManager::DumpChunkToServerMap(const string &dirToUse)
 {
 	ofstream ofs;
+	pid_t pid = getpid();
 
 	//
 	// to make offline rebalancing/re-replication easier, dump out where the
 	// servers are and how much space each has.
 	//
-	ofs.open("network.def");
+	string fn = dirToUse + "/network.def";
+	ofs.open(fn.c_str());
 	for_each(mChunkServers.begin(), mChunkServers.end(),
 		PrintChunkServerInfo(ofs));
 	ofs.flush();
 	ofs.close();
 
-
-	ofs.open("chunkmap.txt");
+	fn = dirToUse + "/chunkmap.txt." + boost::lexical_cast<string>(pid);
+	ofs.open(fn.c_str());
 
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
 		MapDumper(ofs));
