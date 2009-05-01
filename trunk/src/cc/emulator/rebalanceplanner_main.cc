@@ -111,7 +111,9 @@ main(int argc, char **argv)
         
     }
 
-    gLayoutEmulator.DumpChunkToServerMap();
+    gLayoutEmulator.DumpChunkToServerMap(".");
     gLayoutEmulator.PrintChunkserverBlockCount();
+
+    cout << "# of blks rebalanced: " << gLayoutEmulator.GetNumBlksRebalanced() << endl;
 }
 

@@ -92,7 +92,7 @@ main(int argc, char **argv)
 
     gLayoutEmulator.ExecuteRebalancePlan();
 
-    gLayoutEmulator.DumpChunkToServerMap();
+    gLayoutEmulator.DumpChunkToServerMap(".");
     gLayoutEmulator.PrintChunkserverBlockCount();
 }
 

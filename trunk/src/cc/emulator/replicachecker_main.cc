@@ -65,8 +65,8 @@ main(int argc, char **argv)
                 help = true;
                 break;
             case 's':
-				checkSize = true;
-				break;
+                checkSize = true;
+                break;
             case 'v':
             	verbose = true;
             	break;
