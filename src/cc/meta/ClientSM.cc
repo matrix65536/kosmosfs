@@ -69,7 +69,6 @@ ClientSM::SendResponse(MetaRequest *op)
 	ostringstream os;
 
 	op->response(os);
-	mClientIP = mNetConnection->GetPeerName();
 
 	if (op->op == META_ALLOCATE) {
 		MetaAllocate *alloc = static_cast<MetaAllocate *>(op);
@@ -194,7 +193,8 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 	scoped_array<char> buf(new char[cmdLen + 1]);
 	MetaRequest *op;
 
-	mClientIP = mNetConnection->GetPeerName();
+	if (mClientIP == "")
+		mClientIP = mNetConnection->GetPeerName();
 
 	iobuf->CopyOut(buf.get(), cmdLen);
 	buf[cmdLen] = '\0';
