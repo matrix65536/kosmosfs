@@ -710,8 +710,8 @@ handle_allocate(MetaRequest *r)
 			// on the metaserver.
 			gLayoutManager.RemoveChunkToServerMapping(req->chunkId);
 		}
-		req->suspended = true;
-		ChangeIncarnationNumber(req);
+		// processing for this message is all done
+		req->suspended = false;
 		return;
 	}
 	// layout is complete (step #6)

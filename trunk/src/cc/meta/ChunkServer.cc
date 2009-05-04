@@ -186,8 +186,6 @@ ChunkServer::HandleRequest(int code, void *data)
 
 	case EVENT_NET_ERROR:
 		KFS_LOG_VA_INFO("Chunk server %s is down...", GetServerName());
-
-		FailDispatchedOps();
 		
 		// Take out the server from write-allocation
 		mTotalSpace = mAllocSpace = mUsedSpace = 0;
@@ -198,6 +196,7 @@ ChunkServer::HandleRequest(int code, void *data)
 		}
 
 		mDown = true;
+		FailDispatchedOps();
 		// force the server down thru the main loop to avoid races
 		op = new MetaBye(0, shared_from_this());
 		op->clnt = this;
@@ -566,6 +565,11 @@ ChunkServer::FindMatchingRequest(seq_t cseq)
 void
 ChunkServer::Enqueue(MetaRequest *r) 
 {
+	if (mDown) {
+		r->status = -EIO;
+		ResumeOp(r);
+		return;
+	}
         mPendingReqs.enqueue(r);
 	// globals().netKicker.Kick();
 	Dispatch();
