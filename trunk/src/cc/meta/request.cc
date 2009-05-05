@@ -436,7 +436,7 @@ public:
 	EnumerateReaddirPlusInfo(ostringstream &o) : os(o) { }
 	void operator()(MetaDentry *entry) {
 		static string fname[] = { "empty", "file", "dir" };
-		MetaFattr *fa = metatree.lookup(entry->getDir(), entry->getName());
+		MetaFattr *fa = metatree.getFattr(entry->id());
 
 		os << "Begin-entry" << "\r\n";
 
