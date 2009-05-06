@@ -273,7 +273,7 @@ struct MetaRmdir: public MetaRequest {
  */
 struct MetaReaddir: public MetaRequest {
 	fid_t dir;	//!< directory to read
-	vector <MetaDentry> v; //!< vector of results
+	vector <MetaDentry *> v; //!< vector of results
 	MetaReaddir(seq_t s, fid_t d):
 		MetaRequest(META_READDIR, s, false), dir(d) { }
 	int log(ofstream &file) const;
@@ -302,7 +302,7 @@ struct MetaReaddirPlus: public MetaRequest {
 	{
 		ostringstream os;
 
-		os << "readdir: dir fid = " << dir;
+		os << "readdir plus: dir fid = " << dir;
 		return os.str();
 	}
 };

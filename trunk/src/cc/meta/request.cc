@@ -393,19 +393,9 @@ handle_readdir(MetaRequest *r)
 	else if (!is_dir(req->dir))
 		req->status = -ENOTDIR;
 	else {
-		vector<MetaDentry *> res;
-		req->status = metatree.readdir(req->dir, res);
-		//
-		// Previously, req->v used to be vector<MetaDentry *>.  This
-		// meant that req->v carried out a pointer for something in the
-		// metatree.  Now, if the pointer was deleted, then req->v
-		// contains dangling references and can corrupt memory.
-		// Instead, make a copy of the dentry and we are good.
-		//
-		if (req->status == 0) {
-			for (uint32_t i = 0; i < res.size(); i++)
-				req->v.push_back(res[i]);
-		}
+		// Since we took out threads in the code, we can revert the change back to version 71.  
+		// This piece of code was changed with svn version 75.
+		req->status = metatree.readdir(req->dir, req->v);
 	}
 }
 
@@ -2354,8 +2344,8 @@ MetaRmdir::response(ostringstream &os)
 void
 MetaReaddir::response(ostringstream &os)
 {
-	vector<MetaDentry>::iterator iter;
-	string res;
+	vector<MetaDentry *>::iterator iter;
+	ostringstream entries;
 	int numEntries = 0;
 
 	os << "OK\r\n";
@@ -2372,17 +2362,18 @@ MetaReaddir::response(ostringstream &os)
 	// eof indicator to support reading less than a whole
 	// directory at a time.
 	for (iter = v.begin(); iter != v.end(); ++iter) {
+		MetaDentry *d = *iter;
 		// "/" doesn't have "/" as an entry in it.
-		if ((dir == ROOTFID) && (iter->getName() == "/"))
+		if ((dir == ROOTFID) && (d->getName() == "/"))
 			continue;
 
-		res = res + iter->getName() + "\n";
+		entries << d->getName() << "\n";
 		++numEntries;
 	}
 	os << "Num-Entries: " << numEntries << "\r\n";
-	os << "Content-length: " << res.length() << "\r\n\r\n";
-	if (res.length() > 0)
-		os << res;
+	os << "Content-length: " << entries.str().length() << "\r\n\r\n";
+	if (entries.str().length() > 0)
+		os << entries.str();
 }
 
 void
