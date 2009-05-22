@@ -778,7 +778,7 @@ kfs_cd(PyObject *pself, PyObject *args)
 		PyErr_SetString(PyExc_IOError, strerror(ENOTDIR));
 		return NULL;
 	}
-	PyObject *newcwd = PyString_FromString(path);
+	PyObject *newcwd = PyString_FromString(path.c_str());
 	if (newcwd != NULL) {
 		Py_DECREF(self->cwd);
 		self->cwd = newcwd;
