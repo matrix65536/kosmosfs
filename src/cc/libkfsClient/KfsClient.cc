@@ -498,6 +498,8 @@ KfsClientImpl::KfsClientImpl()
     mDefaultReadAheadSize = min(BUF_SIZE, size_t(1) << 20);
     // for random # generation, seed it
     srand(getpid());
+    // turn off the read-ahead thread for now
+    mPendingOp.Stop();
 }
 
 KfsClientImpl::~KfsClientImpl()
@@ -1588,6 +1590,9 @@ KfsClientImpl::Seek(int fd, off_t offset, int whence)
 off_t KfsClientImpl::Tell(int fd)
 {
     MutexLock l(&mMutex);
+
+    if (!valid_fd(fd) || mFileTable[fd]->fattr.isDirectory)
+	return (off_t) -EBADF;
 
     return mFileTable[fd]->currPos.fileOffset;
 }
