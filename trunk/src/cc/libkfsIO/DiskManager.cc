@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/22
 // Author: Sriram Rao
@@ -247,7 +247,7 @@ DiskManager::ReapCompletedIOs()
         if ((event->op == OP_READ) && (event->retval > 0)) {
             // if the read finished successfully, event->retval
             // contains the # of bytes that were read
-            event->data->Fill(event->retval);
+            event->data.Fill(event->retval);
         }
         event->conn->HandleDone(event, event->aioStatus);
         iter = mDiskEvents.erase(iter);
@@ -287,14 +287,14 @@ aioSetup(DiskEventPtr &event, int fd, off_t offset, int numBytes, char *buf)
 ///
 int
 DiskManager::Read(DiskConnection *conn, int fd,
-                  IOBufferDataPtr &data,
+                  const IOBufferData &data,
                   off_t offset, int numBytes,
                   DiskEventPtr &resultEvent)
 {
     DiskEventPtr event(new DiskEvent_t(conn->shared_from_this(), data, OP_READ));
 
     // schedule a read request
-    aioSetup(event, fd, offset, numBytes, data->Producer());
+    aioSetup(event, fd, offset, numBytes, event->data.Producer());
     struct aiocb *aio_cb = &(event->aio_cb);
 
 #if defined (__APPLE__)
@@ -319,17 +319,17 @@ DiskManager::Read(DiskConnection *conn, int fd,
 ///
 int
 DiskManager::Write(DiskConnection *conn, int fd,
-                   IOBufferDataPtr &data,
+                   const IOBufferData &data,
                    off_t offset, int numBytes,
                    DiskEventPtr &resultEvent)
 {
     DiskEventPtr event(new DiskEvent_t(conn->shared_from_this(), data, OP_WRITE));
 
-    assert(numBytes <= data->BytesConsumable());
+    assert(numBytes <= data.BytesConsumable());
 
     assert(fd > 0);
 
-    aioSetup(event, fd, offset, numBytes, data->Consumer());
+    aioSetup(event, fd, offset, numBytes, event->data.Consumer());
 
     struct aiocb *aio_cb = &(event->aio_cb);
 

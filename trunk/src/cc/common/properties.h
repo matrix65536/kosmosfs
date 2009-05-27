@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // \brief Properties file similar to java.util.Properties
 //
@@ -48,11 +48,11 @@ class Properties {
     int loadProperties(std::istream &ist, char delimiter, bool verbose, bool multiline = false);
     std::string getValue(std::string key, std::string def) const;
     const char* getValue(std::string key, const char* def) const;
-    int getValue(std::string key, int def);
-    long getValue(std::string key, long def);
-    long long getValue(std::string key, long long def);
-    uint64_t getValue(std::string key, uint64_t def);
-    double getValue(std::string key, double def);   
+    int getValue(std::string key, int def) const;
+    long getValue(std::string key, long def) const;
+    long long getValue(std::string key, long long def) const;
+    uint64_t getValue(std::string key, uint64_t def) const;
+    double getValue(std::string key, double def) const;   
     void setValue(const std::string key, const std::string value);
     void getList(std::string &outBuf, std::string linePrefix) const;
     Properties();

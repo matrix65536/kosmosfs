@@ -15,6 +15,7 @@ MetaServerSM.cc
 RemoteSyncSM.cc
 Replicator.cc
 Utils.cc
+DiskIo.cc
 )
 
 #
@@ -33,11 +34,11 @@ set (exe_files chunkserver chunkscrubber)
 
 foreach (exe_file ${exe_files})
         if (USE_STATIC_LIB_LINKAGE)
-           add_dependencies (${exe_file} chunk kfsCommon kfsIO)
-           target_link_libraries (${exe_file} chunk kfsIO kfsCommon pthread crypto)
+           add_dependencies (${exe_file} chunk kfsCommon kfsIO qcdio)
+           target_link_libraries (${exe_file} chunk kfsIO kfsCommon qcdio pthread crypto)
         else (USE_STATIC_LIB_LINKAGE)
-           add_dependencies (${exe_file} chunk-shared kfsCommon-shared kfsIO-shared)
-           target_link_libraries (${exe_file} chunk-shared kfsIO-shared kfsCommon-shared pthread crypto)
+           add_dependencies (${exe_file} chunk-shared kfsCommon-shared kfsIO-shared qcdio-shared)
+           target_link_libraries (${exe_file} chunk-shared kfsIO-shared kfsCommon-shared qcdio-shared pthread crypto)
         endif (USE_STATIC_LIB_LINKAGE)
 endforeach (exe_file)
 

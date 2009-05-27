@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcdllist.h#1 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcdllist.h#2 $
 //
 // Created 2008/11/03
 // Author: Mike Ovsiannikov
@@ -211,27 +211,26 @@ public:
         Iterator(
             NodeT*const* inListPtr)
             : mHeadPtr(inListPtr),
-              mNodePtr(0)
+              mNextNodePtr(inListPtr[ListT])
             {}
         ~Iterator()
             {}
+        bool HasNext() const
+            { return (mNextNodePtr != 0); }
         // Post increment, returns current node, or 0.
         NodeT* Next()
         {
-            if (mNodePtr == mHeadPtr[ListT]) {
-                return 0;
+            NodeT* const theRetPtr = mNextNodePtr;
+            if ((mNextNodePtr = ListOp::GetNextPtr(theRetPtr)) == mHeadPtr[ListT]) {
+                mNextNodePtr = 0;
             }
-            NodeT* const theRetPtr = mNodePtr ? mNodePtr : mHeadPtr[ListT];
-            mNodePtr = ListOp::GetNextPtr(theRetPtr);
             return theRetPtr;
         }
-        bool HasNext() const
-            { return (mNodePtr != mHeadPtr[ListT] && mHeadPtr[ListT] != 0); }
         void Reset()
-            { mNodePtr = 0; }
+            { mNextNodePtr = mHeadPtr[ListT]; }
     private:
-        NodeT*const* mHeadPtr;
-        NodeT*       mNodePtr;
+        NodeT*const* const mHeadPtr;
+        NodeT*             mNextNodePtr;
     };
 };
 

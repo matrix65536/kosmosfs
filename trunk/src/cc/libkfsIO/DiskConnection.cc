@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/23
 // Author: Sriram Rao
@@ -89,7 +89,6 @@ void DiskConnection::Close()
 ssize_t
 DiskConnection::Read(off_t offset, size_t numBytes)
 {
-    IOBufferDataPtr data;
     DiskEventPtr event;
     const size_t defPerRead = 65536 * 8;
     int res;
@@ -107,9 +106,7 @@ DiskConnection::Read(off_t offset, size_t numBytes)
         if (bytesPerRead <= 0)
             break;
 
-        data.reset(new IOBufferData(bytesPerRead));
-
-        res = globals().diskManager.Read(this, mHandle->mFd, data, 
+        res = globals().diskManager.Read(this, mHandle->mFd, IOBufferData(bytesPerRead), 
                                        offset, bytesPerRead, event);
         if (res < 0) {
             return nRead > 0 ? nRead : (ssize_t) -1;
@@ -232,8 +229,7 @@ int DiskConnection::ReadDone(DiskEventPtr &doneEvent, int res)
 ssize_t
 DiskConnection::Write(off_t offset, size_t numBytes, IOBuffer *buf) 
 {
-    list<IOBufferDataPtr>::iterator iter;
-    IOBufferDataPtr data;
+    IOBuffer::iterator iter;
     DiskEventPtr event;
     int res;
     size_t nWrote = 0, numIO;
@@ -245,16 +241,15 @@ DiskConnection::Write(off_t offset, size_t numBytes, IOBuffer *buf)
         return 0;
 
     // schedule each blob as a separate write
-    for (iter = buf->mBuf.begin(); iter != buf->mBuf.end(); iter++) {
-        data = *iter;
-        numIO = data->BytesConsumable();
+    for (iter = buf->begin(); iter != buf->end(); iter++) {
+        numIO = iter->BytesConsumable();
         if (numIO == 0)
             continue;
 
         if (numIO + nWrote > numBytes)
             numIO = numBytes - nWrote;
 
-        res = globals().diskManager.Write(this, mHandle->mFd, data, 
+        res = globals().diskManager.Write(this, mHandle->mFd, *iter, 
                                         offset, numIO, event);
         if (res < 0) {
             return nWrote > 0 ? nWrote : (ssize_t) -1;

@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qciobufferpool.cpp#1 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qciobufferpool.cpp#2 $
 //
 // Created 2008/11/01
 // Author: Mike Ovsiannikov
@@ -40,10 +40,10 @@ public:
         : mAllocPtr(0),
           mAllocSize(0),
           mStartPtr(0),
-          mEndPtr(0),
           mFreeListPtr(0),
           mTotalCnt(0),
-          mFreeCnt(0)
+          mFreeCnt(0),
+          mBufSizeShift(0)
         { List::Init(*this); }
     ~Partition()
         { Partition::Destroy(); }
@@ -52,13 +52,18 @@ public:
         int  inBufferSize,
         bool inLockMemoryFlag)
     {
-        if (inBufferSize < (int)sizeof(Buffer)) {
+        int theBufSizeShift = -1;
+        for (int i = inBufferSize; i > 0; i >>= 1, theBufSizeShift++)
+        {}
+        if (theBufSizeShift < 0 || inBufferSize != (1 << theBufSizeShift)) {
             return EINVAL;
         }
         Destroy();
+        mBufSizeShift = theBufSizeShift;
         if (inNumBuffers <= 0) {
             return 0;
         }
+        mFreeListPtr = new BufferIndex[inNumBuffers + 1];
         size_t const kPageSize = sysconf(_SC_PAGESIZE);
         mAllocSize = size_t(inNumBuffers) * (inBufferSize + 1);
         mAllocSize = (mAllocSize + kPageSize - 1) / kPageSize * kPageSize;
@@ -74,50 +79,57 @@ public:
         }
         mStartPtr += (((char*)mAllocPtr - (char*)0) + inBufferSize - 1) /
             inBufferSize * inBufferSize;
-        mEndPtr      = mStartPtr;
-        mTotalCnt    = inNumBuffers;
-        mFreeListPtr = 0;
-        mFreeCnt     = 0;
-        for (; ;) {
-            QCVERIFY(Put(mEndPtr));
-            if (mFreeCnt >= mTotalCnt) {
-                break;
-            }
-            mEndPtr += inBufferSize;
+        mTotalCnt     = inNumBuffers;
+        mFreeCnt      = 0;
+        *mFreeListPtr = 0;
+        while (mFreeCnt < mTotalCnt) {
+            mFreeListPtr[mFreeCnt] = mFreeCnt + 1;
+            mFreeCnt++;
         }
+        mFreeListPtr[mFreeCnt] = 0;
         return 0;
     }
     void Destroy()
     {
+        delete [] mFreeListPtr;
+        mFreeListPtr = 0;
         if (mAllocPtr && munmap(mAllocPtr, mAllocSize) != 0) {
             QCUtils::FatalError("munmap", errno);
         }
-        mAllocPtr    = 0;
-        mAllocSize   = 0;
-        mStartPtr    = 0;
-        mEndPtr      = 0;
-        mFreeListPtr = 0;
-        mTotalCnt    = 0;
-        mFreeCnt     = 0;
+        mAllocPtr     = 0;
+        mAllocSize    = 0;
+        mStartPtr     = 0;
+        mTotalCnt     = 0;
+        mFreeCnt      = 0;
+        mBufSizeShift = 0;
     }
     char* Get()
     {
-        if (! mFreeListPtr) {
-            QCASSERT(mFreeCnt == 0);
+        if (mFreeCnt <= 0) {
+            QCASSERT(*mFreeListPtr == 0 && mFreeCnt == 0);
             return 0;
         }
-        QCASSERT(mFreeCnt >= 0);
+        const BufferIndex theIdx = *mFreeListPtr;
+        QCASSERT(theIdx > 0);
         mFreeCnt--;
-        return mFreeListPtr->Get(mFreeListPtr);
+        *mFreeListPtr = mFreeListPtr[theIdx];
+        return (mStartPtr + ((theIdx - 1) << mBufSizeShift));
     }
     bool Put(
         char* inPtr)
     {
-        if (inPtr < mStartPtr || inPtr > mEndPtr) {
+        if (inPtr < mStartPtr) {
             return false;
         }
-        QCRTASSERT(mTotalCnt > mFreeCnt);
-        mFreeListPtr = new(inPtr) Buffer(mFreeListPtr);
+        const size_t theOffset = inPtr - mStartPtr;
+        const size_t theIdx    = (theOffset >> mBufSizeShift) + 1;
+        if (theIdx > size_t(mTotalCnt)) {
+            return false;
+        }
+        QCRTASSERT(mTotalCnt > mFreeCnt &&
+            (theOffset & ((size_t(1) << mBufSizeShift) - 1)) == 0);
+        mFreeListPtr[theIdx] = *mFreeListPtr;
+        *mFreeListPtr = BufferIndex(theIdx);
         mFreeCnt++;
         return true;
     }
@@ -134,41 +146,17 @@ public:
 private:
     friend class QCDLListOp<Partition, 0>;
     friend class QCDLListOp<const Partition, 0>;
+    typedef unsigned int BufferIndex;
 
-    class Buffer
-    {
-    public:
-        Buffer(
-            Buffer* inNextPtr)
-            : mNextPtr(inNextPtr)
-            {}
-        char* Get(
-            Buffer*& outListPtr)
-        {
-            outListPtr = mNextPtr;
-            return reinterpret_cast<char*>(this);
-        }
-        void* operator new(size_t, void* inPtr)
-            { return inPtr; }
-    private:
-        Buffer* mNextPtr;
-
-        ~Buffer();
-        Buffer(
-            const Buffer& inBuffer);
-        Buffer& operator=(
-            const Buffer& inBuffer);
-    };
-
-    void*      mAllocPtr;
-    size_t     mAllocSize;
-    char*      mStartPtr;
-    char*      mEndPtr;
-    Buffer*    mFreeListPtr;
-    int        mTotalCnt;
-    int        mFreeCnt;
-    Partition* mPrevPtr[1];
-    Partition* mNextPtr[1];
+    void*        mAllocPtr;
+    size_t       mAllocSize;
+    char*        mStartPtr;
+    BufferIndex* mFreeListPtr;
+    int          mTotalCnt;
+    int          mFreeCnt;
+    int          mBufSizeShift;
+    Partition*   mPrevPtr[1];
+    Partition*   mNextPtr[1];
 };
 
 typedef QCDLList<QCIoBufferPool::Client, 0> QCIoBufferPoolClientList;

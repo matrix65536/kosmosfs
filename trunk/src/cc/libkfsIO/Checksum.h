@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/09/12
 // Author: Sriram Rao
@@ -45,11 +45,11 @@ extern uint32_t OffsetToChecksumBlockStart(off_t offset);
 extern uint32_t OffsetToChecksumBlockEnd(off_t offset);
 
 /// Call this function if you want checksum computed over CHECKSUM_BLOCKSIZE bytes
-extern uint32_t ComputeBlockChecksum(IOBuffer *data, size_t len);
+extern uint32_t ComputeBlockChecksum(const IOBuffer *data, size_t len);
 extern uint32_t ComputeBlockChecksum(const char *data, size_t len);
 
 /// Call this function if you want a checksums for a sequence of CHECKSUM_BLOCKSIZE bytes
-extern std::vector<uint32_t> ComputeChecksums(IOBuffer *data, size_t len);
+extern std::vector<uint32_t> ComputeChecksums(const IOBuffer *data, size_t len);
 
 }
 

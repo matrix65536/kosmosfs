@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/09/12
 // Author: Sriram Rao
@@ -67,29 +67,28 @@ KFS::ComputeBlockChecksum(const char *buf, size_t len)
 }
 
 uint32_t
-KFS::ComputeBlockChecksum(IOBuffer *data, size_t len)
+KFS::ComputeBlockChecksum(const IOBuffer *data, size_t len)
 {
     uint32_t res = adler32(0L, Z_NULL, 0);
 
-    for (list<IOBufferDataPtr>::iterator iter = data->mBuf.begin();
-         len > 0 && (iter != data->mBuf.end()); ++iter) {
-        IOBufferDataPtr blk = *iter;
-        size_t tlen = min((size_t) blk->BytesConsumable(), len);
+    for (IOBuffer::iterator iter = data->begin();
+         len > 0 && (iter != data->end()); ++iter) {
+        size_t tlen = min((size_t) iter->BytesConsumable(), len);
 
         if (tlen == 0)
             continue;
 
-        res = adler32(res, (const Bytef *) blk->Consumer(), tlen);
+        res = adler32(res, (const Bytef *) iter->Consumer(), tlen);
         len -= tlen;
     }
     return res;
 }
 
 vector<uint32_t>
-KFS::ComputeChecksums(IOBuffer *data, size_t len)
+KFS::ComputeChecksums(const IOBuffer *data, size_t len)
 {
     vector<uint32_t> cksums;
-    list<IOBufferDataPtr>::iterator iter = data->mBuf.begin();
+    IOBuffer::iterator iter = data->begin();
 
     if (len < CHECKSUM_BLOCKSIZE) {
         uint32_t cks = ComputeBlockChecksum(data, len);
@@ -97,28 +96,26 @@ KFS::ComputeChecksums(IOBuffer *data, size_t len)
         return cksums;
     }
 
-    if (iter == data->mBuf.end())
+    if (iter == data->end())
         return cksums;
 
-    IOBufferDataPtr blk = *iter;
-    char *buf = blk->Consumer();
+    const char *buf = iter->Consumer();
 
     /// Compute checksum block by block
-    while ((len > 0) && (iter != data->mBuf.end())) {
+    while ((len > 0) && (iter != data->end())) {
         size_t currLen = 0;
         uint32_t res = adler32(0L, Z_NULL, 0);
 
         while (currLen < CHECKSUM_BLOCKSIZE) {
-            unsigned navail = min((size_t) (blk->Producer() - buf), len);
+            unsigned navail = min((size_t) (iter->Producer() - buf), len);
             if (currLen + navail > CHECKSUM_BLOCKSIZE)
                 navail = CHECKSUM_BLOCKSIZE - currLen;
 
             if (navail == 0) {
                 iter++;
-                if (iter == data->mBuf.end())
+                if (iter == data->end())
                     break;
-                blk = *iter;
-                buf = blk->Consumer();
+                buf = iter->Consumer();
                 continue;
             }
 

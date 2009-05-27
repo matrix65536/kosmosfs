@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcmutex.h#1 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcmutex.h#2 $
 //
 // Created 2008/10/30
 // Author: Mike Ovsiannikov
@@ -28,11 +28,12 @@
 
 #include <pthread.h>
 #include <errno.h>
+#include <stdint.h>
 
 class QCMutex
 {
 public:
-    typedef long long Time;
+    typedef int64_t Time;
 
     QCMutex();
     ~QCMutex();

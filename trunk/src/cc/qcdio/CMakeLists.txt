@@ -28,7 +28,7 @@ file (GLOB sources *.cpp)
 file (GLOB includes *.h)
 
 string(TOUPPER QC_OS_NAME_${CMAKE_SYSTEM_NAME} QC_OS_NAME)
-add_definitions (-D_GNU_SOURCE -D${QC_OS_NAME})
+add_definitions (-D_GNU_SOURCE -D${QC_OS_NAME} -DQC_USE_BOOST)
 
 #
 # Build a static and a dynamically linked libraries.  Both libraries
@@ -45,10 +45,10 @@ set_target_properties (qcdio-shared PROPERTIES OUTPUT_NAME "qcdio")
 set_target_properties (qcdio PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties (qcdio-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-add_dependencies (qcdio kfsCommon kfsIO)
+#add_dependencies (qcdio kfsCommon kfsIO)
 # get everthing into one
-target_link_libraries (qcdio kfsCommon kfsIO)
-target_link_libraries (qcdio-shared kfsCommon-shared kfsIO-shared)
+#target_link_libraries (qcdio kfsCommon kfsIO)
+#target_link_libraries (qcdio-shared kfsCommon-shared kfsIO-shared)
 #
 install (TARGETS qcdio qcdio-shared
         LIBRARY DESTINATION lib

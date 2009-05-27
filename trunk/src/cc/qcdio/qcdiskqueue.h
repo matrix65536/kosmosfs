@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcdiskqueue.h#1 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcdiskqueue.h#2 $
 //
 // Created 2008/11/11
 // Author: Mike Ovsiannikov
@@ -56,7 +56,8 @@ public:
         kErrorOutOfRequests        = 12,
         kErrorOpen                 = 13,
         kErrorClose                = 14,
-        kErrorHasPendingRequests   = 15
+        kErrorHasPendingRequests   = 15,
+        kErrorSpaceAlloc           = 16
     };
     static const char* ToString(
         Error inErrorCode);
@@ -269,17 +270,22 @@ public:
         RequestId     inRequestId,
         IoCompletion* inCompletionIfInFlightPtr);
     void GetPendingCount(
-        int&     inRequestCount,
-        int64_t& inReadBlockCount,
-        int64_t& inWriteBlockCount);
+        int&     outFreeRequestCount,
+        int&     outRequestCount,
+        int64_t& outReadBlockCount,
+        int64_t& outWriteBlockCount);
     OpenFileStatus OpenFile(
         const char* inFileNamePtr,
-        int64_t     inMaxFileSize  = -1,
-        bool        inReadOnlyFlag = false);
+        int64_t     inMaxFileSize           = -1,
+        bool        inReadOnlyFlag          = false,
+        bool        inAllocateFileSpaceFlag = false,
+        bool        inCreateFlag            = false);
     CloseFileStatus CloseFile(
         FileIdx inFileIdx,
         int64_t inFileSize = -1);
     int GetBlockSize() const;
+    Status AllocateFileSpace(
+        FileIdx inFileIdx);
 
 private:
     class Queue;

@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/10
 // Author: Sriram Rao
@@ -207,7 +207,7 @@ void TcpSocket::SetupSocket()
 
 }
 
-int TcpSocket::GetPeerName(struct sockaddr *peerAddr, int len)
+int TcpSocket::GetPeerName(struct sockaddr *peerAddr, int len) const
 {
     socklen_t peerLen = len;
 
@@ -218,7 +218,7 @@ int TcpSocket::GetPeerName(struct sockaddr *peerAddr, int len)
     return 0;
 }
 
-string TcpSocket::GetPeerName()
+string TcpSocket::GetPeerName() const
 {
     struct sockaddr_in saddr;
     char ipname[INET_ADDRSTRLEN];
@@ -234,7 +234,7 @@ int TcpSocket::Send(const char *buf, int bufLen)
 {
     int nwrote;
 
-    nwrote = send(mSockFd, buf, bufLen, 0);
+    nwrote = bufLen > 0 ? send(mSockFd, buf, bufLen, 0) : 0;
     if (nwrote > 0) {
         globals().ctrNetBytesWritten.Update(nwrote);
     }
@@ -245,7 +245,7 @@ int TcpSocket::Recv(char *buf, int bufLen)
 {
     int nread;
 
-    nread = recv(mSockFd, buf, bufLen, 0);
+    nread = bufLen > 0 ? recv(mSockFd, buf, bufLen, 0) : 0;
     if (nread > 0) {
         globals().ctrNetBytesRead.Update(nread);
     }
@@ -255,18 +255,12 @@ int TcpSocket::Recv(char *buf, int bufLen)
 
 int TcpSocket::Peek(char *buf, int bufLen)
 {
-    int nread;
-
-    nread = recv(mSockFd, buf, bufLen, MSG_PEEK);
-    return nread;
+    return (bufLen > 0 ? recv(mSockFd, buf, bufLen, MSG_PEEK) : 0);
 }
 
-bool TcpSocket::IsGood()
+bool TcpSocket::IsGood() const
 {
-    if (mSockFd < 0)
-        return false;
-
-    return true;
+    return (mSockFd >= 0);
 }
 
 

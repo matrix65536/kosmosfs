@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/07
 // Author: Sriram Rao
@@ -189,8 +189,6 @@ MetaServerSM::SendHello()
 void
 MetaServerSM::DispatchHello()
 {
-    ostringstream os;
-
 #ifdef DEBUG
     verifyExecutingOnNetProcessor();
 #endif
@@ -203,8 +201,9 @@ MetaServerSM::DispatchHello()
             return;
         }
     }
+    IOBuffer::OStream os;
     mHelloOp->Request(os);
-    mNetConnection->Write(os.str().c_str(), os.str().length());
+    mNetConnection->Write(&os);
 
     mSentHello = true;
 
@@ -218,7 +217,6 @@ MetaServerSM::DispatchHello()
 int
 MetaServerSM::SendHello()
 {
-    ostringstream os;
     char hostname[256];
 
 #ifdef DEBUG
@@ -244,8 +242,9 @@ MetaServerSM::SendHello()
     // processor to get this info.
     gChunkManager.GetHostedChunks(op.chunks);    
 
+    IOBuffer::OStream os;
     op.Request(os);
-    mNetConnection->Write(os.str().c_str(), os.str().length());
+    mNetConnection->Write(&os);
 
     mSentHello = true;
 
@@ -279,11 +278,22 @@ MetaServerSM::HandleRequest(int code, void *data)
 	// We read something from the network.  Run the RPC that
 	// came in.
 	iobuf = (IOBuffer *) data;
-	while (IsMsgAvail(iobuf, &cmdLen)) {
+        bool hasMsg;
+	while ((hasMsg = IsMsgAvail(iobuf, &cmdLen))) {
             // if we don't have all the data for the command, bail
 	    if (!HandleMsg(iobuf, cmdLen))
                 break;
 	}
+        int hdrsz;
+        if (! hasMsg &&
+                (hdrsz = iobuf->BytesConsumable()) > MAX_RPC_HEADER_LEN) {
+            KFS_LOG_VA_ERROR("exceeded max request header size: %d > %d,"
+                " closing connection %s\n",
+                (int)hdrsz, (int)MAX_RPC_HEADER_LEN,
+                mNetConnection ? mNetConnection->GetPeerName().c_str() : "unknown");
+            iobuf->Clear();
+            HandleRequest(EVENT_NET_ERROR, NULL);
+        }
 	break;
 
     case EVENT_NET_WROTE:
@@ -343,21 +353,17 @@ MetaServerSM::HandleMsg(IOBuffer *iobuf, int msgLen)
 void
 MetaServerSM::HandleReply(IOBuffer *iobuf, int msgLen)
 {
-    scoped_array<char> buf;
     const char separator = ':';
     kfsSeq_t seq;
     int status;
     list<KfsOp *>::iterator iter;
-
-    buf.reset(new char[msgLen + 1]);
-    iobuf->CopyOut(buf.get(), msgLen);
-    buf[msgLen] = '\0';
-    
-    iobuf->Consume(msgLen);
-    istringstream ist(buf.get());
     Properties prop;
+    {
+        IOBuffer::IStream is(*iobuf, msgLen);
+        prop.loadProperties(is, separator, false);
+    }
+    iobuf->Consume(msgLen);
 
-    prop.loadProperties(ist, separator, false);
     seq = prop.getValue("Cseq", (kfsSeq_t) -1);
     status = prop.getValue("Status", -1);
     if (status == -EBADCLUSTERKEY) {
@@ -389,21 +395,19 @@ MetaServerSM::HandleReply(IOBuffer *iobuf, int msgLen)
 bool
 MetaServerSM::HandleCmd(IOBuffer *iobuf, int cmdLen)
 {
-    scoped_array<char> buf;
     StaleChunksOp *sc;
-    istringstream ist;
     kfsChunkId_t c;
     int i, nAvail;
     KfsOp *op;
 
-    buf.reset(new char[cmdLen + 1]);
-    iobuf->CopyOut(buf.get(), cmdLen);
-    buf[cmdLen] = '\0';
-    
-    if (ParseCommand(buf.get(), cmdLen, &op) != 0) {
+    IOBuffer::IStream is(*iobuf, cmdLen);
+    if (ParseCommand(is, &op) != 0) {
+        is.Rewind(cmdLen);
+        char buf[128];
+        while (is.getline(buf, sizeof(buf))) {
+            KFS_LOG_VA_DEBUG("Aye?: %s", buf);
+        }
         iobuf->Consume(cmdLen);
-
-        KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
         // got a bogus command
         return false;
     }
@@ -417,17 +421,12 @@ MetaServerSM::HandleCmd(IOBuffer *iobuf, int cmdLen)
             return false;
         }
         iobuf->Consume(cmdLen);
-        buf.reset(new char [sc->contentLength + 1]);
-        buf[sc->contentLength] = '\0';
-        iobuf->CopyOut(buf.get(), sc->contentLength);
-        iobuf->Consume(sc->contentLength);
-
-        ist.str(buf.get());
+        is.Rewind(sc->contentLength);
         for(i = 0; i < sc->numStaleChunks; ++i) {
-            ist >> c;
+            is >> c;
             sc->staleChunkIds.push_back(c);
         }
-
+        iobuf->Consume(sc->contentLength);
     } else {
         iobuf->Consume(cmdLen);
     }
@@ -473,7 +472,6 @@ MetaServerSM::DispatchOps()
 #endif
 
     while ((op = mPendingOps.dequeue_nowait()) != NULL) {
-        ostringstream os;
 
         assert(op->op != CMD_META_HELLO);
 
@@ -484,8 +482,9 @@ MetaServerSM::DispatchOps()
             KFS_LOG_INFO("Metaserver connection is down...will dispatch later");
             return;
         }
+        IOBuffer::OStream os;
         op->Request(os);
-        mNetConnection->Write(os.str().c_str(), os.str().length());
+        mNetConnection->Write(&os);
     }
 }
 
@@ -499,11 +498,10 @@ MetaServerSM::DispatchResponse()
 #endif
 
     while ((op = mPendingResponses.dequeue_nowait()) != NULL) {
-        ostringstream os;
-
         // fire'n'forget..
+        IOBuffer::OStream os;
         op->Response(os);
-        mNetConnection->Write(os.str().c_str(), os.str().length());
+        mNetConnection->Write(&os);
         delete op;
     }
 }
@@ -513,10 +511,9 @@ class OpDispatcher {
 public:
     OpDispatcher(NetConnectionPtr &c) : conn(c) { }
     void operator() (KfsOp *op) {
-        ostringstream os;
-
+        IOBuffer::OStream os;
         op->Request(os);
-        conn->Write(os.str().c_str(), os.str().length());
+        conn->Write(&os);
     }
 };
 

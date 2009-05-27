@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2007/01/17
 // Author: Sriram Rao
@@ -101,13 +101,11 @@ Replicator::HandleStartDone(int code, void *data)
     }
 
 
-    // OFF_TYPE_CAST: off_t casted to size_t.
-    // Should be fine though since 'chunkSize' contains single chunk size.
     mChunkSize = mChunkMetadataOp.chunkSize;
     mChunkVersion = mChunkMetadataOp.chunkVersion;
 
     if ((mChunkSize < 0) || (mChunkSize > CHUNKSIZE)) {
-        KFS_LOG_VA_INFO("Invalid chunksize: %ld", mChunkSize);
+        KFS_LOG_VA_INFO("Invalid chunksize: %ld", (long)mChunkSize);
         Terminate();
         return 0;
     }
@@ -122,7 +120,7 @@ Replicator::HandleStartDone(int code, void *data)
     }
 
     KFS_LOG_VA_INFO("Starting re-replication for chunk %ld with size %ld",
-                    mChunkId, mChunkSize);
+                    (long)mChunkId, (long)mChunkSize);
     Read();
     return 0;
 }
@@ -137,14 +135,14 @@ Replicator::Read()
 #endif
 
     if (mOffset == (off_t) mChunkSize) {
-        KFS_LOG_VA_INFO("Offset: %ld is past end of chunk %ld", mOffset, mChunkSize);
+        KFS_LOG_VA_INFO("Offset: %ld is past end of chunk %ld", (long)mOffset, (long)mChunkSize);
         mDone = true;
         Terminate();
         return;
     }
 
     if (mOffset > (off_t) mChunkSize) {
-        KFS_LOG_VA_INFO("Offset: %ld is well past end of chunk %ld", mOffset, mChunkSize);
+        KFS_LOG_VA_INFO("Offset: %ld is well past end of chunk %ld", (long)mOffset, (long)mChunkSize);
         mDone = false;
         Terminate();
         return;
@@ -172,7 +170,7 @@ Replicator::HandleReadDone(int code, void *data)
 
     if (mReadOp.status < 0) {
         KFS_LOG_VA_INFO("Read from peer %s failed with error: %d",
-                        mPeer->GetLocation().ToString().c_str(), mReadOp.status);
+                        mPeer->GetLocation().ToString().c_str(), (int)mReadOp.status);
         Terminate();
         return 0;
     }
@@ -215,7 +213,7 @@ Replicator::HandleWriteDone(int code, void *data)
     assert((code == EVENT_CMD_DONE) || (code == EVENT_DISK_WROTE));
 
     if (mWriteOp.status < 0) {
-        KFS_LOG_VA_INFO("Write failed with error: %d", mWriteOp.status);
+        KFS_LOG_VA_INFO("Write failed with error: %d", (int)mWriteOp.status);
         Terminate();
         return 0;
     }
@@ -232,37 +230,41 @@ Replicator::Terminate()
 #ifdef DEBUG
     verifyExecutingOnEventProcessor();
 #endif
-
+    int res = -1;
     if (mDone) {
-        KFS_LOG_VA_INFO("Replication for %ld finished from %s",
+        KFS_LOG_VA_INFO("Replication for %lld finished from %s",
                         mChunkId, mPeer->GetLocation().ToString().c_str());
 
         // now that replication is all done, set the version appropriately
         gChunkManager.ChangeChunkVers(mFileId, mChunkId, mChunkVersion);
 
         SET_HANDLER(this, &Replicator::HandleReplicationDone);        
-        gChunkManager.ReplicationDone(mChunkId);
 
-        int res = gChunkManager.WriteChunkMetadata(mChunkId, &mWriteOp);
-        if (res == 0)
+        res = gChunkManager.WriteChunkMetadata(mChunkId, &mWriteOp);
+        if (res == 0) {
             return;
+        } else if (res > 0) {
+            res = -1;
+        }
     } 
-      
-    KFS_LOG_VA_INFO("Replication for %ld failed from %s...cleaning up", 
-                    mChunkId, mPeer->GetLocation().ToString().c_str());
-    gChunkManager.DeleteChunk(mChunkId);
-    mOwner->status = -1;
-    // Notify the owner of completion
-    mOwner->HandleEvent(EVENT_CMD_DONE, NULL);
+    HandleReplicationDone(EVENT_CMD_DONE, &res);
 }
 
 // logging of the chunk meta data finished; we are all done
 int
 Replicator::HandleReplicationDone(int code, void *data)
 {
-    mOwner->status = 0;    
+    gChunkManager.ReplicationDone(mChunkId);
+    const int status = data ? *reinterpret_cast<int*>(data) : 0;
+    mOwner->status = status >= 0 ? 0 : -1;
+    if (status < 0) {
+        KFS_LOG_VA_INFO(
+            "Replication for %lld failed from %s, status = %d; cleaning up",
+            mChunkId, mPeer->GetLocation().ToString().c_str(), status);
+        gChunkManager.DeleteChunk(mChunkId);
+    }
     // Notify the owner of completion
-    mOwner->HandleEvent(EVENT_CMD_DONE, (void *) &mChunkVersion);
+    mOwner->HandleEvent(EVENT_CMD_DONE, status >= 0 ? &mChunkVersion : 0);
     return 0;
 }
 

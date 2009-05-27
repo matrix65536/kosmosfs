@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/25
 // Author: Sriram Rao
@@ -30,6 +30,7 @@
 extern "C" {
 #include <sys/types.h>
 #include <sys/time.h>
+#include <stdint.h>
 }
 
 namespace KFS

@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/28
 // Author: Sriram Rao
@@ -38,15 +38,4 @@ ClientManager::StartAcceptor(int port)
     if (!mAcceptor->IsAcceptorStarted()) {
         die("Unable to start acceptor!");
     }
-}
-
-void
-ClientManager::Remove(ClientSM *clnt)
-{
-    list<ClientSM *>::iterator iter = find(mClients.begin(), mClients.end(), clnt);
-
-    assert(iter != mClients.end());
-    if (iter == mClients.end())
-        return;
-    mClients.erase(iter);
 }

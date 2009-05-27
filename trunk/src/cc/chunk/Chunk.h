@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/22
 // Author: Sriram Rao
@@ -33,6 +33,7 @@
 #include <boost/shared_ptr.hpp>
 
 #include <vector>
+#include <iomanip>
 
 #include "common/log.h"
 #include "common/kfstypes.h"
@@ -82,19 +83,24 @@ struct DiskChunkInfo_t {
 
     int Validate(kfsChunkId_t cid) const {
         if (metaMagic != CHUNK_META_MAGIC) {
-            KFS_LOG_VA_INFO("Magic # mismatch (got: %x, expect: %x)", 
-                            metaMagic, CHUNK_META_MAGIC);
+            KFS_LOG_STREAM_INFO <<
+                "Magic # mismatch (got: " << std::hex << metaMagic <<
+                ", expect: " << CHUNK_META_MAGIC << ")" << std::dec <<
+            KFS_LOG_EOM;
             return -KFS::EBADCKSUM;
         }
         if (metaVersion != CHUNK_META_VERSION) {
-            KFS_LOG_VA_INFO("Version # mismatch (got: %x, expect: %x)", 
-                            metaVersion, CHUNK_META_VERSION);
+            KFS_LOG_STREAM_INFO <<
+                "Version # mismatch (got: << " << std::hex << metaVersion <<
+                ", expect: << " << CHUNK_META_VERSION << ")" << std::dec <<
+            KFS_LOG_EOM;
             return -KFS::EBADCKSUM;
         }
 
         if (chunkId != cid) {
-            KFS_LOG_VA_INFO("Chunkid mismatch (got: %ld, expect: %ld)", 
-                            chunkId, cid);
+            KFS_LOG_STREAM_INFO <<
+                "Chunkid mismatch (got: " << chunkId << ", expect: " << cid << ")" <<
+            KFS_LOG_EOM;
             return -KFS::EBADCKSUM;
         }
         return 0;
@@ -166,7 +172,9 @@ struct ChunkInfo_t {
     void UnloadChecksums() {
         delete [] chunkBlockChecksum;
         chunkBlockChecksum = NULL;
-        KFS_LOG_VA_DEBUG("Unloading in the chunk checksum for chunk %d", chunkId);
+        KFS_LOG_STREAM_DEBUG <<
+            "Unloading chunk checksum for chunk " << chunkId <<
+        KFS_LOG_EOM;
     }
 
     void SetChecksums(const uint32_t *checksums) {
@@ -178,10 +186,6 @@ struct ChunkInfo_t {
 
         chunkBlockChecksum = new uint32_t[MAX_CHUNK_CHECKSUM_BLOCKS];
         memcpy(chunkBlockChecksum, checksums, MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
-    }
-
-    void LoadChecksums(int fd) {
-        Deserialize(fd, true);
     }
 
     void VerifyChecksumsLoaded() {
@@ -200,26 +204,20 @@ struct ChunkInfo_t {
         dataBuf->CopyIn((char *) &dci, sizeof(DiskChunkInfo_t));
     }
 
-    int Deserialize(int fd, bool validate) {
-        DiskChunkInfo_t dci;
-        int res;
-        
-        res = pread(fd, &dci, sizeof(DiskChunkInfo_t), 0);
-        if (res != sizeof(DiskChunkInfo_t))
-            return -EINVAL;
-        return Deserialize(dci, validate);
-    }
-
     int Deserialize(const DiskChunkInfo_t &dci, bool validate) {
         if (validate) {
             if (dci.metaMagic != CHUNK_META_MAGIC) {
-                KFS_LOG_VA_INFO("Magic # mismatch (got: %x, expect: %x)", 
-                                dci.metaMagic, CHUNK_META_MAGIC);
+                KFS_LOG_STREAM_INFO <<
+                    "Magic # mismatch (got: " << std::hex << dci.metaMagic <<
+                    ", expect: " << CHUNK_META_MAGIC << ")" << std::dec <<
+                KFS_LOG_EOM;
                 return -EINVAL;
             }
             if (dci.metaVersion != CHUNK_META_VERSION) {
-                KFS_LOG_VA_INFO("Version # mismatch (got: %x, expect: %x)", 
-                                dci.metaVersion, CHUNK_META_VERSION);
+                KFS_LOG_STREAM_INFO <<
+                    "Version # mismatch (got: << " << std::hex << dci.metaVersion <<
+                    ", expect: << " << CHUNK_META_VERSION << ")" << std::dec <<
+                KFS_LOG_EOM;
                 return -EINVAL;
             }
         }
@@ -232,7 +230,9 @@ struct ChunkInfo_t {
         chunkBlockChecksum = new uint32_t[MAX_CHUNK_CHECKSUM_BLOCKS];
         memcpy(chunkBlockChecksum, dci.chunkBlockChecksum,
                MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
-        KFS_LOG_VA_DEBUG("Loading in the chunk checksum for chunk %d", chunkId);
+        KFS_LOG_STREAM_DEBUG <<
+            "Loading chunk checksum for chunk " << chunkId <<
+        KFS_LOG_EOM;
 
         return 0;
     }

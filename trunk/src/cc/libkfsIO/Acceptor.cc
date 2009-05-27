@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/23
 // Author: Sriram Rao
@@ -69,11 +69,13 @@ Acceptor::~Acceptor()
 int
 Acceptor::RecvConnection(int code, void *data)
 {
+    if (! data || code != EVENT_NEW_CONNECTION) {
+        assert(code == EVENT_NET_ERROR || code == EVENT_INACTIVITY_TIMEOUT);
+        return 0;
+    }
+
     NetConnectionPtr conn = *(NetConnectionPtr *) data;
     KfsCallbackObj *callbackObj;
-
-    // Shut-up g++
-    (void) code;
 
     callbackObj = mAcceptorOwner->CreateKfsCallbackObj(conn);
     conn->SetOwningKfsCallbackObj(callbackObj);

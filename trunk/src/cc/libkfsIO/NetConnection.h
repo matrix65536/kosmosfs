@@ -165,8 +165,8 @@ public:
     }
 
     /// Enqueue data to be sent out.
-    void Write(const IOBufferDataPtr &ioBufData) {
-        if (! ioBufData->IsEmpty()) {
+    void Write(const IOBufferData &ioBufData) {
+        if (! ioBufData.IsEmpty()) {
             mOutBuffer.Append(ioBufData);
             Update();
         }
@@ -176,7 +176,7 @@ public:
     void Write(IOBuffer *ioBuf) {
         const int numBytes = ioBuf ? ioBuf->BytesConsumable() : 0;
         if (numBytes > 0) {
-            mOutBuffer.Move(ioBuf, numBytes);
+            mOutBuffer.Move(ioBuf);
             Update();
         }
     }

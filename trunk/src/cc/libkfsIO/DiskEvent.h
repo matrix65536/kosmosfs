@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/28
 // Author: Sriram Rao
@@ -26,8 +26,6 @@
 
 #ifndef _LIBIO_DISKEVENT_H
 #define _LIBIO_DISKEVENT_H
-
-#include <cstdio>
 
 #include <aio.h>
 #include <boost/shared_ptr.hpp>
@@ -83,7 +81,7 @@ struct DiskEvent_t {
         status = EVENT_STATUS_NONE;
         notifyDone = true;
     }
-    DiskEvent_t(DiskConnectionPtr c, IOBufferDataPtr &d,
+    DiskEvent_t(DiskConnectionPtr c, const IOBufferData &d,
                 DiskEventOp_t o) {
         op = o;
         conn = c;
@@ -120,7 +118,7 @@ struct DiskEvent_t {
     /// DiskConnection associated with this event.
     DiskConnectionPtr	conn;
     /// The buffer on which I/O is to be done on a read or write.
-    IOBufferDataPtr	data;
+    IOBufferData	data;
     /// The aio related information about the event
     struct aiocb	aio_cb;
 #if defined (__sun__)

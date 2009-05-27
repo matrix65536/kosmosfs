@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/09/27
 // Author: Sriram Rao
@@ -30,7 +30,6 @@
 #include <list>
 
 #include "libkfsIO/KfsCallbackObj.h"
-#include "libkfsIO/DiskConnection.h"
 #include "libkfsIO/NetConnection.h"
 #include "KfsOps.h"
 #include "Chunk.h"
@@ -55,7 +54,8 @@ class RemoteSyncSM : public KfsCallbackObj,
 public:
 
     RemoteSyncSM(const ServerLocation &location) :
-        mLocation(location), mSeqnum(1), mTimer(NULL)
+        mLocation(location), mSeqnum(1), mTimer(NULL),
+        mReplyNumBytes(0)
     { 
         mLastResponseRecd = mLastRequestSent = time(0);
     };
@@ -113,6 +113,9 @@ private:
 
     /// Queue of outstanding ops sent to remote server.
     std::list<KfsOp *> mDispatchedOps;
+
+    kfsSeq_t mReplySeqNum;
+    int      mReplyNumBytes;
 
     /// We (may) have got a response from the peer.  If we are doing
     /// re-replication, then we need to wait until we got all the data

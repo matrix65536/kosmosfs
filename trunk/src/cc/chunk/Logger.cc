@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/20
 // Author: Sriram Rao
@@ -365,7 +365,6 @@ Logger::Restore()
     string lastCP;
     ifstream ifs;
     char line[MAX_LINE_LENGTH], *genNum;
-    ChunkInfoHandle_t *cih;
     ChunkInfo_t entry;
     int version;
 
@@ -416,15 +415,11 @@ Logger::Restore()
         ifs.getline(line, MAX_LINE_LENGTH);
         if (!ParseCkptEntry(line, entry))
             break;
-
-        cih = new ChunkInfoHandle_t();
-        cih->chunkInfo = entry;
-
         KFS_LOG_VA_DEBUG("Read chunk: %ld, %d, %lu", 
-                         cih->chunkInfo.chunkId,
-                         cih->chunkInfo.chunkVersion,
-                         cih->chunkInfo.chunkSize);
-        gChunkManager.AddMapping(cih);
+                         entry.chunkId,
+                         entry.chunkVersion,
+                         entry.chunkSize);
+        gChunkManager.AddMapping(entry);
     }
   out:
     ifs.close();

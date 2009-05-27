@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // \brief Properties implementation.
 //
@@ -123,30 +123,30 @@ const char* Properties::getValue(std::string key, const char* def) const
         return (((*propmap)[key]).c_str());
 }
 
-int Properties::getValue(std::string key, int def)
+int Properties::getValue(std::string key, int def) const
 {
     if(propmap->find(key) == propmap->end()) return def;
         return (atoi(((*propmap)[key]).c_str()));
 }
-long Properties::getValue(std::string key, long def)
+long Properties::getValue(std::string key, long def) const
 {
     if(propmap->find(key) == propmap->end()) return def;
         return (atoll(((*propmap)[key]).c_str()));
 }
 
-long long Properties::getValue(std::string key, long long def)
+long long Properties::getValue(std::string key, long long def) const
 {
     if(propmap->find(key) == propmap->end()) return def;
         return (atoll(((*propmap)[key]).c_str()));
 }
 
-uint64_t Properties::getValue(std::string key, uint64_t def)
+uint64_t Properties::getValue(std::string key, uint64_t def) const
 {
     if(propmap->find(key) == propmap->end()) return def;
         return (atoll(((*propmap)[key]).c_str()));
 }
 
-double Properties::getValue(std::string key, double def)
+double Properties::getValue(std::string key, double def) const
 {
     if(propmap->find(key) == propmap->end()) return def;
         return (atof(((*propmap)[key]).c_str()));

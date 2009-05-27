@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcutils.cpp#2 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcutils.cpp#3 $
 //
 // Created 2008/11/01
 // Author: Mike Ovsiannikov
@@ -142,6 +142,81 @@ QCUtils::AssertionFailure(
     abort();
 }
 
+    /* static */ int64_t
+QCUtils::ReserveFileSpace(
+    int     inFd,
+    int64_t inSize)
+{
+    if (inSize <= 0) {
+        return 0;
+    }   
+#ifdef QC_USE_XFS_RESVSP
+    if (platform_test_xfs_fd(inFd)) {
+        xfs_flock64_t theResv = {0}; // Clear to make valgrind happy.
+        theResv.l_whence = 0;
+        theResv.l_start  = 0;
+        theResv.l_len    = inSize;
+        if (xfsctl(0, inFd, XFS_IOC_RESVSP64, &theResv)) {
+            return (errno > 0 ? -errno : (errno ? errno : -1));
+        }
+        return inSize;
+    }
+#endif /* QC_USE_XFS_RESVSP */
+    return (inFd < 0 ? -EINVAL : 0);
+}
+
+    /* static */ int
+QCUtils::AllocateFileSpace(
+    int      inFd,
+    int64_t  inSize,
+    int64_t  inMinSize            /* = -1 */,
+    int64_t* inInitialFileSizePtr /* = 0 */)
+{
+    int         theErr  = 0;
+    const off_t theSize = lseek(inFd, 0, SEEK_END);
+    if (theSize < 0 || theSize >= inSize) {
+        theErr = theSize < 0 ? errno : 0;
+        return theErr;
+    }
+    if (inInitialFileSizePtr) {
+        *inInitialFileSizePtr = theSize;
+    }
+    // Assume direct io has to be page aligned.
+    const long kPgSize = sysconf(_SC_PAGESIZE);
+    const long kPgMask = kPgSize - 1;
+    QCRTASSERT((kPgMask & kPgSize) == 0);
+    if (ReserveFileSpace(inFd, (inSize + kPgMask) & ~kPgMask) > 0) {
+        return (ftruncate(inFd, inSize) ? errno : 0);
+    }
+    if (inMinSize >= 0 && theSize >= inMinSize) {
+        return theErr;
+    }
+    const ssize_t kWrLen  = 1 << 20;
+    void* const   thePtr  = mmap(0, kWrLen,
+        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    off_t theOffset = theSize & ~kPgMask;
+    // If logical eof is not page aligned, read partial block.
+    if (thePtr == MAP_FAILED || (theOffset != theSize && (
+            lseek(inFd, theOffset, SEEK_SET) != theOffset             ||
+            read(inFd, thePtr, kPgSize)      != (theSize - theOffset) ||
+            lseek(inFd, theOffset, SEEK_SET) != theOffset 
+            ))) {
+        theErr = errno;
+    } else {
+        const off_t theMinSize = inMinSize < 0 ? inSize : inMinSize;
+        while (theOffset < theMinSize && write(inFd, thePtr, kWrLen) == kWrLen) {
+            theOffset += kWrLen;
+        }
+        if (theOffset < theMinSize || ftruncate(inFd, theMinSize)) {
+            theErr = errno;
+        }
+    }
+    if (thePtr != MAP_FAILED) {
+        munmap(thePtr, kWrLen);
+    }
+    return theErr;
+}
+
     /* static */ int
 QCUtils::AllocateFileSpace(
     const char* inFileNamePtr,
@@ -160,63 +235,7 @@ QCUtils::AllocateFileSpace(
     if (theFd < 0) {
         return errno;
     }
-    int         theErr  = 0;
-    const off_t theSize = lseek(theFd, 0, SEEK_END);
-    if (theSize < 0 || theSize >= inSize) {
-        theErr = theSize < 0 ? errno : 0;
-        close(theFd);
-        return theErr;
-    }
-    if (inInitialFileSizePtr) {
-        *inInitialFileSizePtr = theSize;
-    }
-    // Assume direct io has to be page aligned.
-    const long kPgSize = sysconf(_SC_PAGESIZE);
-    const long kPgMask = kPgSize - 1;
-    QCRTASSERT((kPgMask & kPgSize) == 0);
-#ifdef QC_USE_XFS_RESVSP
-    if (platform_test_xfs_fd(theFd)) {
-        xfs_flock64_t theResv;
-        theResv.l_whence = 0;
-        theResv.l_start  = 0;
-        theResv.l_len    = (inSize + kPgMask) & ~kPgMask;
-        if (xfsctl(0, theFd, XFS_IOC_RESVSP64, &theResv) ||
-                ftruncate(theFd, inSize) ||
-                close(theFd)
-                ) {
-            theErr = errno;
-            close(theFd);
-        }
-        return theErr;
-    }
-#endif /* QC_USE_XFS_RESVSP */
-    if (inMinSize >= 0 && theSize >= inMinSize) {
-        close(theFd);
-        return theErr;
-    }
-    const ssize_t kWrLen  = 1 << 20;
-    void* const   thePtr  = mmap(0, kWrLen,
-        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    off_t theOffset = theSize & ~kPgMask;
-    // If logical eof is not page aligned, read partial block.
-    if (thePtr == MAP_FAILED || (theOffset != theSize && (
-            lseek(theFd, theOffset, SEEK_SET) != theOffset             ||
-            read(theFd, thePtr, kPgSize)      != (theSize - theOffset) ||
-            lseek(theFd, theOffset, SEEK_SET) != theOffset 
-            ))) {
-        theErr = errno;
-    } else {
-        const off_t theMinSize = inMinSize < 0 ? inSize : inMinSize;
-        while (theOffset < theMinSize && write(theFd, thePtr, kWrLen) == kWrLen) {
-            theOffset += kWrLen;
-        }
-        if (theOffset < theMinSize || ftruncate(theFd, theMinSize)) {
-            theErr = errno;
-        }
-    }
-    close(theFd);
-    if (thePtr != MAP_FAILED) {
-        munmap(thePtr, kWrLen);
-    }
-    return theErr;
+    const int theErr = AllocateFileSpace(
+        theFd, inSize, inMinSize, inInitialFileSizePtr);
+    return (close(theFd) ? (theErr ? theErr : errno) : theErr);
 }

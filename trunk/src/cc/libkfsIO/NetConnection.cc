@@ -26,7 +26,7 @@
 
 #include "Globals.h"
 #include "NetConnection.h"
-#include "kfsutils.h"
+#include "qcdio/qcutils.h"
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -51,7 +51,7 @@ void NetConnection::HandleReadEvent()
             conn->Update();
         }
     } else if (IsReadReady()) {
-        const int nread = mInBuffer.Read(mSock->GetFd());
+        const int nread = mInBuffer.Read(mSock->GetFd(), maxReadAhead);
         if (nread == 0) {
             KFS_LOG_DEBUG("Read 0 bytes...connection dropped");
             mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
@@ -67,7 +67,7 @@ void NetConnection::HandleWriteEvent()
     if (IsWriteReady() && IsGood()) {
         const int nwrote = mOutBuffer.Write(mSock->GetFd());
         if (nwrote <= 0 && nwrote != -EAGAIN && nwrote != -EINTR) {
-            std::string const msg = KFSUtils::SysError(-nwrote);
+            std::string const msg = QCUtils::SysError(-nwrote);
             KFS_LOG_VA_DEBUG("Wrote 0 bytes...connection dropped, error: %d",
                 -nwrote, msg.c_str());
             mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
