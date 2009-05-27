@@ -69,13 +69,13 @@ ChunkServer::Init()
     // setup the telemetry stuff...
     struct ip_mreq imreq;
     string srvIp = "10.2.0.10";
-    int srvPort = 12000;
-    int multicastPort = 13000;
+    // int srvPort = 12000;
+    // int multicastPort = 13000;
 
     imreq.imr_multiaddr.s_addr = inet_addr("226.0.0.1");
     imreq.imr_interface.s_addr = INADDR_ANY; // use DEFAULT interface
 
-    mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
+    // mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
 }
 
 void
