@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcutils.h#1 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcutils.h#2 $
 //
 // Created 2008/11/01
 // Author: Mike Ovsiannikov
@@ -44,11 +44,19 @@ struct QCUtils
         const char* inMsgPtr,
         const char* inFileNamePtr,
         int         inLineNum);
+    static int64_t ReserveFileSpace(
+        int     inFd,
+        int64_t inSize);
     static int AllocateFileSpace(
         const char* inFileNamePtr,
         int64_t     inSize,
         int64_t     inMinSize            = -1,
         int64_t*    inInitialFileSizePtr = 0);
+    static int AllocateFileSpace(
+        int      inFd,
+        int64_t  inSize,
+        int64_t  inMinSize            = -1,
+        int64_t* inInitialFileSizePtr = 0);
 };
 
 #endif /* QCUTILS_H */

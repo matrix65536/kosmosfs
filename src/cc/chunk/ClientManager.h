@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/28
 // Author: Sriram Rao
@@ -27,6 +27,7 @@
 #ifndef _CLIENTMANAGER_H
 #define _CLIENTMANAGER_H
 
+#include <cassert>
 #include "libkfsIO/Acceptor.h"
 #include "ClientSM.h"
 
@@ -35,22 +36,40 @@ namespace KFS
 
 class ClientManager : public IAcceptorOwner {
 public:
-    ClientManager() {
-        mAcceptor = NULL;
-    };
+    ClientManager()
+        : mAcceptor(0), mClientCount(0), mIoTimeoutSec(-1), mIdleTimeoutSec(-1)
+    {}
+    void SetTimeouts(int ioTimeoutSec, int idleTimeoutSec)
+    {
+        mIoTimeoutSec = ioTimeoutSec;
+        mIdleTimeoutSec = idleTimeoutSec;
+    }
     virtual ~ClientManager() {
+        assert(mClientCount == 0);
         delete mAcceptor;
     };
     void StartAcceptor(int port);
     KfsCallbackObj *CreateKfsCallbackObj(NetConnectionPtr &conn) {
         ClientSM *clnt = new ClientSM(conn);
-        mClients.push_back(clnt);
+        assert(mClientCount >= 0);
+        mClientCount++;
         return clnt;
     }
-    void Remove(ClientSM *clnt);
+    void Remove(ClientSM *clnt) {
+        assert(mClientCount > 0);
+        mClientCount--;
+    }
+    int GetIdleTimeoutSec() const {
+        return mIoTimeoutSec;
+    }
+    int GetIoTimeoutSec() const {
+        return mIoTimeoutSec;
+    }
 private:
-    std::list<ClientSM *> mClients;
-    Acceptor	*mAcceptor;
+    Acceptor *mAcceptor;
+    int      mClientCount;
+    int      mIoTimeoutSec;
+    int      mIdleTimeoutSec;
 };
 
 extern ClientManager gClientManager;

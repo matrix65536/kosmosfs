@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // \brief Common declarations for KFS (meta/chunk/client-lib)
 //
@@ -32,7 +32,6 @@ extern "C" {
 #include <stdlib.h>
 #include <stdint.h>
 }
-
 #include <cerrno>
 #include <cassert>
 
@@ -56,8 +55,8 @@ typedef int64_t kfsFileId_t;
 typedef int64_t kfsChunkId_t;
 typedef int64_t kfsSeq_t;
 
-const size_t CHUNKSIZE = 1u << 26; //!< (64MB)
-const int MAX_RPC_HEADER_LEN = 1024; //!< Max length of header in RPC req/response
+const size_t CHUNKSIZE = 64u << 20; //!< (64MB)
+const int MAX_RPC_HEADER_LEN = 16u << 10; //!< Max length of header in RPC req/response
 const short int NUM_REPLICAS_PER_FILE = 3; //!< default degree of replication
 const short int MAX_REPLICAS_PER_FILE = 64; //!< max. replicas per chunk of file
 

@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcstutils.h#1 $
+// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcstutils.h#2 $
 //
 // Created 2008/11/01
 // Author: Mike Ovsiannikov
@@ -118,5 +118,86 @@ private:
         const QCStMutexUnlocker& inUnlocker);
 };
 
+template<typename T>
+class QCStValueChanger
+{
+public:
+    QCStValueChanger(
+        T& inValRef,
+        T  inNewVal)
+        : mValPtr(&inValRef),
+          mOrigVal(inValRef)
+        { *mValPtr = inNewVal; }
+    QCStValueChanger(
+        T* inValPtr,
+        T  inNewVal)
+        : mValPtr(inValPtr),
+          mOrigVal(inValPtr ? *inValPtr : T())
+    {
+        if (mValPtr) {
+            mValPtr = inNewVal;
+        }
+    }
+    ~QCStValueChanger()
+        { QCStValueChanger::Restore(); }
+    void Restore()
+    {
+        if (mValPtr) {
+            *mValPtr = mOrigVal;
+            mValPtr = 0;
+        }
+    }
+    void Cancel()
+        { mValPtr = 0; }
+private:
+    T*       mValPtr;
+    T  const mOrigVal;
+private:
+    QCStValueChanger(
+        const QCStValueChanger& inChanger);
+    QCStValueChanger& operator=(
+        const QCStValueChanger& inChanger);
+};
+
+template<typename T>
+class QCStValueIncrementor
+{
+public:
+    QCStValueIncrementor(
+        T& inValRef,
+        T  inIncrement)
+        : mValPtr(&inValRef),
+          mIncrement(inIncrement)
+        { *mValPtr += inIncrement; }
+    QCStValueIncrementor(
+        T* inValPtr,
+        T  inIncrement)
+        : mValPtr(inValPtr),
+          mIncrement(inIncrement)
+    {
+        if (mValPtr) {
+            mValPtr += mIncrement;
+        }
+    }
+    ~QCStValueIncrementor()
+        { QCStValueIncrementor::Decrement(); }
+    void Decrement()
+    {
+        if (mValPtr) {
+            *mValPtr -= mIncrement;
+            mValPtr = 0;
+        }
+    }
+    void Cancel()
+        { mValPtr = 0; }
+private:
+    T*       mValPtr;
+    T  const mIncrement;
+private:
+    QCStValueIncrementor(
+        const QCStValueIncrementor& inIncrementor);
+    QCStValueIncrementor& operator=(
+        const QCStValueIncrementor& inIncrementor);
+};
 
 #endif /* QCSTUTILS_H */

@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/14
 // Author: Sriram Rao
@@ -28,6 +28,7 @@
 #define _LIBIO_KFSCALLBACKOBJ_H
 
 #include <iostream>
+#include <boost/static_assert.hpp>
 
 namespace KFS
 {
@@ -101,7 +102,7 @@ private:
 template<class T>
 void SET_HANDLER( T* pobj, typename ObjectMethod<T>::MethodPtr meth )
 {
-   pobj->SetCallback( new ObjectMethod<T>(pobj, meth) );
+   pobj->SetHandler(pobj, meth);
 }
 
 ///
@@ -111,20 +112,13 @@ void SET_HANDLER( T* pobj, typename ObjectMethod<T>::MethodPtr meth )
 ///
 class KfsCallbackObj : public _force_vfp_to_top {
 public:
-    KfsCallbackObj() {
-        mObjMeth = NULL;
+    KfsCallbackObj() : mObjMeth(0) {
     }
 
     virtual ~KfsCallbackObj() {
-        delete mObjMeth;
-    }
-
-    ///
-    /// Sets the callback for this callback object.
-    /// 
-    void SetCallback(ObjectMethodBase *p) {
-        delete mObjMeth;
-        mObjMeth = p;
+        if (mObjMeth) {
+            mObjMeth->~ObjectMethodBase();
+        }
     }
 
     ///
@@ -136,8 +130,19 @@ public:
         return mObjMeth->execute(code, data);
     }
 
+    template<class T>
+    void SetHandler(T* pobj, typename ObjectMethod<T>::MethodPtr meth) {
+        BOOST_STATIC_ASSERT(sizeof(ObjectMethod<T>(pobj, meth)) >= sizeof(mObjMethodStorage));
+        if (mObjMeth) {
+            mObjMeth->~ObjectMethodBase();
+        }
+        mObjMeth = ::new (&mObjMethodStorage) ObjectMethod<T>(pobj, meth);
+    }
 private:
-    ObjectMethodBase	*mObjMeth;
+    struct {
+        char mStorage[sizeof(ObjectMethod<ObjectMethodBase>)];
+    } mObjMethodStorage;
+    ObjectMethodBase *mObjMeth;
 };
 
 }

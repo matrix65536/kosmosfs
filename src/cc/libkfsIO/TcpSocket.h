@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/10
 // Author: Sriram Rao
@@ -101,7 +101,7 @@ public:
     int DoSynchRecv(char *buf, int bufLen, struct timeval &timeout);
     int DoSynchPeek(char *buf, int bufLen, struct timeval &timeout);
 
-    /// Discard a bunch of bytes that are coming down the pike.
+    /// Discard a bunch of bytes that are coming down the pipe.
     int DoSynchDiscard(int len, struct timeval &timeout);
 
     /// Peek to see if any data is available.  This call will not
@@ -113,12 +113,12 @@ public:
     inline int GetFd() { return mSockFd; };
 
     /// Return true if socket is good for read/write. false otherwise.
-    bool IsGood();
+    bool IsGood() const;
 
     /// pass in the length of the buffer pointed to by peerAddr
-    int GetPeerName(struct sockaddr *peerAddr, int len);
+    int GetPeerName(struct sockaddr *peerAddr, int len) const;
     /// Return the peer's IP address as a string
-    std::string GetPeerName();
+    std::string GetPeerName() const;
 
     /// Sends at-most the specified # of bytes.  
     /// @retval Returns the result of calling send().

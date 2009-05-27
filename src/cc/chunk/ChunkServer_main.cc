@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/22
 // Author: Sriram Rao
@@ -39,12 +39,13 @@ extern "C" {
 #include <vector>
 
 #include "common/properties.h"
-#include "libkfsIO/DiskManager.h"
 #include "libkfsIO/NetManager.h"
 #include "libkfsIO/Globals.h"
 
 #include "ChunkServer.h"
+#include "ClientManager.h"
 #include "ChunkManager.h"
+#include "Logger.h"
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -53,22 +54,28 @@ using std::vector;
 using std::cout;
 using std::endl;
 
-string gLogDir;
-vector<string> gChunkDirs;
-string gMD5Sum;
+static string gLogDir;
+static vector<string> gChunkDirs;
+static string gMD5Sum;
 
-ServerLocation gMetaServerLoc;
-int64_t gTotalSpace;			// max. storage space to use
-int gChunkServerClientPort;	// Port at which kfs clients connect to us
-string gChunkServerHostname;	// Our hostname to use (instead of using gethostname() )
+static ServerLocation gMetaServerLoc;
+static int64_t gTotalSpace;			// max. storage space to use
+static int gChunkServerClientPort;	// Port at which kfs clients connect to us
+static string gChunkServerHostname;	// Our hostname to use (instead of using gethostname() )
 
-Properties gProp;
-const char *gClusterKey;
-int gChunkServerRackId;
-int gChunkServerCleanupOnStart;
+static Properties gProp;
+static const char *gClusterKey;
+static int gChunkServerRackId;
+static int gChunkServerCleanupOnStart;
 
-int ReadChunkServerProperties(char *fileName);
+static int ReadChunkServerProperties(char *fileName);
 static void computeMD5(const char *pathname);
+
+static void SigQuitHandler(int /* sig */)
+{
+    write(1, "SIGQUIT\n", 8);
+    globals().netManager.Shutdown();
+}
 
 int
 main(int argc, char **argv)
@@ -104,14 +111,6 @@ main(int argc, char **argv)
 
     KFS_LOG_INFO("Starting chunkserver...");
     
-    // for writes, the client is sending WRITE_PREPARE with 64K bytes;
-    // to enable the data to fit into a single buffer (and thereby get
-    // the data to the underlying FS via a single aio_write()), allocate a bit
-    // of extra space. 64K + 4k
-    libkfsio::SetIOBufferSize(69632);
-
-    globals().diskManager.InitForAIO();
-
     // would like to limit to 200MB outstanding
     // globals().netManager.SetBacklogLimit(200 * 1024 * 1024);
 
@@ -121,11 +120,12 @@ main(int argc, char **argv)
     KFS_LOG_VA_INFO("md5sum to send to metaserver: %s", gMD5Sum.c_str());
 
     gChunkServer.Init();
-    gChunkManager.Init(gChunkDirs, gTotalSpace);
+    gChunkManager.Init(gChunkDirs, gTotalSpace, gProp);
     gLogger.Init(gLogDir);
     gMetaServerSM.SetMetaInfo(gMetaServerLoc, gClusterKey, gChunkServerRackId, gMD5Sum);
 
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGQUIT, SigQuitHandler);
 
     // gChunkServerCleanupOnStart is a debugging option---it provides
     // "silent" cleanup
@@ -137,6 +137,15 @@ main(int argc, char **argv)
 
     return 0;
 }
+
+#if defined(__sun__)
+static void
+computeMD5(const char *pathname)
+{
+
+}
+
+#else
 
 static void
 computeMD5(const char *pathname)
@@ -165,6 +174,8 @@ computeMD5(const char *pathname)
     close(fd);
 }
 
+#endif
+
 static bool
 make_if_needed(const char *dirname, bool check)
 {
@@ -191,7 +202,7 @@ make_if_needed(const char *dirname, bool check)
 /// @param[in] fileName File that contains configuration information
 /// for the chunk server.
 ///
-int
+static int
 ReadChunkServerProperties(char *fileName)
 {
     string::size_type curr = 0, next;
@@ -282,12 +293,21 @@ ReadChunkServerProperties(char *fileName)
     if (gMD5Sum == "") {
         gMD5Sum = gProp.getValue("chunkServer.md5sum", "");
     }
+    gClientManager.SetTimeouts(
+        gProp.getValue("chunkServer.client.ioTimeoutSec",    5 * 60),
+        gProp.getValue("chunkServer.client.idleTimeoutSec", 30 * 60)
+    );
 
     logLevel = gProp.getValue("chunkServer.loglevel", defLogLevel);
-    if (logLevel == "INFO")
+    if (logLevel == "INFO") {
         KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
-    else
+    } else if (logLevel == "ERROR") {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::ERROR);
+    } else if (logLevel == "FATAL") {
+        KFS::MsgLogger::SetLevel(log4cpp::Priority::FATAL);
+    } else {
         KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+    }
 
     return 0;
 }

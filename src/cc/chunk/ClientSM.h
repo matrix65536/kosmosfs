@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/22
 // Author: Sriram Rao
@@ -36,7 +36,6 @@ class ClientSM; // forward declaration to get things to build...
 #include <list>
 
 #include "libkfsIO/KfsCallbackObj.h"
-#include "libkfsIO/DiskConnection.h"
 #include "libkfsIO/NetConnection.h"
 #include "Chunk.h"
 #include "RemoteSyncSM.h"
@@ -86,6 +85,7 @@ public:
 
 private:
     NetConnectionPtr	mNetConnection;
+    KfsOp*              mCurOp;
     /// Queue of outstanding ops from the client.  We reply to ops in FIFO
     std::deque<KfsOp *>	mOps;
 

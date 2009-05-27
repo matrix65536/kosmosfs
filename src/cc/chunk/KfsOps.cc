@@ -36,6 +36,7 @@
 #include "libkfsIO/Checksum.h"
 
 #include "ChunkManager.h"
+#include "Logger.h"
 #include "ChunkServer.h"
 #include "LeaseClerk.h"
 #include "Replicator.h"
@@ -49,6 +50,7 @@ using std::string;
 using std::ofstream;
 using std::istringstream;
 using std::ostringstream;
+using std::ostream;
 using std::for_each;
 using std::vector;
 using std::min;
@@ -66,12 +68,27 @@ typedef map<string, ParseHandler>::iterator ParseHandlerMapIter;
 ParseHandlerMap	gParseHandlers;
 
 // Counters for the various ops
-typedef map<KfsOp_t, Counter *> OpCounterMap;
-typedef map<KfsOp_t, Counter *>::iterator OpCounterMapIter;
+static struct OpCounterMap : public map<KfsOp_t, Counter *>
+{
+    OpCounterMap()
+        : map<KfsOp_t, Counter *>(),
+          mWriteMaster("Write Master"),
+          mWriteDuration("Write Duration")
+      {}
+    ~OpCounterMap()
+    {
+        for (iterator i = begin(); i != end(); ++i) {
+            globals().counterManager.RemoveCounter(i->second);
+            delete i->second;
+        }
+        globals().counterManager.RemoveCounter(&mWriteMaster);
+        globals().counterManager.RemoveCounter(&mWriteDuration);
+    }
+    Counter mWriteMaster;
+    Counter mWriteDuration;
+} gCounters;
+typedef OpCounterMap::iterator OpCounterMapIter;
 
-OpCounterMap gCounters;
-Counter gCtrWriteMaster("Write Master");
-Counter gCtrWriteDuration("Write Duration");
 
 const char *KFS_VERSION_STR = "KFS/1.0";
 
@@ -175,8 +192,8 @@ KFS::RegisterCounters()
     AddCounter("Heartbeat", CMD_HEARTBEAT);
     AddCounter("Change Chunk Vers", CMD_CHANGE_CHUNK_VERS);
 
-    globals().counterManager.AddCounter(&gCtrWriteMaster);
-    globals().counterManager.AddCounter(&gCtrWriteDuration);
+    globals().counterManager.AddCounter(&gCounters.mWriteMaster);
+    globals().counterManager.AddCounter(&gCounters.mWriteDuration);
 }
 
 static void
@@ -256,7 +273,7 @@ KfsOp::~KfsOp()
 /// @retval 0 on success;  -1 if there is an error
 /// 
 int
-KFS::ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res)
+KFS::ParseCommand(std::istream& is, KfsOp **res)
 {
     const char *delims = " \r\n";
     // header/value pairs are separated by a :
@@ -264,12 +281,11 @@ KFS::ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res)
     string cmdStr;
     string::size_type cmdEnd;
     Properties prop;
-    istringstream ist(cmdBuf);
     ParseHandlerMapIter entry;
     ParseHandler handler;
     
     // get the first line and find the command name
-    ist >> cmdStr;
+    is >> cmdStr;
     // trim the command
     cmdEnd = cmdStr.find_first_of(delims);
     if (cmdEnd != string::npos) {
@@ -282,7 +298,7 @@ KFS::ParseCommand(char *cmdBuf, int cmdLen, KfsOp **res)
         return -1;
     handler = entry->second;
 
-    prop.loadProperties(ist, separator, false);
+    prop.loadProperties(is, separator, false);
 
     return (*handler)(prop, res);
 }
@@ -340,8 +356,6 @@ parseHandlerRead(Properties &prop, KfsOp **c)
     rc->chunkVersion = prop.getValue("Chunk-version", (int64_t) -1);
     rc->offset = prop.getValue("Offset", (off_t) 0);
     rc->numBytes = prop.getValue("Num-bytes", (long long) 0);
-    if (rc->numBytes > CHUNKSIZE)
-        rc->numBytes = 131072;
     *c = rc;
 
     return 0;
@@ -668,13 +682,13 @@ ReadOp::HandleDone(int code, void *data)
     }
 
     if (status >= 0) {
-        if (numBytesIO < (int) CHECKSUM_BLOCKSIZE) {
-            uint32_t cks;
-            cks = ComputeBlockChecksum(dataBuf, numBytesIO);
-            checksum.push_back(cks);
-        } else {
+        assert(numBytesIO >= 0);
+        if (offset % CHECKSUM_BLOCKSIZE != 0 ||
+                numBytesIO % CHECKSUM_BLOCKSIZE != 0) {
             checksum = ComputeChecksums(dataBuf, numBytesIO);
         }
+        assert(size_t((numBytesIO + CHECKSUM_BLOCKSIZE - 1) / CHECKSUM_BLOCKSIZE) ==
+            checksum.size());
         // send the disk IO time back to client for telemetry reporting
         struct timeval timeNow;
 
@@ -729,7 +743,7 @@ WriteOp::HandleWriteDone(int code, void *data)
 
     if (isFromReReplication) {
         if (code == EVENT_DISK_WROTE) {
-            status = *(int *) data;
+            status = std::min(*(int *) data, int(numBytes));
             numBytesIO = status;
         }
         else {
@@ -741,7 +755,7 @@ WriteOp::HandleWriteDone(int code, void *data)
 
     if (code == EVENT_DISK_ERROR) {
         // eat up everything that was sent
-        dataBuf->Consume(numBytes);
+        dataBuf->Consume(std::max(int(numBytesIO), int(numBytes)));
         status = -1;
         if (data != NULL) {
             status = *(int *) data;
@@ -754,18 +768,27 @@ WriteOp::HandleWriteDone(int code, void *data)
     }
     else if (code == EVENT_DISK_WROTE) {
         status = *(int *) data;
-        numBytesIO = status;
         SET_HANDLER(this, &WriteOp::HandleSyncDone);
+        if (numBytesIO != status || status < (int)numBytes) {
+            // write didn't do everything that was asked; we need to retry
+            KFS_LOG_VA_INFO("Write on chunk did less: asked = %ld/%ld, did = %d; asking clnt to retry",
+                            (long)numBytes, (long)numBytesIO, status);
+            status = -EAGAIN;
+        } else {
+            status = numBytes; // reply back the same # of bytes as in request.
+        }
+        if (numBytesIO > ssize_t(numBytes) && dataBuf) {
+            const int off(offset % IOBufferData::GetDefaultBufferSize());
+            KFS_LOG_VA_DEBUG("chunk write: asked %ld %ld actual, buf offset: %d",
+                            (long)numBytes, (long)numBytesIO, off);
+            // restore original data in the buffer.
+            assert(ssize_t(numBytes) <= numBytesIO - off);
+            dataBuf->Consume(off);
+            dataBuf->Trim(int(numBytes));
+        }
+        numBytesIO = numBytes;
         // queue the sync op only if we are all done with writing to
         // this chunk:
-
-        if ((size_t) numBytesIO != (size_t) numBytes) {
-            // write didn't do everything that was asked; we need to retry
-            KFS_LOG_VA_INFO("Write on chunk did less: asked = %ld, did = %ld; asking clnt to retry",
-                            numBytes, numBytesIO);
-            status = -EAGAIN;
-        }
-
         waitForSyncDone = false;
 
         if (offset + numBytesIO >= (off_t) KFS::CHUNKSIZE) {
@@ -949,7 +972,7 @@ AllocChunkOp::HandleChunkMetaReadDone(int code, void *data)
     // return;
     // }
     if (leaseId >= 0) {
-        gCtrWriteMaster.Update(1);
+        gCounters.mWriteMaster.Update(1);
         gLeaseClerk.RegisterLease(chunkId, leaseId);
     }
     if (status < 0)
@@ -957,9 +980,8 @@ AllocChunkOp::HandleChunkMetaReadDone(int code, void *data)
 
     // Submit the op and wait to be notified
     SET_HANDLER(this, &AllocChunkOp::HandleChunkMetaWriteDone);
-    status = gChunkManager.WriteChunkMetadata(chunkId, this);
-    if (status < 0)
-        gLogger.Submit(this);
+    status = gChunkManager.ScheduleWriteChunkMetadata(chunkId);
+    gLogger.Submit(this);
     return 0;
 }
 
@@ -1004,9 +1026,8 @@ TruncateChunkOp::HandleChunkMetaReadDone(int code, void *data)
     }
 
     SET_HANDLER(this, &TruncateChunkOp::HandleChunkMetaWriteDone);
-    status = gChunkManager.WriteChunkMetadata(chunkId, this);
-    if (status < 0)
-        gLogger.Submit(this);
+    status = gChunkManager.ScheduleWriteChunkMetadata(chunkId);
+    gLogger.Submit(this);
     return 0;
 }
 
@@ -1067,9 +1088,8 @@ ChangeChunkVersOp::HandleChunkMetaReadDone(int code, void *data)
     }
         
     SET_HANDLER(this, &ChangeChunkVersOp::HandleChunkMetaWriteDone);
-    status = gChunkManager.WriteChunkMetadata(chunkId, this);
-    if (status < 0)
-        gLogger.Submit(this);
+    status = gChunkManager.ScheduleWriteChunkMetadata(chunkId);
+    gLogger.Submit(this);
     return 0;
 }
 
@@ -1113,12 +1133,6 @@ ReadOp::Execute()
 {
     UpdateCounter(CMD_READ);
 
-    if (numBytes > CHUNKSIZE) {
-        status = -EINVAL;
-        gLogger.Submit(this);
-        return;
-    }
-   
     SET_HANDLER(this, &ReadOp::HandleChunkMetaReadDone);
     if (gChunkManager.ReadChunkMetadata(chunkId, this) < 0) {
         status = -EINVAL;
@@ -1453,8 +1467,9 @@ WritePrepareOp::Execute()
 
     writeOp->enqueueTime = time(NULL);
 
-    KFS_LOG_VA_INFO("Writing to chunk=%lld, @offset=%lld, nbytes=%lld, checksum=%u",
-                    chunkId, offset, numBytes, checksum);
+    KFS_LOG_VA_INFO("Writing to chunk=%lld, @offset=%lld, nbytes=%lu, checksum=%u",
+                    (long long int)chunkId, (long long int)offset,
+                    (unsigned long)numBytes, (unsigned int)checksum);
 
     status = gChunkManager.WriteChunk(writeOp);
     
@@ -1603,10 +1618,9 @@ WriteSyncOp::Execute()
         return;
     }
         
-    status = gChunkManager.WriteChunkMetadata(chunkId, this);
+    status = gChunkManager.ScheduleWriteChunkMetadata(chunkId);
     assert(status >= 0);
-    if (status < 0)
-        HandleDone(0, NULL);
+    HandleDone(0, NULL);
     
     // writeOp->wsop = this;
 
@@ -1799,7 +1813,7 @@ ChangeChunkVersOp::HandleChunkMetaWriteDone(int code, void *data)
 /// Generate response for an op based on the KFS protocol.
 ///
 void
-KfsOp::Response(ostringstream &os)
+KfsOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1807,7 +1821,7 @@ KfsOp::Response(ostringstream &os)
 }
 
 void
-SizeOp::Response(ostringstream &os)
+SizeOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1820,7 +1834,7 @@ SizeOp::Response(ostringstream &os)
 }
 
 void
-GetChunkMetadataOp::Response(ostringstream &os)
+GetChunkMetadataOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1837,7 +1851,7 @@ GetChunkMetadataOp::Response(ostringstream &os)
 }
 
 void
-ReadOp::Response(ostringstream &os)
+ReadOp::Response(ostream &os)
 {
     // DecrementCounter(CMD_READ);
 
@@ -1862,7 +1876,7 @@ ReadOp::Response(ostringstream &os)
 }
 
 void
-WriteIdAllocOp::Response(ostringstream &os)
+WriteIdAllocOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1876,7 +1890,7 @@ WriteIdAllocOp::Response(ostringstream &os)
 }
 
 void
-WritePrepareOp::Response(ostringstream &os)
+WritePrepareOp::Response(ostream &os)
 {
     // no reply for a prepare...the reply is covered by sync
     if (1)
@@ -1892,7 +1906,7 @@ WritePrepareOp::Response(ostringstream &os)
 }
 
 void
-SizeOp::Request(ostringstream &os)
+SizeOp::Request(ostream &os)
 {
     os << "SIZE \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1902,7 +1916,7 @@ SizeOp::Request(ostringstream &os)
 }
 
 void
-GetChunkMetadataOp::Request(ostringstream &os)
+GetChunkMetadataOp::Request(ostream &os)
 {
     os << "GET_CHUNK_METADATA \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1911,7 +1925,7 @@ GetChunkMetadataOp::Request(ostringstream &os)
 }
 
 void
-ReadOp::Request(ostringstream &os)
+ReadOp::Request(ostream &os)
 {
     os << "READ \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1923,7 +1937,7 @@ ReadOp::Request(ostringstream &os)
 }
 
 void
-WriteIdAllocOp::Request(ostringstream &os)
+WriteIdAllocOp::Request(ostream &os)
 {
     os << "WRITE_ID_ALLOC\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
@@ -1937,7 +1951,7 @@ WriteIdAllocOp::Request(ostringstream &os)
 }
 
 void
-WritePrepareFwdOp::Request(ostringstream &os)
+WritePrepareFwdOp::Request(ostream &os)
 {
     os << "WRITE_PREPARE\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
@@ -1952,7 +1966,7 @@ WritePrepareFwdOp::Request(ostringstream &os)
 }
 
 void
-WriteSyncOp::Request(ostringstream &os)
+WriteSyncOp::Request(ostream &os)
 {
     os << "WRITE_SYNC\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
@@ -1964,7 +1978,7 @@ WriteSyncOp::Request(ostringstream &os)
 }
 
 void
-WriteSyncOp::Response(ostringstream &os)
+WriteSyncOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1972,7 +1986,7 @@ WriteSyncOp::Response(ostringstream &os)
 }
 
 void
-AllocChunkOp::Response(ostringstream &os)
+AllocChunkOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1980,7 +1994,7 @@ AllocChunkOp::Response(ostringstream &os)
 }
 
 void
-HeartbeatOp::Response(ostringstream &os)
+HeartbeatOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1991,7 +2005,7 @@ HeartbeatOp::Response(ostringstream &os)
 }
 
 void
-StaleChunksOp::Response(ostringstream &os)
+StaleChunksOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -1999,7 +2013,7 @@ StaleChunksOp::Response(ostringstream &os)
 }
 
 void
-ReplicateChunkOp::Response(ostringstream &os)
+ReplicateChunkOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -2012,7 +2026,7 @@ ReplicateChunkOp::Response(ostringstream &os)
 }
 
 void
-PingOp::Response(ostringstream &os)
+PingOp::Response(ostream &os)
 {
     ServerLocation loc = gMetaServerSM.GetLocation();
 
@@ -2026,7 +2040,7 @@ PingOp::Response(ostringstream &os)
 }
 
 void
-DumpChunkMapOp::Response(ostringstream &os)
+DumpChunkMapOp::Response(ostream &os)
 {
     ostringstream v;
     gChunkManager.DumpChunkMap(v);
@@ -2039,7 +2053,7 @@ DumpChunkMapOp::Response(ostringstream &os)
 }
 
 void
-StatsOp::Response(ostringstream &os)
+StatsOp::Response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -2148,8 +2162,8 @@ WriteOp::~WriteOp()
         
         // we don't want write id's to pollute stats
         gettimeofday(&startTime, NULL);
-        gCtrWriteDuration.Update(1);
-        gCtrWriteDuration.Update(timeSpent);
+        gCounters.mWriteDuration.Update(1);
+        gCounters.mWriteDuration.Update(timeSpent);
     }
 
     delete dataBuf;
@@ -2160,8 +2174,8 @@ WriteOp::~WriteOp()
         // Read op destructor deletes dataBuf.
         delete rop;
     }
-    if (diskConnection)
-        diskConnection->Close();
+    if (diskIo)
+        diskIo->Close();
 }
 
 WriteIdAllocOp::~WriteIdAllocOp()
@@ -2195,7 +2209,7 @@ WriteSyncOp::~WriteSyncOp()
 }
 
 void
-LeaseRenewOp::Request(ostringstream &os)
+LeaseRenewOp::Request(ostream &os)
 {
     os << "LEASE_RENEW\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
@@ -2215,7 +2229,7 @@ LeaseRenewOp::HandleDone(int code, void *data)
 }
 
 void
-LeaseRelinquishOp::Request(ostringstream &os)
+LeaseRelinquishOp::Request(ostream &os)
 {
     os << "LEASE_RELINQUISH\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
@@ -2228,15 +2242,13 @@ LeaseRelinquishOp::Request(ostringstream &os)
 int
 LeaseRelinquishOp::HandleDone(int code, void *data)
 {
-    KfsOp *op = (KfsOp *) data;
-
-    assert(op == this);
+    assert((KfsOp *)data == this);
     delete this;
     return 0;
 }
 
 void
-CorruptChunkOp::Request(ostringstream &os)
+CorruptChunkOp::Request(ostream &os)
 {
     os << "CORRUPT_CHUNK\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
@@ -2265,7 +2277,7 @@ public:
 };
 
 void
-HelloMetaOp::Request(ostringstream &os)
+HelloMetaOp::Request(ostream &os)
 {
     ostringstream chunkInfo;
 

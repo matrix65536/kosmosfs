@@ -23,44 +23,89 @@
 //----------------------------------------------------------------------------
 
 #include "NetKicker.h"
-#include "Globals.h"
+#include <unistd.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <algorithm>
+#include "qcdio/qcmutex.h"
+#include "qcdio/qcstutils.h"
 
 using namespace KFS;
-using namespace KFS::libkfsio;
+
+class NetKicker::Impl
+{
+public:
+    Impl()
+        : mMutex(),
+          mWritten(0)
+    {
+        const int res = pipe(mPipeFds);
+        if (res < 0) {
+            perror("Pipe: ");
+            mPipeFds[0] = -1;
+            mPipeFds[1] = -1;
+            return;
+        }
+        fcntl(mPipeFds[0], F_SETFL, O_NONBLOCK);
+        fcntl(mPipeFds[1], F_SETFL, O_NONBLOCK);
+    }
+    void Kick()
+    {
+        QCStMutexLocker lock(mMutex);
+        if (mWritten <= 0) {
+            mWritten++;
+            char buf = 'k';
+            write(mPipeFds[1], &buf, sizeof(buf));
+        }
+    }
+    int Drain()
+    {
+        QCStMutexLocker lock(mMutex);
+        while (mWritten > 0) {
+            char buf[64];
+            const int res = read(mPipeFds[0], buf, sizeof(buf));
+            if (res > 0) {
+                mWritten -= std::min(mWritten, res);
+            } else {
+                break;
+            }
+        }
+        return (mWritten);
+    }
+    int GetFd() const { return mPipeFds[0]; }
+private:
+    QCMutex mMutex;
+    int     mWritten;
+    int     mPipeFds[2];
+
+private:
+   Impl(const Impl&);
+   Impl& operator=(const Impl&); 
+};
 
 NetKicker::NetKicker()
-{
-    int res; 
+    : mImpl(*new Impl())
+{}
 
-    res = pipe(mPipeFds);
-    if (res < 0) {
-        perror("Pipe: ");
-        return;
-    }
-    fcntl(mPipeFds[0], F_SETFL, O_NONBLOCK);
-    fcntl(mPipeFds[1], F_SETFL, O_NONBLOCK);
+NetKicker::~NetKicker()
+{
+    delete &mImpl;
 }
 
 void
 NetKicker::Kick()
 {
-    char buf = 'k';
-        
-    write(mPipeFds[1], &buf, sizeof(char));
+    mImpl.Kick();
 }
 
 int 
 NetKicker::Drain()
 {
-    int bufsz = 512, res;
-    char buf[512];
-
-    res = read(mPipeFds[0], buf, bufsz);
-    return res;
+    return mImpl.Drain();
 }
 
-int
+int 
 NetKicker::GetFd() const
 {
-    return mPipeFds[0];
+    return mImpl.GetFd();
 }

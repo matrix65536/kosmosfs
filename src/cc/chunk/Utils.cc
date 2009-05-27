@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/09/27
 // Author: Sriram Rao
@@ -39,27 +39,12 @@ using namespace KFS;
 ///
 bool KFS::IsMsgAvail(IOBuffer *iobuf, int *msgLen)
 {
-    char buf[1024];
-    int nAvail, len = 0, i;
-
-    nAvail = iobuf->BytesConsumable();
-    if (nAvail > 1024)
-        nAvail = 1024;
-    len = iobuf->CopyOut(buf, nAvail);
-
-    // Find the first occurence of "\r\n\r\n"
-    for (i = 3; i < len; ++i) {
-        if ((buf[i - 3] == '\r') &&
-            (buf[i - 2] == '\n') &&
-            (buf[i - 1] == '\r') &&
-            (buf[i] == '\n')) {
-            // The command we got is from 0..i.  The strlen of the
-            // command is i+1.
-            *msgLen = i + 1;
-            return true;
-        }
+    const int idx = iobuf->IndexOf(0, "\r\n\r\n");
+    if (idx < 0) {
+        return false;
     }
-    return false;
+    *msgLen = idx + 4; // including terminating seq. length.
+    return true;
 }
 
 void KFS::die(const string &msg)

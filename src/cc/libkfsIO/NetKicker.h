@@ -35,25 +35,23 @@
 #ifndef LIBKFSIO_NETKICKER_H
 #define LIBKFSIO_NETKICKER_H
 
-#include <unistd.h>
-#include "KfsCallbackObj.h"
-#include "NetManager.h"
-
 namespace KFS
 {
-    class NetKicker : public KfsCallbackObj {
+    class NetKicker {
     public:
         NetKicker();
+        ~NetKicker();
         /// The "write" portion of the pipe writes one byte on the fd.
         void Kick();
+    private:
+        class Impl;
+        Impl& mImpl;
         /// This is the callback from the net-manager to drain out the
         /// bytes written on the pipe
         int Drain();
         int GetFd() const;
-    private:
-        int mPipeFds[2];
+        friend class NetManager;
     };
-
 }
 
 #endif // LIBKFSIO_NETKICKER_H

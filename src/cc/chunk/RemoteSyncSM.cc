@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/09/27
 // Author: Sriram Rao
@@ -50,6 +50,8 @@ using namespace KFS::libkfsio;
 #include <boost/scoped_array.hpp>
 using boost::scoped_array;
 
+const int kMaxCmdHeaderLength = 2 << 10;
+
 RemoteSyncSM::~RemoteSyncSM()
 {
     if (mTimer) {
@@ -94,6 +96,7 @@ RemoteSyncSM::Connect()
 
     mNetConnection.reset(new NetConnection(sock, this));
     mNetConnection->SetDoingNonblockingConnect();
+    mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
     
     // If there is no activity on this socket for 30 minutes, we want
     // to be notified, so that we can close connection.
@@ -107,8 +110,6 @@ RemoteSyncSM::Connect()
 void
 RemoteSyncSM::Enqueue(KfsOp *op)
 {
-    ostringstream os;
-
     if (!mNetConnection) {
         mLastRequestSent = mLastResponseRecd = time(0);
         if (!Connect()) {
@@ -126,8 +127,9 @@ RemoteSyncSM::Enqueue(KfsOp *op)
         return;
     }
 
+    IOBuffer::OStream os;
     op->Request(os);
-    mNetConnection->Write(os.str().c_str(), os.str().length());
+    mNetConnection->Write(&os);
     if (op->op == CMD_WRITE_PREPARE_FWD) {
         // send the data as well
         WritePrepareFwdOp *wpfo = static_cast<WritePrepareFwdOp *>(op);        
@@ -147,7 +149,7 @@ int
 RemoteSyncSM::HandleEvent(int code, void *data)
 {
     IOBuffer *iobuf;
-    int msgLen, res;
+    int msgLen = 0, res;
     // take a ref to prevent the object from being deleted
     // while we are still in this function.
     RemoteSyncSMPtr self = shared_from_this();
@@ -163,7 +165,7 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 	// came in if we got all the data for the RPC
 	iobuf = (IOBuffer *) data;
         mLastResponseRecd = time(0);
-	while (IsMsgAvail(iobuf, &msgLen)) {
+	while (mReplyNumBytes > 0 || IsMsgAvail(iobuf, &msgLen)) {
 	    res = HandleResponse(iobuf, msgLen);
             if (res < 0)
                 // maybe the response isn't fully available
@@ -210,79 +212,100 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 int
 RemoteSyncSM::HandleResponse(IOBuffer *iobuf, int msgLen)
 {
-    const char separator = ':';
-    scoped_array<char> buf(new char[msgLen + 1]);
-    Properties prop;
-    kfsSeq_t seqNum;
-    int status;
-    list<KfsOp *>::iterator i;
-    size_t numBytes;
-    int64_t nAvail;
+    list<KfsOp *>::iterator i = mDispatchedOps.end();
+    int nAvail = iobuf->BytesConsumable();
 
-    iobuf->CopyOut(buf.get(), msgLen);
-    buf[msgLen] = '\0';
+    if (mReplyNumBytes <= 0) {
+        assert(msgLen >= 0 && msgLen <= nAvail);
+        scoped_array<char> buf(new char[msgLen + 1]);
+        iobuf->CopyOut(buf.get(), msgLen);
+        buf[msgLen] = '\0';
 
-    istringstream ist(buf.get());
+        istringstream ist(buf.get());
 
-    prop.loadProperties(ist, separator, false);
-    seqNum = prop.getValue("Cseq", (kfsSeq_t) -1);
-    status = prop.getValue("Status", -1);
-    numBytes = prop.getValue("Content-length", (long long) 0);
+        const char separator = ':';
+        Properties prop;
+        prop.loadProperties(ist, separator, false);
+        mReplySeqNum = prop.getValue("Cseq", (kfsSeq_t) -1);
+        mReplyNumBytes = prop.getValue("Content-length", (long long) 0);
+        iobuf->Consume(msgLen);
+        nAvail -= msgLen;
+        i = find_if(mDispatchedOps.begin(), mDispatchedOps.end(), 
+                    OpMatcher(mReplySeqNum));
+        KfsOp* const op = i != mDispatchedOps.end() ? *i : 0;
+        if (op) {
+            op->status = prop.getValue("Status", -1);
+            if (op->op == CMD_WRITE_ID_ALLOC) {
+                WriteIdAllocOp *wiao = static_cast<WriteIdAllocOp *>(op);
+                wiao->writeIdStr = prop.getValue("Write-id", "");
+            } else if (op->op == CMD_READ) {
+                ReadOp *rop = static_cast<ReadOp *> (op);
+                const int checksumEntries = prop.getValue("Checksum-entries", 0);
+                if (checksumEntries > 0) {
+                    string checksums = prop.getValue("Checksums", "");
+                    istringstream is(checksums.c_str());
+                    uint32_t cks;
+                    for (int i = 0; i < checksumEntries; i++) {
+                        is >> cks;
+                        rop->checksum.push_back(cks);
+                    }
+                }
+                const int off(rop->offset % IOBufferData::GetDefaultBufferSize());
+                if (off > 0) {
+                    IOBuffer buf;
+                    buf.ReplaceKeepBuffersFull(iobuf, off, nAvail);
+                    iobuf->Move(&buf);
+                    iobuf->Consume(off);
+                } else {
+                    iobuf->MakeBuffersFull(); 
+                }
+            } else if (op->op == CMD_SIZE) {
+                SizeOp *sop = static_cast<SizeOp *>(op);
+                sop->size = prop.getValue("Size", 0);
+            } else if (op->op == CMD_GET_CHUNK_METADATA) {
+                GetChunkMetadataOp *gcm = static_cast<GetChunkMetadataOp *>(op);
+                gcm->chunkVersion = prop.getValue("Chunk-version", 0);
+                gcm->chunkSize = prop.getValue("Size", 0);
+            }
+        }
+    }
 
     // if we don't have all the data for the write, hold on...
-    nAvail = iobuf->BytesConsumable() - msgLen;        
-    if (nAvail < (int64_t) numBytes) {
+    if (nAvail < mReplyNumBytes) {
         // the data isn't here yet...wait...
+        mNetConnection->SetMaxReadAhead(mReplyNumBytes - nAvail);
         return -1;
     }
 
     // now, we got everything...
-    iobuf->Consume(msgLen);
+    mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
 
     // find the matching op
-    i = find_if(mDispatchedOps.begin(), mDispatchedOps.end(), 
-                OpMatcher(seqNum));
+    if (i == mDispatchedOps.end()) {
+        i = find_if(mDispatchedOps.begin(), mDispatchedOps.end(), 
+                    OpMatcher(mReplySeqNum));
+    }
     if (i != mDispatchedOps.end()) {
-        KfsOp *op = *i;
-        op->status = status;
+        KfsOp *const op = *i;
         mDispatchedOps.erase(i);
-        if (op->op == CMD_WRITE_ID_ALLOC) {
-            WriteIdAllocOp *wiao = static_cast<WriteIdAllocOp *>(op);
-
-            wiao->writeIdStr = prop.getValue("Write-id", "");
-        } else if (op->op == CMD_READ) {
+        if (op->op == CMD_READ) {
             ReadOp *rop = static_cast<ReadOp *> (op);
-            int checksumEntries = prop.getValue("Checksum-entries", 0);
-
             if (rop->dataBuf == NULL)
                 rop->dataBuf = new IOBuffer();
-            rop->checksum.clear();
-            if (checksumEntries > 0) {
-                string checksums = prop.getValue("Checksums", "");
-                istringstream is(checksums.c_str());
-                uint32_t cks;
-                for (int i = 0; i < checksumEntries; i++) {
-                    is >> cks;
-                    rop->checksum.push_back(cks);
-                }
-            }
-            rop->numBytesIO = numBytes;
-            rop->dataBuf->Move(iobuf, numBytes);
-        } else if (op->op == CMD_SIZE) {
-            SizeOp *sop = static_cast<SizeOp *>(op);
-            sop->size = prop.getValue("Size", 0);
+            rop->dataBuf->Move(iobuf, mReplyNumBytes);
+            rop->numBytesIO = mReplyNumBytes;
         } else if (op->op == CMD_GET_CHUNK_METADATA) {
             GetChunkMetadataOp *gcm = static_cast<GetChunkMetadataOp *>(op);
-            gcm->chunkVersion = prop.getValue("Chunk-version", 0);
-            gcm->chunkSize = prop.getValue("Size", 0);
             if (gcm->dataBuf == NULL)
                 gcm->dataBuf = new IOBuffer();
-            gcm->dataBuf->Move(iobuf, numBytes);            
+            gcm->dataBuf->Move(iobuf, mReplyNumBytes);            
         }
+        mReplyNumBytes = 0;
         // op->HandleEvent(EVENT_DONE, op);
         KFS::SubmitOpResponse(op);
     } else {
-        KFS_LOG_VA_DEBUG("Discarding a reply for unknown seq #: %d", seqNum);
+        KFS_LOG_VA_DEBUG("Discarding a reply for unknown seq #: %d", mReplySeqNum);
+        mReplyNumBytes = 0;
     }
     return 0;
 }

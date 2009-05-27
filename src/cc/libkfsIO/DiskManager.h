@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/16
 // Author: Sriram Rao
@@ -72,7 +72,7 @@ public:
     /// about the scheduled read event.
     /// @retval 0 on success; -1 on failure
     int		Read(DiskConnection *conn, int fd,
-                     IOBufferDataPtr &data,
+                     const IOBufferData &data,
                      off_t offset, int numBytes,
                      DiskEventPtr &resultEvent);
 
@@ -86,7 +86,7 @@ public:
     /// about the scheduled write event.
     /// @retval 0 on success; -1 on failure
     int 	Write(DiskConnection *conn, int fd,
-                      IOBufferDataPtr &data,
+                      const IOBufferData &data,
                       off_t offset, int numBytes,
                       DiskEventPtr &resultEvent);
 

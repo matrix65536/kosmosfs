@@ -120,6 +120,17 @@ int main(int argc, char **argv)
     exit(0);
 }
 
+static int Deserialize(ChunkInfo_t& chunkInfo, int fd, bool validate)
+{
+    DiskChunkInfo_t dci;
+    int res;
+
+    res = pread(fd, &dci, sizeof(DiskChunkInfo_t), 0);
+    if (res != sizeof(DiskChunkInfo_t))
+        return -EINVAL;
+    return chunkInfo.Deserialize(dci, validate);
+}
+
 static void scrubFile(string &fn, bool verbose)
 {
     ChunkInfo_t chunkInfo;
@@ -133,7 +144,7 @@ static void scrubFile(string &fn, bool verbose)
         return;
     }
     f.reset(new FileHandle_t(fd));
-    res = chunkInfo.Deserialize(f->mFd, true);
+    res = Deserialize(chunkInfo, f->mFd, true);
     if (res < 0) {
         cout << "Deserialize of chunkinfo failed for: " << fn << endl;
         return;
@@ -151,8 +162,6 @@ static void scrubFile(string &fn, bool verbose)
         return;
     }
     if ((size_t) res != KFS::CHUNKSIZE) {
-	// OFF_TYPE_CAST: off_t casted to long.
-	// Should be fine though since 'size' contains single chunk size.
         long size = chunkInfo.chunkSize;
         if (res != chunkInfo.chunkSize) {
             cout << "Size mismatch: chunk header says: " << size 

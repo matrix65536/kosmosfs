@@ -134,6 +134,7 @@ public:
                 " request id: "    << inRequestId << " done " <<
                 " buffers: "       << inBufferCount <<
                 " buffer[0] "      << (void*)inBufferItr.Get() <<
+                " io bytes: "      << inIoByteCount <<
                 " status: "        << ToString(
                     QCDiskQueue::CompletionStatus(
                         inCompletionCode, inSysErrorCode
@@ -282,7 +283,7 @@ public:
         const bool     theLockMemoryFlag            = false;
         const int      theThreadCount               = 2;
         const int      theMaxQueueDepth             = 16;
-        const int      theMaxBuffersPerRequestCount = 2 << 10;
+        const int      theMaxBuffersPerRequestCount = (1 << 9) - 3;
         const int      thePoolClientMaxReleaseCount = 1 << 10;
         const size_t   thePoolClientBufCount        =
             thePartitionBufferCount * thePartitionCount;
