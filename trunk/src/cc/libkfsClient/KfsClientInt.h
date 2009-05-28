@@ -47,6 +47,8 @@
 #include "concurrency.h"
 #include "KfsPendingOp.h"
 
+#include "KfsClient.h"
+
 namespace KFS {
 
 /// Set this to 1MB: 64K * 16
@@ -348,8 +350,20 @@ struct FileTableEntry {
     // for a max of 30 secs; after that revalidate
     time_t	validatedTime;
 
-    FileTableEntry(kfsFileId_t p, const char *n):
+    FileTableEntry(kfsFileId_t p, const std::string & n):
 	parentFid(p), name(n), lastAccessTime(0), validatedTime(0) { }
+};
+
+class MatchingServer {
+    ServerLocation loc;
+public:
+    MatchingServer(const ServerLocation &l) : loc(l) { }
+    bool operator()(KfsClientPtr &clnt) const {
+        return clnt->GetMetaserverLocation() == loc;
+    }
+    bool operator()(const ServerLocation &other) const {
+        return other == loc;
+    }
 };
 
 ///
@@ -366,7 +380,7 @@ public:
     /// @param[in] metaServerPort  Port at which we should connect to
     /// @retval 0 on success; -1 on failure
     ///
-    int Init(const std::string metaServerHost, int metaServerPort);
+    int Init(const std::string & metaServerHost, int metaServerPort);
 
     ServerLocation GetMetaserverLocation() const {
         return mMetaServerLoc;
@@ -379,7 +393,7 @@ public:
     /// @param[in] pathname  The pathname to change the "cwd" to
     /// @retval 0 on sucess; -errno otherwise
     ///
-    int Cd(const char *pathname);
+    int Cd(const std::string & pathname);
 
     /// Get cwd
     /// @retval a string that describes the current working dir.
@@ -391,32 +405,32 @@ public:
     /// present, they are also made.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if mkdir is successful; -errno otherwise
-    int Mkdirs(const char *pathname);
+    int Mkdirs(const std::string & pathname);
 
     ///
     /// Make a directory in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if mkdir is successful; -errno otherwise
-    int Mkdir(const char *pathname);
+    int Mkdir(const std::string & pathname);
 
     ///
     /// Remove a directory in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if rmdir is successful; -errno otherwise
-    int Rmdir(const char *pathname);
+    int Rmdir(const std::string & pathname);
 
     ///
     /// Remove a directory hierarchy in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if rmdir is successful; -errno otherwise
-    int Rmdirs(const char *pathname);
+    int Rmdirs(const std::string & pathname);
 
     ///
     /// Read a directory's contents
     /// @param[in] pathname	The full pathname such as /.../dir
     /// @param[out] result	The contents of the directory
     /// @retval 0 if readdir is successful; -errno otherwise
-    int Readdir(const char *pathname, std::vector<std::string> &result);
+    int Readdir(const std::string & pathname, std::vector<std::string> &result);
 
     ///
     /// Read a directory's contents and retrieve the attributes
@@ -425,7 +439,7 @@ public:
     /// @param[in] computeFilesize  By default, compute file size
     /// @retval 0 if readdirplus is successful; -errno otherwise
     ///
-    int ReaddirPlus(const char *pathname, std::vector<KfsFileAttr> &result,
+    int ReaddirPlus(const std::string & pathname, std::vector<KfsFileAttr> &result,
                     bool computeFilesize = true);
 
     ///
@@ -433,7 +447,7 @@ public:
     /// of files/bytes in the directory tree starting at pathname.
     /// @retval 0 if readdirplus is successful; -errno otherwise
     ///
-    int GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t &numBytes);
+    int GetDirSummary(const std::string & pathname, uint64_t &numFiles, uint64_t &numBytes);
 
     ///
     /// Stat a file and get its attributes.
@@ -443,7 +457,7 @@ public:
     /// file is computed and the value is returned in result.st_size
     /// @retval 0 if stat was successful; -errno otherwise
     ///
-    int Stat(const char *pathname, struct stat &result, bool computeFilesize = true);
+    int Stat(const std::string & pathname, KfsFileStat &result, bool computeFilesize = true);
 
     ///
     /// Helper APIs to check for the existence of (1) a path, (2) a
@@ -451,18 +465,18 @@ public:
     /// @param[in] pathname	The full pathname such as /.../foo
     /// @retval status: True if it exists; false otherwise
     ///
-    bool Exists(const char *pathname);
-    bool IsFile(const char *pathname);
-    bool IsDirectory(const char *pathname);
+    bool Exists(const std::string & pathname);
+    bool IsFile(const std::string & pathname);
+    bool IsDirectory(const std::string & pathname);
 
     /// Debug API to print out the size/location of each block of a file.
-    int EnumerateBlocks(const char *pathname);
+    int EnumerateBlocks(const std::string & pathname);
 
     /// API to verify that checksums computed on source data matches
     /// what was pushed into KFS.  This verification is done by
     /// pulling KFS checksums from all the replicas for each chunk.
     /// @retval status code
-    bool VerifyDataChecksums(const char *pathname, const std::vector<uint32_t> &checksums);
+    bool VerifyDataChecksums(const std::string & pathname, const std::vector<uint32_t> &checksums);
     bool VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes);
 
     ///
@@ -474,14 +488,14 @@ public:
     /// @retval on success, fd corresponding to the created file;
     /// -errno on failure.
     ///
-    int Create(const char *pathname, int numReplicas = 3, bool exclusive = false);
+    int Create(const std::string & pathname, int numReplicas = 3, bool exclusive = false);
 
     ///
     /// Remove a file which is specified by a complete path.
     /// @param[in] pathname that has to be removed
     /// @retval status code
     ///
-    int Remove(const char *pathname);
+    int Remove(const std::string & pathname);
 
     ///
     /// Rename file/dir corresponding to oldpath to newpath
@@ -491,7 +505,7 @@ public:
     /// exists; otherwise, the rename will fail if newpath exists
     /// @retval 0 on success; -1 on failure
     ///
-    int Rename(const char *oldpath, const char *newpath, bool overwrite = true);
+    int Rename(const std::string & oldpath, const std::string & newpath, bool overwrite = true);
 
     ///
     /// Open a file
@@ -503,13 +517,13 @@ public:
     /// desired degree of replication for the file
     /// @retval fd corresponding to the opened file; -errno on failure
     ///
-    int Open(const char *pathname, int openFlags, int numReplicas = 3);
+    int Open(const std::string & pathname, int openFlags, int numReplicas = 3);
 
     ///
     /// Return file descriptor for an open file
     /// @param[in] pathname of file
     /// @retval file descriptor if open, error code < 0 otherwise
-    int Fileno(const char *pathname);
+    int Fileno(const std::string & pathname);
 
     ///
     /// Close a file
@@ -576,7 +590,7 @@ public:
     /// @param[out] locations	The location(s) of various chunks
     /// @retval status: 0 on success; -errno otherwise
     ///
-    int GetDataLocation(const char *pathname, off_t start, off_t len,
+    int GetDataLocation(const std::string & pathname, off_t start, off_t len,
                         std::vector< std::vector <std::string> > &locations);
 
     int GetDataLocation(int fd, off_t start, off_t len,
@@ -587,7 +601,7 @@ public:
     /// @param[in] pathname	The full pathname of the file such as /../foo
     /// @retval count
     ///
-    int16_t GetReplicationFactor(const char *pathname);
+    int16_t GetReplicationFactor(const std::string & pathname);
 
     ///
     /// Set the degree of replication for the pathname.
@@ -595,7 +609,7 @@ public:
     /// @param[in] numReplicas  The desired degree of replication.
     /// @retval -1 on failure; on success, the # of replicas that will be made.
     ///
-    int16_t SetReplicationFactor(const char *pathname, int16_t numReplicas);
+    int16_t SetReplicationFactor(const std::string & pathname, int16_t numReplicas);
 
     // Next sequence number for operations.
     // This is called in a thread safe manner.
@@ -667,7 +681,7 @@ private:
     /// the file is computed and returned in result.fileSize
     /// @retval 0 on success; -errno otherwise
     ///
-    int LookupAttr(kfsFileId_t parentFid, const char *filename,
+    int LookupAttr(kfsFileId_t parentFid, const std::string & filename,
 		   KfsFileAttr &result, bool computeFilesize);
 
     /// Helper functions that operate on individual chunks.
@@ -865,7 +879,7 @@ private:
 
     /// Given a path, get the parent fileid and the name following the
     /// trailing "/"
-    int GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
+    int GetPathComponents(const std::string & pathname, kfsFileId_t *parentFid,
 			  std::string &name);
 
     /// File table management utilities: find a free entry in the
@@ -877,21 +891,21 @@ private:
     bool IsFileTableEntryValid(int fte);
 
     /// Wrapper function that calls LookupFileTableEntry with the parentFid
-    int LookupFileTableEntry(const char *pathname);
+    int LookupFileTableEntry(const std::string & pathname);
 
     /// Return the file table entry corresponding to parentFid/name,
     /// where "name" is either a file or directory that resides in
     /// directory corresponding to parentFid.
-    int LookupFileTableEntry(kfsFileId_t parentFid, const char *name);
+    int LookupFileTableEntry(kfsFileId_t parentFid, const std::string & name);
 
     /// Given a parent fid and name, get the corresponding entry in
     /// the file table.  Note: if needed, attributes will be
     /// downloaded from the server.
-    int Lookup(kfsFileId_t parentFid, const char *name);
+    int Lookup(kfsFileId_t parentFid, const std::string & name);
 
     // name -- is the last component of the pathname
-    int ClaimFileTableEntry(kfsFileId_t parentFid, const char *name, std::string pathname);
-    int AllocFileTableEntry(kfsFileId_t parentFid, const char *name, std::string pathname);
+    int ClaimFileTableEntry(kfsFileId_t parentFid, const std::string & name, const std::string & pathname);
+    int AllocFileTableEntry(kfsFileId_t parentFid, const std::string & name, const std::string & pathname);
     void ReleaseFileTableEntry(int fte);
 
     /// Helper functions that interact with the leaseClerk to

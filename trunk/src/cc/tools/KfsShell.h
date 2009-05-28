@@ -60,8 +60,8 @@ namespace KFS
         int handleRm(const std::vector<std::string> &args);    
         int handlePwd(const std::vector<std::string> &args);
         // utility functions
-        int doMkdirs(const char *path);
-        int doRmdir(const char *dirname);
+        int doMkdirs(const std::string & path);
+        int doRmdir(const std::string & dirname);
         void GetPathComponents(const std::string &path, 
                                std::string &parent, std::string &name);
 

@@ -30,6 +30,8 @@
 #include <istream>
 #include <string>
 #include <map>
+#include <typeinfo>
+#include <sstream>
 
 namespace KFS
 {
@@ -42,23 +44,55 @@ class Properties {
     std::string removeLTSpaces(std::string);
 
   public  :
-    // load the properties from a file
-    int loadProperties(const char* fileName, char delimiter, bool verbose, bool multiline = false);
-    // load the properties from an in-core buffer
-    int loadProperties(std::istream &ist, char delimiter, bool verbose, bool multiline = false);
-    std::string getValue(std::string key, std::string def) const;
-    const char* getValue(std::string key, const char* def) const;
-    int getValue(std::string key, int def) const;
-    long getValue(std::string key, long def) const;
-    long long getValue(std::string key, long long def) const;
-    uint64_t getValue(std::string key, uint64_t def) const;
-    double getValue(std::string key, double def) const;   
-    void setValue(const std::string key, const std::string value);
-    void getList(std::string &outBuf, std::string linePrefix) const;
+    
     Properties();
     Properties(const Properties &p);
     ~Properties();
+    
+    // load the properties from a file
+    int loadProperties(const char * fileName, char delimiter, bool verbose, bool multiline = false);
+    
+    // load the properties from an in-core buffer
+    int loadProperties(std::istream &ist, char delimiter, bool verbose, bool multiline = false);
+    
+    void getList(std::string &outBuf, const std::string & linePrefix) const;
+    
+    template<typename T> T getValue ( const std::string & key, const T & defaultValue ) const
+    {
+      std::map<std::string, std::string>::const_iterator it = propmap->find ( key );
 
+      if ( it == propmap->end() ) return defaultValue;
+
+      std::istringstream i ( it->second );
+
+      T ret;
+
+      char c;
+
+      if ( ! ( i >> ret ) || i.get ( c ) )
+      {
+        return defaultValue;
+      }
+
+      return ret;
+    }
+
+    template<typename T> bool setValue ( const std::string & key, const T & value )
+    {
+      std::ostringstream o;
+
+      if ( ! ( o << value ) )
+      {
+        return false;
+      }
+
+      ( *propmap ) [key] = o.str();
+
+      return true;
+    }
+    
+    std::string getValue ( const std::string & key, const std::string & def ) const;
+    const char* getValue ( const std::string & key, const char* defaultValue ) const;
 };
 
 }

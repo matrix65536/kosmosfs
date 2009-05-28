@@ -34,6 +34,8 @@
 #include <fstream>
 #include "libkfsClient/KfsClient.h"
 
+#include "KfsToolsCommon.h"
+
 using std::cout;
 using std::endl;
 using std::ifstream;
@@ -52,6 +54,8 @@ main(int argc, char **argv)
     bool verboseLogging = false;
     char optchar;
 
+    getEnvServer(serverHost, port);
+    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hs:p:v")) != -1) {
@@ -63,7 +67,7 @@ main(int argc, char **argv)
                 verboseLogging = true;
                 break;
             case 's':
-                serverHost = optarg;
+                parseServer(optarg, serverHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -112,8 +116,8 @@ DoCat(const char *pathname)
     const int mByte = 1024 * 1024;
     char dataBuf[mByte];
     int res, fd;    
-    size_t bytesRead = 0;
-    struct stat statBuf;
+    kfsOff_t bytesRead = 0;
+    KfsFileStat statBuf;
 
     fd = gKfsClient->Open(pathname, O_RDONLY);
     if (fd < 0) {
@@ -129,7 +133,7 @@ DoCat(const char *pathname)
             break;
         cout << dataBuf;
         bytesRead += res;
-        if (bytesRead >= (size_t) statBuf.st_size)
+        if (bytesRead >= statBuf.size)
             break;
     }
     gKfsClient->Close(fd);

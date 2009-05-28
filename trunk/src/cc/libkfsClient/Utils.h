@@ -37,8 +37,8 @@ namespace KFS {
 
 // we call this function by creating temporaries on the stack. to let
 // that thru, dont' stick in "&"
-extern std::string strip_dots(std::string path);
-extern std::string build_path(std::string &cwd, const char *input);
+extern std::string strip_dots(const std::string & path);
+extern std::string build_path(const std::string & cwd, const std::string & input);
 
 extern void GetTimeval(std::string &s, struct timeval &tv);
 // Introduce a delay for nsecs...i.e., sleep

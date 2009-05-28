@@ -62,7 +62,7 @@ KFS::tools::handleCd(const vector<string> &args)
 
     int res;
 
-    if ((res = kfsClient->Cd(args[0].c_str())) < 0) {
+    if ((res = kfsClient->Cd(args[0])) < 0) {
 	cout << "cd failed: " << ErrorCodeToStr(res) << endl;
         return res;
     }

@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/libkfsClient/KfsPendingOp.cc#1 $
+// $Id$
 //
 // Created 2008/12/28
 // Author: Mike Ovsiannikov

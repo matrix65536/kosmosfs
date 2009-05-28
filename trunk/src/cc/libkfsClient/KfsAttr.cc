@@ -1,11 +1,8 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
 // $Id$
 //
-// Created 2006/09/21
-// Author: Sriram Rao
-//
-// Copyright 2008 Quantcast Corp.
-// Copyright 2006-2008 Kosmix Corp.
+// Created 2009/04/23
+// Author: Jakub Schmidtke
 //
 // This file is part of Kosmos File System (KFS).
 //
@@ -21,40 +18,42 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 //
-// \brief Tool that implements rmdir <path>
 //----------------------------------------------------------------------------
 
-#include <iostream>    
-#include <fstream>
-#include <cerrno>
+#include "KfsAttr.h"
 
-extern "C" {
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdlib.h>
-#include <dirent.h>
-}
-
-#include "libkfsClient/KfsClient.h"
-#include "tools/KfsShell.h"
-
-using std::cout;
-using std::endl;
-using std::vector;
-using std::string;
+#include <cstring>
+#include <algorithm>
 
 using namespace KFS;
-using namespace KFS::tools;
 
-int
-KFS::tools::handleRmdir(const vector<string> &args)
+void
+ChunkAttr::AvoidServer ( ServerLocation &loc )
 {
-    if ((args.size() < 1) || (args[0] == "--help") || (args[0] == "")) {
-        cout << "Usage: rmdir <dir> " << endl;
-        return 0;
-    }
+    vector<ServerLocation>::iterator iter;
 
-    return doRmdir(args[0]);
+    iter = std::find ( chunkServerLoc.begin(), chunkServerLoc.end(), loc );
+
+    if ( iter != chunkServerLoc.end() )
+        chunkServerLoc.erase ( iter );
+
+    if ( chunkServerLoc.size() == 0 )
+    {
+        // all the servers we could talk to are gone; so, we need
+        // to re-figure where the data is.
+        chunkId = -1;
+    }
+}
+
+void
+KfsFileStat::safeConvert(struct stat & std_stat, kfsOff_t & std_size)
+{
+    memset ( &std_stat, 0, sizeof ( std_stat ) );
+
+    std_stat.st_mode = mode;
+    std_stat.st_atime = atime;
+    std_stat.st_mtime = mtime;
+    std_stat.st_ctime = ctime;
+
+    std_size = size;
 }

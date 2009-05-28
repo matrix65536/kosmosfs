@@ -37,6 +37,7 @@ extern "C" {
 #include "common/log.h"
 
 #include "MonUtils.h"
+#include "KfsToolsCommon.h"
 
 using std::string;
 using std::cout;
@@ -60,10 +61,12 @@ int main(int argc, char **argv)
 {
     char optchar;
     bool help = false, meta = false, chunk = false;
-    const char *server = NULL;
+    string serverHost = "";
     int port = -1;
     bool verboseLogging = false;
 
+    KFS::tools::getEnvServer(serverHost, port);
+    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hmcs:p:v")) != -1) {
@@ -75,7 +78,7 @@ int main(int argc, char **argv)
                 chunk = true;
                 break;
             case 's':
-                server = optarg;
+                KFS::tools::parseServer(optarg, serverHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -101,13 +104,13 @@ int main(int argc, char **argv)
 
     help = help || (!meta && !chunk);
 
-    if (help || (server == NULL) || (port < 0)) {
+    if (help || (serverHost == "") || (port < 0)) {
         cout << "Usage: " << argv[0] << " [-m|-c] -s <server name> -p <port> {-v}" 
              << endl;
         exit(-1);
     }
 
-    ServerLocation loc(server, port);
+    ServerLocation loc(serverHost, port);
 
     if (meta)
         PingMetaServer(loc);
