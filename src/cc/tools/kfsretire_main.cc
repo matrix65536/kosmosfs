@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id:$
+// $Id$
 //
 // Created 2008/06/20
 // Author: Sriram Rao
@@ -43,6 +43,7 @@ extern "C" {
 #include "common/log.h"
 
 #include "MonUtils.h"
+#include "KfsToolsCommon.h"
 
 using std::string;
 using std::cout;
@@ -81,7 +82,8 @@ int main(int argc, char **argv)
 {
     char optchar;
     bool help = false;
-    const char *metaserver = NULL, *chunkserver = NULL;
+    string metaServerHost = "";
+    string chunkServerHost = "";
     int metaport = -1, chunkport = -1, sleepTime = -1;
     bool verboseLogging = false;
 
@@ -90,10 +92,10 @@ int main(int argc, char **argv)
     while ((optchar = getopt(argc, argv, "hm:p:c:d:s:v")) != -1) {
         switch (optchar) {
             case 'm': 
-                metaserver = optarg;
+                KFS::tools::parseServer(optarg, metaServerHost, metaport);
                 break;
             case 'c':
-                chunkserver = optarg;
+		KFS::tools::parseServer(optarg, chunkServerHost, chunkport);
                 break;
             case 'p':
                 metaport = atoi(optarg);
@@ -117,7 +119,7 @@ int main(int argc, char **argv)
         }
     }
 
-    help = help || !metaserver || !chunkserver;
+    help = help || (metaServerHost == "") || (chunkServerHost == "");
 
     if (help) {
         cout << "Usage: " << argv[0] << " [-m <metaserver> -p <port>] [-c <chunkserver> -d <port>] "
@@ -131,8 +133,8 @@ int main(int argc, char **argv)
         KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
     } 
 
-    ServerLocation metaLoc(metaserver, metaport);
-    ServerLocation chunkLoc(chunkserver, chunkport);
+    ServerLocation metaLoc(metaServerHost, metaport);
+    ServerLocation chunkLoc(chunkServerHost, chunkport);
 
     RetireChunkserver(metaLoc, chunkLoc, sleepTime);
     exit(0);

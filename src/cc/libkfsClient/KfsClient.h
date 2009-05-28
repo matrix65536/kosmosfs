@@ -80,7 +80,7 @@ public:
     /// @param[in] pathname  The pathname to change the "cwd" to
     /// @retval 0 on sucess; -errno otherwise
     ///
-    int Cd(const char *pathname);
+    int Cd(const std::string & pathname);
 
     /// Get cwd
     /// @retval a string that describes the current working dir.
@@ -92,32 +92,32 @@ public:
     /// present, they are also made.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if mkdir is successful; -errno otherwise
-    int Mkdirs(const char *pathname);
+    int Mkdirs(const std::string & pathname);
 
     ///
     /// Make a directory in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if mkdir is successful; -errno otherwise
-    int Mkdir(const char *pathname);
+    int Mkdir(const std::string & pathname);
 
     ///
     /// Remove a directory in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if rmdir is successful; -errno otherwise
-    int Rmdir(const char *pathname);
+    int Rmdir(const std::string & pathname);
 
     ///
     /// Remove a directory hierarchy in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if rmdir is successful; -errno otherwise
-    int Rmdirs(const char *pathname);
+    int Rmdirs(const std::string & pathname);
 
     ///
     /// Read a directory's contents
     /// @param[in] pathname	The full pathname such as /.../dir
     /// @param[out] result	The contents of the directory
     /// @retval 0 if readdir is successful; -errno otherwise
-    int Readdir(const char *pathname, std::vector<std::string> &result);
+    int Readdir(const std::string & pathname, std::vector<std::string> &result);
 
     ///
     /// Read a directory's contents and retrieve the attributes
@@ -125,14 +125,14 @@ public:
     /// @param[out] result	The files in the directory and their attributes.
     /// @retval 0 if readdirplus is successful; -errno otherwise
     ///
-    int ReaddirPlus(const char *pathname, std::vector<KfsFileAttr> &result);
+    int ReaddirPlus(const std::string & pathname, std::vector<KfsFileAttr> &result);
 
     ///
     /// Do a du on the metaserver side for pathname and return the #
     /// of files/bytes in the directory tree starting at pathname.
     /// @retval 0 if readdirplus is successful; -errno otherwise
     ///
-    int GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t &numBytes);
+    int GetDirSummary(const std::string & pathname, uint64_t &numFiles, uint64_t &numBytes);
 
     ///
     /// Stat a file and get its attributes.
@@ -142,7 +142,17 @@ public:
     /// file is computed and the value is returned in result.st_size
     /// @retval 0 if stat was successful; -errno otherwise
     ///
-    int Stat(const char *pathname, struct stat &result, bool computeFilesize = true);
+    int Stat(const std::string & pathname, KfsFileStat &result, bool computeFilesize = true);
+    
+    // This function needs to be in .h file, in case client uses wrong compilation options
+    // which result in wrong length of st_size field on 32 bit architecture!
+    int Stat(const std::string & pathname, struct stat &result, bool computeFilesize = true)
+    {
+	KfsFileStat kfsStat;
+	int ret = Stat(pathname, kfsStat, computeFilesize);
+	kfsStat.convert(result);
+	return ret;
+    }
 
     ///
     /// Helper APIs to check for the existence of (1) a path, (2) a
@@ -150,9 +160,9 @@ public:
     /// @param[in] pathname	The full pathname such as /.../foo
     /// @retval status: True if it exists; false otherwise
     ///
-    bool Exists(const char *pathname);
-    bool IsFile(const char *pathname);
-    bool IsDirectory(const char *pathname);
+    bool Exists(const std::string & pathname);
+    bool IsFile(const std::string & pathname);
+    bool IsDirectory(const std::string & pathname);
 
     ///
     /// For testing/debugging purposes, would be nice to know where
@@ -161,18 +171,18 @@ public:
     /// queried
     /// @retval status code
     ///
-    int EnumerateBlocks(const char *pathname);
+    int EnumerateBlocks(const std::string & pathname);
 
     /// Given a vector of checksums, one value per checksum block,
     /// verify that it matches with what is stored at each of the
     /// replicas in KFS.
     /// @retval status code
-    bool VerifyDataChecksums(const char *pathname, const std::vector<uint32_t> &checksums);
+    bool VerifyDataChecksums(const std::string & pathname, const std::vector<uint32_t> &checksums);
 
     /// Helper variety of verifying checksums: given a region of a
     /// file, compute the checksums and verify them.  This is useful
     /// for testing purposes.
-    bool VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes);
+    bool VerifyDataChecksums(int fd, kfsOff_t offset, const char *buf, kfsOff_t numBytes);
 
     ///
     /// Create a file which is specified by a complete path.
@@ -183,14 +193,14 @@ public:
     /// @retval on success, fd corresponding to the created file;
     /// -errno on failure.
     ///
-    int Create(const char *pathname, int numReplicas = 3, bool exclusive = false);
+    int Create(const std::string & pathname, int numReplicas = 3, bool exclusive = false);
 
     ///
     /// Remove a file which is specified by a complete path.
     /// @param[in] pathname that has to be removed
     /// @retval status code
     ///
-    int Remove(const char *pathname);
+    int Remove(const std::string & pathname);
 
     ///
     /// Rename file/dir corresponding to oldpath to newpath
@@ -200,7 +210,7 @@ public:
     /// exists; otherwise, the rename will fail if newpath exists
     /// @retval 0 on success; -1 on failure
     ///
-    int Rename(const char *oldpath, const char *newpath, bool overwrite = true);
+    int Rename(const std::string & oldpath, const std::string & newpath, bool overwrite = true);
 
     ///
     /// Open a file
@@ -212,13 +222,13 @@ public:
     /// desired degree of replication for the file
     /// @retval fd corresponding to the opened file; -errno on failure
     ///
-    int Open(const char *pathname, int openFlags, int numReplicas = 3);
+    int Open(const std::string & pathname, int openFlags, int numReplicas = 3);
 
     ///
     /// Return file descriptor for an open file
     /// @param[in] pathname of file
     /// @retval file descriptor if open, error code < 0 otherwise
-    int Fileno(const char *pathname);
+    int Fileno(const std::string & pathname);
 
     ///
     /// Close a file
@@ -255,23 +265,23 @@ public:
     /// relative to whence.
     /// @param[in] whence one of SEEK_CUR, SEEK_SET, SEEK_END
     /// @retval On success, the offset to which the filer
-    /// pointer was moved to; (off_t) -1 on failure.
+    /// pointer was moved to; (kfsOff_t) -1 on failure.
     ///
-    off_t Seek(int fd, off_t offset, int whence);
+    kfsOff_t Seek(int fd, kfsOff_t offset, int whence);
     /// In this version of seek, whence == SEEK_SET
-    off_t Seek(int fd, off_t offset);
+    kfsOff_t Seek(int fd, kfsOff_t offset);
 
     /// Return the current position of the file pointer in the file.
     /// @param[in] fd that corresponds to a previously opened file
     /// @retval value returned is analogous to calling ftell()
-    off_t Tell(int fd);
+    kfsOff_t Tell(int fd);
 
     ///
     /// Truncate a file to the specified offset.
     /// @param[in] fd that corresponds to a previously opened file
     /// @param[in] offset  the offset to which the file should be truncated
     /// @retval status code
-    int Truncate(int fd, off_t offset);
+    int Truncate(int fd, kfsOff_t offset);
 
     ///
     /// Given a starting offset/length, return the location of all the
@@ -285,10 +295,10 @@ public:
     /// @param[out] locations	The location(s) of various chunks
     /// @retval status: 0 on success; -errno otherwise
     ///
-    int GetDataLocation(const char *pathname, off_t start, off_t len,
+    int GetDataLocation(const std::string & pathname, kfsOff_t start, kfsOff_t len,
                         std::vector< std::vector <std::string> > &locations);
 
-    int GetDataLocation(int fd, off_t start, off_t len,
+    int GetDataLocation(int fd, kfsOff_t start, kfsOff_t len,
                         std::vector< std::vector <std::string> > &locations);
 
     ///
@@ -296,7 +306,7 @@ public:
     /// @param[in] pathname	The full pathname of the file such as /../foo
     /// @retval count
     ///
-    int16_t GetReplicationFactor(const char *pathname);
+    int16_t GetReplicationFactor(const std::string & pathname);
 
     ///
     /// Set the degree of replication for the pathname.
@@ -304,7 +314,7 @@ public:
     /// @param[in] numReplicas  The desired degree of replication.
     /// @retval -1 on failure; on success, the # of replicas that will be made.
     ///
-    int16_t SetReplicationFactor(const char *pathname, int16_t numReplicas);
+    int16_t SetReplicationFactor(const std::string & pathname, int16_t numReplicas);
 
     ServerLocation GetMetaserverLocation() const;
 
@@ -390,9 +400,9 @@ public:
         mDefaultClient = clnt;
     }
 
+    KfsClientPtr SetDefaultClient(const std::string metaServerHost, int metaServerPort);
+    
     KfsClientPtr GetClient() {
-	// This HAS to be inside .h file!
-	checkClientOffSize(sizeof(off_t));
         return mDefaultClient;
     }
 
@@ -400,11 +410,7 @@ public:
     /// @param[in] propFile that describes where the server is and
     /// other client configuration info.
     ///
-    KfsClientPtr GetClient(const char *propFile) {
-	// This HAS to be inside .h file!
-	checkClientOffSize(sizeof(off_t));
-	return internalGetClient(propFile);
-    }
+    KfsClientPtr GetClient(const std::string & propFile);
 
     ///
     /// Get the client object corresponding to the specified
@@ -414,16 +420,7 @@ public:
     /// @retval if connection to metaserver succeeds, a client object
     /// that is "ready" for use; NULL if there was an error
     ///
-    KfsClientPtr GetClient(const std::string metaServerHost, int metaServerPort) {
-	// This HAS to be inside .h file!
-	checkClientOffSize(sizeof(off_t));
-	return internalGetClient(metaServerHost, metaServerPort);
-    }
-    
-    private:
-	static void checkClientOffSize(size_t size);
-	KfsClientPtr internalGetClient(const std::string metaServerHost, int metaServerPort);
-	KfsClientPtr internalGetClient(const char *propFile);
+    KfsClientPtr GetClient(const std::string & metaServerHost, int metaServerPort);
 };
 
 

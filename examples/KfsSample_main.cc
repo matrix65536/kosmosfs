@@ -63,7 +63,7 @@ main(int argc, char **argv)
     int port = -1;
     bool help = false;
     char optchar;
-    struct stat statInfo;
+    KfsFileStat statInfo;
 
     while ((optchar = getopt(argc, argv, "hp:s:")) != -1) {
         switch (optchar) {
@@ -103,12 +103,12 @@ main(int argc, char **argv)
 
     // Make /ctest
     string basedir = "ctest";
-    if (!doMkdirs(basedir.c_str())) {
+    if (!doMkdirs(basedir)) {
         exit(0);
     }
 
     // What we just created better be a directory
-    if (!gKfsClient->IsDirectory(basedir.c_str())) {
+    if (!gKfsClient->IsDirectory(basedir)) {
         cout << "KFS doesn't think: " << basedir << " is a dir!" << endl;
         exit(-1);
     }
@@ -120,7 +120,7 @@ main(int argc, char **argv)
     // fd is our file-handle to the file we are creating; this
     // file handle should be used in subsequent I/O calls on
     // the file.
-    if ((fd = gKfsClient->Create(tempFn.c_str())) < 0) {
+    if ((fd = gKfsClient->Create(tempFn)) < 0) {
         cout << "Create failed: " << ErrorCodeToStr(fd) << endl;
         exit(-1);
     }
@@ -129,7 +129,7 @@ main(int argc, char **argv)
     vector<string> entries;
     int res;
 
-    if ((res = gKfsClient->Readdir(basedir.c_str(), entries)) < 0) {
+    if ((res = gKfsClient->Readdir(basedir, entries)) < 0) {
         cout << "Readdir failed! " << ErrorCodeToStr(res) << endl;
         exit(-1);
     }
@@ -162,8 +162,8 @@ main(int argc, char **argv)
     gKfsClient->Close(fd);
             
     // Determine the file-size
-    gKfsClient->Stat(tempFn.c_str(), statInfo);
-    long sz = statInfo.st_size;
+    gKfsClient->Stat(tempFn, statInfo);
+    kfsOff_t sz = statInfo.size;
 
     if (sz != numBytes) {
         cout << "KFS thinks the file's size is: " << sz << " instead of " << numBytes << endl;
@@ -171,17 +171,17 @@ main(int argc, char **argv)
 
     // rename the file
     string npath = basedir + "/foo.2";
-    gKfsClient->Rename(tempFn.c_str(), npath.c_str());
+    gKfsClient->Rename(tempFn, npath);
 
-    if (gKfsClient->Exists(tempFn.c_str())) {
+    if (gKfsClient->Exists(tempFn)) {
         cout << tempFn << " still exists after rename!" << endl;
         exit(-1);
     }
 
     // Re-create the file and try a rename that should fail...
-    int fd1 = gKfsClient->Create(tempFn.c_str());
+    int fd1 = gKfsClient->Create(tempFn);
     
-    if (!gKfsClient->Exists(tempFn.c_str())) {
+    if (!gKfsClient->Exists(tempFn)) {
         cout << " After rec-create..., " << tempFn << " doesn't exist!" << endl;
         exit(-1);
     }
@@ -189,16 +189,16 @@ main(int argc, char **argv)
     gKfsClient->Close(fd1);
 
     // try to rename and don't allow overwrite
-    if (gKfsClient->Rename(npath.c_str(), tempFn.c_str(), false) == 0) {
+    if (gKfsClient->Rename(npath, tempFn, false) == 0) {
         cout << "Rename  with overwrite disabled succeeded...error!" << endl;
         exit(-1);
     }
 
     // Remove the file
-    gKfsClient->Remove(tempFn.c_str());
+    gKfsClient->Remove(tempFn);
 
     // Re-open the file
-    if ((fd = gKfsClient->Open(npath.c_str(), O_RDWR)) < 0) {
+    if ((fd = gKfsClient->Open(npath, O_RDWR)) < 0) {
         cout << "Open on : " << npath << " failed!" << ErrorCodeToStr(fd) << endl;
         exit(-1);
     }
@@ -225,10 +225,10 @@ main(int argc, char **argv)
     gKfsClient->Close(fd);
 
     // remove the file
-    gKfsClient->Remove(npath.c_str());
+    gKfsClient->Remove(npath);
 
     // remove the dir
-    if ((res = gKfsClient->Rmdir(basedir.c_str())) < 0) {
+    if ((res = gKfsClient->Rmdir(basedir)) < 0) {
         cout << "Unable to remove: " << basedir << " : " << ErrorCodeToStr(res) << endl;
     } else {
         cout << "Testts passed!" << endl;

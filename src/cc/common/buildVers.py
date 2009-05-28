@@ -48,7 +48,7 @@ fh = open(sys.argv[2], "w")
 print >> fh, "//"
 print >> fh, "// This file is generated during compilation.  DO NOT EDIT!"
 print >> fh, "//"
-print >> fh, "#include \"Version.h\" "
+print >> fh, "#include \"common/Version.h\" "
 print >> fh, "const std::string KFS::KFS_BUILD_VERSION_STRING=\"%s\";" % buildstr
 print >> fh, "const std::string KFS::KFS_SOURCE_REVISION_STRING=\"%s\";" % srcRevision
 

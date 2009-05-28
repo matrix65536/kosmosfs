@@ -70,7 +70,7 @@ int
 doRecrRemove(const char *pathname)
 {
     int res;
-    struct stat statInfo;
+    KfsFileStat statInfo;
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     res = kfsClient->Stat(pathname, statInfo);
@@ -79,7 +79,7 @@ doRecrRemove(const char *pathname)
              << ErrorCodeToStr(res) << endl;
         return res;
     }
-    if (S_ISDIR(statInfo.st_mode)) {
+    if (S_ISDIR(statInfo.mode)) {
         return kfsClient->Rmdirs(pathname);
     } else {
         return doRemoveFile(pathname);

@@ -160,9 +160,9 @@ bool doFileOps(char *testDataFile,
 
     gKfsClient->Close(fd);
 
-    struct stat result;
+    KfsFileStat result;
     gKfsClient->Stat(fileName, result);
-    assert(result.st_size == 100000);
+    assert(result.size == 100000);
     
     delete [] kfsBuf;
     delete [] dataBuf;

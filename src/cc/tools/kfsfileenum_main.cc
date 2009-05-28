@@ -36,6 +36,7 @@ using std::cout;
 using std::endl;
 #include "common/log.h"
 #include "libkfsClient/KfsClient.h"
+#include "KfsToolsCommon.h"
 
 using namespace KFS;
 KfsClientPtr gKfsClient;
@@ -44,18 +45,20 @@ int
 main(int argc, char **argv)
 {
     bool help = false;
-    const char *server = NULL;
+    string serverHost = "";
     const char *filename = NULL;
     int port = -1, retval;
     char optchar;
     bool verboseLogging = false;
 
+    KFS::tools::getEnvServer(serverHost, port);
+    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hs:p:f:v")) != -1) {
         switch (optchar) {
             case 's':
-                server = optarg;
+                KFS::tools::parseServer(optarg, serverHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -76,13 +79,13 @@ main(int argc, char **argv)
         }
     }
 
-    if (help || (server == NULL) || (port < 0) || (filename == NULL)) {
+    if (help || (serverHost == "") || (port < 0) || (filename == NULL)) {
         cout << "Usage: " << argv[0] << " -s <server name> -p <port> -f <path> {-v}" 
              << endl;
         exit(-1);
     }
 
-    gKfsClient = getKfsClientFactory()->GetClient(server, port);
+    gKfsClient = getKfsClientFactory()->GetClient(serverHost, port);
     if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(-1);

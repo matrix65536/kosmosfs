@@ -31,6 +31,7 @@
 #include <fstream>
 #include "libkfsClient/KfsClient.h"
 #include "common/log.h"
+#include "KfsToolsCommon.h"
 
 using std::cout;
 using std::cin;
@@ -54,13 +55,15 @@ main(int argc, char **argv)
     bool help = false, verboseLogging = false;
     ssize_t numBytes;
 
+    KFS::tools::getEnvServer(serverHost, port);
+    
     while ((optchar = getopt(argc, argv, "hs:p:d:v")) != -1) {
         switch (optchar) {
             case 'f':
                 kfspathname = optarg;
                 break;
             case 's':
-                serverHost = optarg;
+                KFS::tools::parseServer(optarg, serverHost, port);
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -113,7 +116,7 @@ doPut(const string &filename)
     char c;
 
 
-    fd = gKfsClient->Open(filename.c_str(), O_CREAT|O_RDWR|O_APPEND);
+    fd = gKfsClient->Open(filename, O_CREAT|O_RDWR|O_APPEND);
     if (fd < 0) {
         cout << "Create failed: " << endl;
         exit(0);

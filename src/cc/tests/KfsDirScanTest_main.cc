@@ -73,14 +73,14 @@ main(int argc, char **argv)
 
 void dirListPlusAttr(const string &kfspathname)
 {
-    if (gKfsClient->IsFile(kfspathname.c_str())) {
+    if (gKfsClient->IsFile(kfspathname)) {
         cout << kfspathname << " is a file..." << endl;
         return;
     }
 
     vector<KfsFileAttr> fattrs;
 
-    if (gKfsClient->ReaddirPlus(kfspathname.c_str(), fattrs) < 0) {
+    if (gKfsClient->ReaddirPlus(kfspathname, fattrs) < 0) {
         cout << "unable to do readdirplus on " << kfspathname << endl;
         return;
     }
@@ -91,22 +91,22 @@ void dirListPlusAttr(const string &kfspathname)
     for (uint32_t i = 0; i < fattrs.size(); i++) {
         string abspath = kfspathname + "/" + fattrs[i].filename;
 
-        if (gKfsClient->IsFile(abspath.c_str()))
-            replicas = gKfsClient->GetReplicationFactor(abspath.c_str());
+        if (gKfsClient->IsFile(abspath))
+            replicas = gKfsClient->GetReplicationFactor(abspath);
     }
 
     KFS_LOG_VA_INFO("Done getting replication factor for all entries on %s", kfspathname.c_str());
 
-    struct stat statbuf;
+    KfsFileStat statbuf;
     uint64_t dirsz = 0;
 
     for (uint32_t i = 0; i < fattrs.size(); i++) {
         string abspath = kfspathname + "/" + fattrs[i].filename;
 
-        if (gKfsClient->IsFile(abspath.c_str())) {
-            int res = gKfsClient->Stat(abspath.c_str(), statbuf);
+        if (gKfsClient->IsFile(abspath)) {
+            int res = gKfsClient->Stat(abspath, statbuf);
             if (res == 0)
-                dirsz += statbuf.st_size;
+                dirsz += statbuf.size;
         }
     }
 
