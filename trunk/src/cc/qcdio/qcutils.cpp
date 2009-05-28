@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcutils.cpp#3 $
+// $Id$
 //
 // Created 2008/11/01
 // Author: Mike Ovsiannikov
