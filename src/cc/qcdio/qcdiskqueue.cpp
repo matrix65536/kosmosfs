@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcdiskqueue.cpp#5 $
+// $Id$
 //
 // Created 2008/11/11
 // Author: Mike Ovsiannikov

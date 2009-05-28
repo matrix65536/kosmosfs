@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id: //depot/main/platform/kosmosfs/src/cc/qcdio/qcmutex.cpp#2 $
+// $Id$
 //
 // Created 2008/10/30
 // Author: Mike Ovsiannikov
