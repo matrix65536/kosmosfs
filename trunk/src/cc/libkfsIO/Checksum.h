@@ -27,6 +27,7 @@
 #ifndef CHUNKSERVER_CHECKSUM_H
 #define CHUNKSERVER_CHECKSUM_H
 
+#include <stdint.h>
 #include <vector>
 #include "libkfsIO/IOBuffer.h"
 
