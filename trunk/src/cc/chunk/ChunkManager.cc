@@ -2014,16 +2014,18 @@ ChunkManager::GetTotalSpace(
 #endif
 
     int64_t availableSpace = 0;
-    set<unsigned long> seenDrives;
+    set<dev_t> seenDrives;
 
     for (uint32_t i = 0; i < mChunkDirs.size(); i++) {
         // report the space based on availability
         StatVfs result;
+	struct stat statbuf;
 
-        if (GetVfsStat(mChunkDirs[i].dirname.c_str(), &result) < 0) {
+        if (GetVfsStat(mChunkDirs[i].dirname.c_str(), &result) < 0 ||
+	    stat(mChunkDirs[i].dirname.c_str(), &statbuf) < 0) {
             int err = errno;
             KFS_LOG_STREAM_INFO <<
-                "statvfs failed on " << mChunkDirs[i].dirname <<
+                "statvfs (or stat) failed on " << mChunkDirs[i].dirname <<
                 " with error: " << err << " " << strerror(err) <<
             KFS_LOG_EOM;
             mChunkDirs[i].availableSpace = 0;
@@ -2046,7 +2048,7 @@ ChunkManager::GetTotalSpace(
             DiskIo::Shutdown();
             return -1;
         }
-        if (seenDrives.find(result.f_fsid) != seenDrives.end()) {
+        if (seenDrives.find(statbuf.st_dev) != seenDrives.end()) {
             // if we have seen the drive where this directory is, then
             // we have already accounted for how much is free on the drive
             availableSpace += mChunkDirs[i].usedSpace;
@@ -2058,10 +2060,10 @@ ChunkManager::GetTotalSpace(
             // then all the chunks we write will get to use the space on disk and
             // won't get acounted for in terms of drive space.
             mChunkDirs[i].availableSpace = result.f_bavail * result.f_frsize + mChunkDirs[i].usedSpace;
-            availableSpace += result.f_bavail * result.f_frsize + mChunkDirs[i].usedSpace;
-            seenDrives.insert(result.f_fsid);
+            availableSpace += result.f_bavail * result.f_frsize + mChunkDirs[i].usedSpace;	    
+            seenDrives.insert(statbuf.st_dev);
         }
-        KFS_LOG_STREAM_DEBUG <<
+        KFS_LOG_STREAM_INFO <<
             "Dir: " << mChunkDirs[i].dirname <<
             " has space " << mChunkDirs[i].availableSpace <<
         KFS_LOG_EOM;
