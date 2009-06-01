@@ -128,7 +128,7 @@ NetManager::UpdateTimer(NetConnection::NetManagerEntry& entry, int timeOut)
             // When the timer is running the effective wheel size "grows" by 1:
             // leave (move) entries with timeouts >= kTimerWheelSize in (to) the
             // current slot.
-            std::min((kTimerWheelSize - mTimerRunningFlag ? 0 : 1), timeOut)) >=
+            std::min((kTimerWheelSize - (mTimerRunningFlag ? 0 : 1)), timeOut)) >=
             kTimerWheelSize) {
         timerWheelSlot -= kTimerWheelSize;
     }
