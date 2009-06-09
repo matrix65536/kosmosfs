@@ -761,6 +761,7 @@ WriteOp::HandleWriteDone(int code, void *data)
             status = *(int *) data;
             KFS_LOG_VA_INFO("Disk error: errno = %d, chunkid = %lld", status, chunkId);
         }
+        gChunkManager.SetWriteStatus(chunkId, status);
         gChunkManager.ChunkIOFailed(chunkId, status);
 
         wpop->HandleEvent(EVENT_CMD_DONE, this);
