@@ -2196,17 +2196,8 @@ WritePrepareOp::~WritePrepareOp()
 
 WriteSyncOp::~WriteSyncOp()
 {
-    off_t chunkSize = 0;
-
     delete fwdedOp;
     delete writeOp;
-
-    gChunkManager.ChunkSize(chunkId, &chunkSize);
-    if ((chunkSize > 0) && 
-        (chunkSize >= (off_t) KFS::CHUNKSIZE)) {
-        // we are done with all the writing to this chunk; so, close it
-        gChunkManager.CloseChunk(chunkId);
-    }
 }
 
 void
