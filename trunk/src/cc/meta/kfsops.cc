@@ -396,6 +396,57 @@ Tree::getDentry(fid_t fid)
         return d;
 }
 
+
+/*
+ * Do a depth first dir listing of the tree.  This can be useful for debugging
+ * purposes.
+ */
+void
+Tree::listPaths(ofstream &ofs)
+{
+	listPaths(ofs, "/", ROOTFID);
+	ofs.flush();
+	ofs << '\n';
+}
+
+void
+Tree::listPaths(ofstream &ofs, string parent, fid_t dir)
+{
+	vector<MetaDentry *> entries;
+	MetaFattr *dirattr = getFattr(dir);
+	struct tm tm;
+	char datebuf[256];
+
+	if (dirattr == NULL)
+		return;
+
+	readdir(dir, entries);
+	for (uint32_t i = 0; i < entries.size(); i++) {
+		string entryname = entries[i]->getName();
+		if ((entryname == ".") || (entryname == "..") ||
+			(entries[i]->id() == dir))
+			continue;
+
+		MetaFattr *fa = getFattr(entries[i]->id());
+		if (fa == NULL)
+			continue;
+		if (fa->type == KFS_DIR) {
+			string subdir = parent + entryname;
+			gmtime_r(&(fa->mtime.tv_sec), &tm);
+			asctime_r(&tm, datebuf);
+			// ofs << subdir << ' ' << fa->mtime.tv_sec << " " << fa->mtime.tv_usec << '\n';
+			ofs << subdir << ' ' << datebuf;
+			listPaths(ofs, subdir + "/", fa->id());
+			continue;
+		}
+		gmtime_r(&(fa->mtime.tv_sec), &tm);
+		asctime_r(&tm, datebuf);
+		// ofs << parent << entryname << ' ' << fa->mtime.tv_sec << " " << fa->mtime.tv_usec << '\n';
+		ofs << parent << entryname << ' ' << datebuf;
+		// ofs << parent << entryname << '\n';
+	}
+}
+
 /*
  * For fast "du", we store the size of a directory tree in the Fattr for that
  * tree id.  This method should be called whenever the size values need to be

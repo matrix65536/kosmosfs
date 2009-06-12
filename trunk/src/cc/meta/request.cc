@@ -44,6 +44,7 @@ using std::string;
 using std::istringstream;
 using std::ifstream;
 using std::min;
+using std::max;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -66,6 +67,7 @@ static int parseHandlerGetalloc(Properties &prop, MetaRequest **r);
 static int parseHandlerGetlayout(Properties &prop, MetaRequest **r);
 static int parseHandlerAllocate(Properties &prop, MetaRequest **r);
 static int parseHandlerTruncate(Properties &prop, MetaRequest **r);
+static int parseHandlerSetMtime(Properties &prop, MetaRequest **r);
 static int parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r);
 static int parseHandlerRetireChunkserver(Properties &prop, MetaRequest **r);
 static int parseHandlerToggleRebalancing(Properties &prop, MetaRequest **r);
@@ -81,6 +83,7 @@ static int parseHandlerHello(Properties &prop, MetaRequest **r);
 static int parseHandlerPing(Properties &prop, MetaRequest **r);
 static int parseHandlerStats(Properties &prop, MetaRequest **r);
 static int parseHandlerCheckLeases(Properties &prop, MetaRequest **r);
+static int parseHandlerRecomputeDirsize(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkReplicationCandidates(Properties &prop, MetaRequest **r);
 static int parseHandlerOpenFiles(Properties &prop, MetaRequest **r);
@@ -152,6 +155,7 @@ KFS::RegisterCounters()
 	AddCounter("Create", META_CREATE);
 	AddCounter("Remove", META_REMOVE);
 	AddCounter("Rename", META_RENAME);
+	AddCounter("Set Mtime", META_SETMTIME);
 	AddCounter("Mkdir", META_MKDIR);
 	AddCounter("Rmdir", META_RMDIR);
 	AddCounter("Change File Replication", META_CHANGE_FILE_REPLICATION);
@@ -759,6 +763,23 @@ handle_rename(MetaRequest *r)
 }
 
 static void
+handle_setmtime(MetaRequest *r)
+{
+	MetaSetMtime *req = static_cast <MetaSetMtime *>(r);
+	MetaFattr *fa = metatree.lookupPath(KFS::ROOTFID, req->pathname);
+
+	if (fa != NULL) {
+		fa->mtime   = req->mtime;
+		req->fid    = fa->id();
+		req->status = 0;
+	} else {
+		req->status = -ENOENT;
+		req->fid    = -1;
+	}
+
+}
+
+static void
 handle_change_file_replication(MetaRequest *r)
 {
 	MetaChangeFileReplication *req = static_cast <MetaChangeFileReplication *>(r);
@@ -888,6 +909,7 @@ handle_chunk_size_done(MetaRequest *r)
 		return;
 	}
 
+	req->status = 0;
 	MetaFattr *fa = metatree.getFattr(req->fid);
 	if ((fa != NULL) && (fa->type == KFS_FILE)) {
 		vector<MetaChunkInfo*> chunkInfo;
@@ -904,10 +926,12 @@ handle_chunk_size_done(MetaRequest *r)
 		// only if we are looking at the last chunk of the file can we
 		// set the size.
                 MetaChunkInfo* lastChunk = chunkInfo.back();
+		off_t sizeEstimate = fa->filesize;
 		if (req->chunkId == lastChunk->chunkId) {
-			fa->filesize = (fa->chunkcount - 1) * CHUNKSIZE +
+			sizeEstimate = (fa->chunkcount - 1) * CHUNKSIZE +
 					req->chunkSize;
 		}
+		fa->filesize = max(fa->filesize, sizeEstimate);
 		// stash the value away so that we can log it.
 		req->filesize = fa->filesize;
 		//
@@ -916,13 +940,22 @@ handle_chunk_size_done(MetaRequest *r)
 		//
 		spaceUsageDelta = fa->filesize - spaceUsageDelta;
 		if (spaceUsageDelta > 0) {
+			/*
 			if (req->pathname == "") {
 				req->pathname = metatree.getPathname(req->fid);
 			}
-			metatree.updateSpaceUsageForPath(req->pathname, spaceUsageDelta);
+			*/
+			if (req->pathname != "") {
+				metatree.updateSpaceUsageForPath(req->pathname, spaceUsageDelta);
+			}
+			else {
+				KFS_LOG_VA_INFO("Got size %lld for chunk %lld; Will need to force recomputation of dir size",
+						req->chunkSize, req->chunkId);
+				// don't write out a log entry
+				req->status = -1;
+			}
 		}
 	}
-	req->status = 0;
 }
 
 static void
@@ -953,10 +986,20 @@ handle_ping(MetaRequest *r)
 static void
 handle_upservers(MetaRequest *r)
 {
-    MetaUpServers *req = static_cast <MetaUpServers *>(r);
+	MetaUpServers *req = static_cast <MetaUpServers *>(r);
 
-    req->status = 0;
-    gLayoutManager.UpServers(req->stringStream);
+	req->status = 0;
+	gLayoutManager.UpServers(req->stringStream);
+}
+
+static void
+handle_recompute_dirsize(MetaRequest *r)
+{
+	MetaRecomputeDirsize *req = static_cast <MetaRecomputeDirsize *>(r);
+
+	req->status = 0;
+	KFS_LOG_INFO("Processing a recompute dir size...");
+	metatree.recomputeDirSize();
 }
 
 static void
@@ -1055,6 +1098,7 @@ setup_handlers()
 	handler[META_ALLOCATE] = handle_allocate;
 	handler[META_TRUNCATE] = handle_truncate;
 	handler[META_RENAME] = handle_rename;
+	handler[META_SETMTIME] = handle_setmtime;
 	handler[META_CHANGE_FILE_REPLICATION] = handle_change_file_replication;
 	handler[META_CHUNK_SIZE] = handle_chunk_size_done;
 	handler[META_CHUNK_REPLICATE] = handle_chunk_replication_done;
@@ -1081,6 +1125,7 @@ setup_handlers()
 	handler[META_PING] = handle_ping;
 	handler[META_STATS] = handle_stats;
 	handler[META_CHECK_LEASES] = handle_check_leases;
+	handler[META_RECOMPUTE_DIRSIZE] = handle_recompute_dirsize;
 	handler[META_DUMP_CHUNKTOSERVERMAP] = handle_dump_chunkToServerMap;
 	handler[META_DUMP_CHUNKREPLICATIONCANDIDATES] = handle_dump_chunkReplicationCandidates;
 	handler[META_OPEN_FILES] = handle_open_files;
@@ -1099,6 +1144,7 @@ setup_handlers()
 	gParseHandlers["ALLOCATE"] = parseHandlerAllocate;
 	gParseHandlers["TRUNCATE"] = parseHandlerTruncate;
 	gParseHandlers["RENAME"] = parseHandlerRename;
+	gParseHandlers["SET_MTIME"] = parseHandlerSetMtime;
 	gParseHandlers["CHANGE_FILE_REPLICATION"] = parseHandlerChangeFileReplication;
 	gParseHandlers["RETIRE_CHUNKSERVER"] = parseHandlerRetireChunkserver;
 	gParseHandlers["EXECUTE_REBALANCEPLAN"] = parseHandlerExecuteRebalancePlan;
@@ -1118,6 +1164,7 @@ setup_handlers()
 	gParseHandlers["TOGGLE_WORM"] = parseHandlerToggleWORM;
 	gParseHandlers["STATS"] = parseHandlerStats;
 	gParseHandlers["CHECK_LEASES"] = parseHandlerCheckLeases;
+	gParseHandlers["RECOMPUTE_DIRSIZE"] = parseHandlerRecomputeDirsize;
 	gParseHandlers["DUMP_CHUNKTOSERVERMAP"] = parseHandlerDumpChunkToServerMap;
 	gParseHandlers["DUMP_CHUNKREPLICATIONCANDIDATES"] = parseHandlerDumpChunkReplicationCandidates;
 	gParseHandlers["OPEN_FILES"] = parseHandlerOpenFiles;
@@ -1336,6 +1383,17 @@ MetaRename::log(ofstream &file) const
 }
 
 /*!
+ * \brief log a setmtime
+ */
+int
+MetaSetMtime::log(ofstream &file) const
+{
+	file << "setmtime/file/" << fid 
+		<< "/mtime/" << showtime(mtime) << '\n';
+	return file.fail() ? -EIO : 0;
+}
+
+/*!
  * \brief Log a chunk-version-increment change to disk.
 */
 int
@@ -1538,6 +1596,15 @@ MetaStats::log(ofstream &file) const
  */
 int
 MetaDumpChunkToServerMap::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
+ * \brief for a recompute dir size request, there is nothing to log
+ */
+int
+MetaRecomputeDirsize::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1928,6 +1995,27 @@ parseHandlerRename(Properties &prop, MetaRequest **r)
 	return 0;
 }
 
+/*
+ * \brief Handler to parse out a setmtime request.
+*/
+
+static int
+parseHandlerSetMtime(Properties &prop, MetaRequest **r)
+{
+	string path;
+	seq_t seq;
+	struct timeval mtime;
+	
+	seq = prop.getValue("Cseq", (seq_t) -1);
+	path = prop.getValue("Pathname", "");
+	mtime.tv_sec  = prop.getValue("Mtime-sec", 0);
+	mtime.tv_usec = prop.getValue("Mtime-usec", 0);
+	if (path == "")
+		return -1;
+	*r = new MetaSetMtime(seq, path, mtime);
+	return 0;
+}
+
 static int
 parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r)
 {
@@ -2225,6 +2313,18 @@ parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r)
 }
 
 /*!
+ * \brief Parse out a dump server map request.
+ */
+int
+parseHandlerRecomputeDirsize(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+
+	*r = new MetaRecomputeDirsize(seq);
+	return 0;
+}
+
+/*!
  * \brief Parse out a dump chunk replication candidates request.
  */
 int
@@ -2393,6 +2493,14 @@ MetaReaddirPlus::response(ostringstream &os)
 
 void
 MetaRename::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n\r\n";
+}
+
+void
+MetaSetMtime::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2611,6 +2719,14 @@ MetaStats::response(ostringstream &os)
 
 void
 MetaCheckLeases::response(ostringstream &os)
+{
+	os << "OK\r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Status: " << status << "\r\n";
+}
+
+void
+MetaRecomputeDirsize::response(ostringstream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
