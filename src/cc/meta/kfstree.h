@@ -202,6 +202,7 @@ class Tree {
 	off_t recomputeDirSize(fid_t dir);
 	int changeFileReplication(MetaFattr *fa, int16_t numReplicas);
 	int changeDirReplication(MetaFattr *dirattr, int16_t numReplicas);
+	void listPaths(std::ofstream &ofs, std::string parent, fid_t dir);
 public:
 	Tree()
 	{
@@ -232,6 +233,7 @@ public:
 	void disableFidToPathname() { allowFidToPathConversion = false; }
 	void enableFidToPathname() { allowFidToPathConversion = true; }
 	std::string getPathname(fid_t fid);	//!< return full pathname for a given file id
+	void listPaths(std::ofstream &ofs);	//!< list out the paths in the tree
 	void recomputeDirSize();		//!< re-compute the size of each dir. in tree
 
 	int create(fid_t dir, const string &fname, fid_t *newFid, 

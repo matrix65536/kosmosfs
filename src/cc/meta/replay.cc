@@ -414,6 +414,27 @@ replay_setrep(deque <string> &c)
 	return ok;
 }
 
+/*!
+ * \brief replay setmtime
+ * format: setmtime/file/<fileID>/mtime/<time>
+ */
+static bool
+replay_setmtime(deque <string> &c)
+{
+	fid_t fid;
+	struct timeval mtime;
+
+	c.pop_front();
+	bool ok = pop_fid(fid, "file", c, true);
+	ok = pop_time(mtime, "mtime", c, ok);
+	if (ok) {
+		MetaFattr *fa = metatree.getFattr(fid);
+		// If the fa isn't there that isn't fatal.
+		if (fa != NULL)
+			fa->mtime = mtime;
+	}
+	return ok;
+}
 
 /*!
  * \brief restore time
@@ -440,6 +461,7 @@ init_map(DiskEntry &e)
 	e.add_parser("truncate", replay_truncate);
 	e.add_parser("setrep", replay_setrep);
 	e.add_parser("size", replay_size);
+	e.add_parser("setmtime", replay_setmtime);
 	e.add_parser("chunkVersionInc", restore_chunkVersionInc);
 	e.add_parser("time", restore_time);
 }

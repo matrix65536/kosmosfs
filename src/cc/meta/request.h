@@ -67,6 +67,7 @@ enum MetaOp {
 	META_ALLOCATE,
 	META_TRUNCATE,
 	META_RENAME,
+	META_SETMTIME, //!< Set the mtime on a specific file to support cp -p
 	META_CHANGE_FILE_REPLICATION, //! < Client is asking for a change in file's replication factor
 	//!< Admin is notifying us to retire a chunkserver
 	META_RETIRE_CHUNKSERVER,
@@ -103,6 +104,7 @@ enum MetaOp {
 	//!< Metadata server monitoring
 	META_PING, //!< Print out chunkserves and their configs
 	META_STATS, //!< Print out whatever statistics/counters we have
+	META_RECOMPUTE_DIRSIZE, //! < Do a top-down size update
 	META_DUMP_CHUNKTOSERVERMAP, //! < Dump out the chunk -> location map
 	META_DUMP_CHUNKREPLICATIONCANDIDATES, //! < Dump out the list of chunks being re-replicated
 	META_CHECK_LEASES, //! < Check all the leases and clear out expired ones
@@ -454,6 +456,27 @@ struct MetaRename: public MetaRequest {
 		return os.str();
 	}
 };
+
+/*!
+ * \brief set the mtime for a file or directory
+ */
+struct MetaSetMtime: public MetaRequest {
+	fid_t fid;		//!< stash the fid for logging
+	string pathname;	//!< absolute path for which we want to set the mtime
+	struct timeval mtime; 	//!< the mtime to set
+	MetaSetMtime(seq_t s, string p, struct timeval &m):
+		MetaRequest(META_SETMTIME, s, true), pathname(p), mtime(m) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		ostringstream os;
+
+		os << "setmtime: path = " << pathname << " ; mtime: " << showtime(mtime);
+		return os.str();
+	}
+};
+
 
 /*!
  * \brief change a file's replication factor
@@ -896,6 +919,20 @@ struct MetaStats: public MetaRequest {
 	string Show()
 	{
 		return "stats";
+	}
+};
+
+/*!
+ * \brief For debugging purposes, recompute the size of the dir tree
+ */
+struct MetaRecomputeDirsize: public MetaRequest {
+	MetaRecomputeDirsize(seq_t s):
+		MetaRequest(META_RECOMPUTE_DIRSIZE, s, false) { }
+	int log(ofstream &file) const;
+	void response(ostringstream &os);
+	string Show()
+	{
+		return "recompute dir size";
 	}
 };
 
