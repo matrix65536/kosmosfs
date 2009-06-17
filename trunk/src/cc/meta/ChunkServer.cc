@@ -284,7 +284,6 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 
         helloOp = static_cast<MetaHello *> (op);
 
-        KFS_LOG_VA_INFO("New server: \n%s", buf.get());
         op->clnt = this;
         helloOp->server = shared_from_this();
         // make sure we have the chunk ids...
@@ -319,6 +318,7 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
             // Message is ready to be pushed down.  So remove it.
             iobuf->Consume(msgLen);
         }
+        KFS_LOG_VA_INFO("New server: \n%s", buf.get());
 	// Hello message successfully processed.  Setup to handle RPCs
 	SET_HANDLER(this, &ChunkServer::HandleRequest);
         // send it on its merry way
@@ -399,27 +399,31 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
             // Uh-oh...this can happen if the server restarts between sending
 	    // the message and getting reply back
             // assert(!"Unable to find command for a response");
-	    KFS_LOG_VA_WARN("Unable to find command for response (cseq = %d)", cseq);
+	    string s = mLocation.ToString();
+	    KFS_LOG_VA_WARN("%s: Unable to find command for response (cseq = %d)", s.c_str(), cseq);
             return -1;
         }
         // KFS_LOG_VA_DEBUG("Got response for cseq=%d", cseq);
 
         submittedOp = static_cast <MetaChunkRequest *> (op);
         submittedOp->status = status;
+	mLastHeard = time(NULL);
         if (submittedOp->op == META_CHUNK_HEARTBEAT) {
             mTotalSpace = prop.getValue("Total-space", (long long) 0);
             mUsedSpace = prop.getValue("Used-space", (long long) 0);
             mNumChunks = prop.getValue("Num-chunks", 0);
 	    mAllocSpace = mUsedSpace + mNumChunkWrites * CHUNKSIZE;
 	    mHeartbeatSent = false;
-	    mLastHeard = time(NULL);
 	} else if (submittedOp->op == META_CHUNK_REPLICATE) {
 	    MetaChunkReplicate *mcr = static_cast <MetaChunkReplicate *> (op);
 	    mcr->fid = prop.getValue("File-handle", (long long) 0);
 	    mcr->chunkVersion = prop.getValue("Chunk-version", (long long) 0);
 	} else if (submittedOp->op == META_CHUNK_SIZE) {
 	    MetaChunkSize *mcs = static_cast <MetaChunkSize *> (op);
-	    mcs->chunkSize = prop.getValue("Size", (off_t) -1);
+	    string s = mLocation.ToString();
+	    mcs->chunkSize = prop.getValue("Size", (int) -1);
+	    KFS_LOG_VA_INFO("%s: cseq = %d, Chunksize: file = %lld, chunk = %lld, size = %d",
+	    		s.c_str(), cseq, mcs->fid, mcs->chunkId, (int) mcs->chunkSize);
 	}
         ResumeOp(op);
     
@@ -635,9 +639,12 @@ int
 ChunkServer::GetChunkSize(fid_t fid, chunkId_t chunkId, const string &pathname)
 {
 	MetaChunkSize *r;
+	string s = mLocation.ToString();
 
 	r = new MetaChunkSize(NextSeq(), this, fid, chunkId, pathname);
 
+	KFS_LOG_VA_INFO("%s: cseq = %d, Chunksize: file = %lld, chunk = %lld",
+	    		s.c_str(), r->opSeqno, r->fid, r->chunkId);
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
 	Enqueue(r);
