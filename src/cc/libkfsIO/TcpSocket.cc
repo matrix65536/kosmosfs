@@ -368,6 +368,8 @@ int TcpSocket::DoSynchDiscard(int nbytes, struct timeval &timeout)
         res = DoSynchRecv(buf, ntodo, timeout);
         if (res == -ETIMEDOUT)
             return numRecd;
+        if (res == 0)
+            break;
         assert(numRecd >= 0);
         if (numRecd < 0)
             break;
