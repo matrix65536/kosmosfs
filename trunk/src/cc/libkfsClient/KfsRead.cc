@@ -638,28 +638,6 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     }
     */
 
-    int retryStatus = 0;
-
-    for (vector<KfsOp *>::size_type i = 0; i < ops.size(); ++i) {
-	ReadOp *op = static_cast<ReadOp *> (ops[i]);
-	if (op->status < 0) {
-            if (NeedToRetryRead(op->status)) {
-                // preserve EIO so that we can avoid that server
-                if (retryStatus != -EIO)
-                    retryStatus = op->status;
-            }
-	    numIO = op->status;
-        }
-	else if (numIO >= 0)
-	    numIO += op->status;
-	op->ReleaseContentBuf();
-	delete op;
-    }
-
-    // If the op needs to be retried, pass that up
-    if (retryStatus != 0)
-        numIO = retryStatus;
-
     gettimeofday(&readEnd, NULL);
 
     double timeSpent = ComputeTimeDiff(readStart, readEnd);
@@ -692,6 +670,28 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
         }
         
     }
+
+    int retryStatus = 0;
+
+    for (vector<KfsOp *>::size_type i = 0; i < ops.size(); ++i) {
+	ReadOp *op = static_cast<ReadOp *> (ops[i]);
+	if (op->status < 0) {
+            if (NeedToRetryRead(op->status)) {
+                // preserve EIO so that we can avoid that server
+                if (retryStatus != -EIO)
+                    retryStatus = op->status;
+            }
+	    numIO = op->status;
+        }
+	else if (numIO >= 0)
+	    numIO += op->status;
+	op->ReleaseContentBuf();
+	delete op;
+    }
+
+    // If the op needs to be retried, pass that up
+    if (retryStatus != 0)
+        numIO = retryStatus;
 
     return numIO;
 }
