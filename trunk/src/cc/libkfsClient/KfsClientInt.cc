@@ -2032,7 +2032,10 @@ KfsClientImpl::DoMetaOpWithRetry(KfsOp *op)
 	ConnectToMetaServer();
 
     for (int attempt = 0; attempt < NUM_RETRIES_PER_OP; attempt++) {
+        op->status = 0;
 	res = DoOpCommon(op, &mMetaServerSock);
+        if ((res < 0) && (op->status == 0))
+            op->status = res;
 	if (op->status != -EHOSTUNREACH && op->status != -ETIMEDOUT)
 	    break;
 	Sleep(RETRY_DELAY_SECS);
