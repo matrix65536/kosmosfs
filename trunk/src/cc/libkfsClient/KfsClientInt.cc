@@ -37,6 +37,7 @@
 
 extern "C" {
 #include <signal.h>
+#include <openssl/md5.h>
 }
 
 #include <cstdio>
@@ -538,7 +539,7 @@ KfsClientImpl::ReaddirPlus(const string & pathname, vector<KfsFileAttr> &result,
         // get the location info for the last chunk
         FileChunkInfo lastChunkInfo(fattr.filename, fattr.fileId);
 
-        lastChunkInfo.lastChunkOffset = prop.getValue("Chunk-offset", 0);
+        lastChunkInfo.lastChunkOffset = prop.getValue("Chunk-offset", (off_t) 0);
         lastChunkInfo.chunkCount = prop.getValue("Chunk-count", 0);
         lastChunkInfo.numReplicas = prop.getValue("Replication", 1);
         lastChunkInfo.cattr.chunkId = prop.getValue("Chunk-handle", (kfsFileId_t) -1);
@@ -2615,4 +2616,142 @@ KfsClientImpl::VerifyDataChecksums(int fte, const vector<uint32_t> &checksums)
         blkstart += numChecksums;
     }
     return true;
+}
+
+bool 
+KfsClientImpl::CompareChunkReplicas(const string &pathname, string &md5sum)
+{
+    KfsFileStat s;
+    int res, fte;
+
+    MutexLock l(&mMutex);
+
+    if ((res = Stat(pathname, s, false))  < 0) {
+        cout << "Unable to stat path: " << pathname << ' ' <<
+            ErrorCodeToStr(res) << endl;
+        return false;
+    }
+
+    if (S_ISDIR(s.mode)) {
+        cout << "Path: " << pathname << " is a directory" << endl;
+        return false;
+    }
+    
+    fte = LookupFileTableEntry(pathname);
+
+    GetLayoutOp lop(nextSeq(), FdAttr(fte)->fileId);
+    (void)DoMetaOpWithRetry(&lop);
+    if (lop.status < 0) {
+        cout << "Get layout failed with error: "
+             << ErrorCodeToStr(lop.status) << endl;
+	return false;
+    }
+
+    if (lop.ParseLayoutInfo()) {
+        cout << "Unable to parse layout info!" << endl;
+	return false;
+    }
+
+    MD5_CTX ctx;
+    unsigned char md5digest[MD5_DIGEST_LENGTH];
+    bool match = true;
+    boost::scoped_array<char> buf1, buf2;
+    int nbytes;
+
+    MD5_Init(&ctx);
+
+    buf1.reset(new char [CHUNKSIZE]);
+    buf2.reset(new char [CHUNKSIZE]);
+    for (vector<ChunkLayoutInfo>::const_iterator i = lop.chunks.begin();
+         i != lop.chunks.end(); ++i) {
+
+        nbytes = GetChunkFromReplica(i->chunkServers[0], i->chunkId, i->chunkVersion, buf1.get());
+        if (nbytes < 0) {
+            KFS_LOG_VA_INFO("Didn't get data from server %s", i->chunkServers[0].ToString().c_str());
+            match = false;
+            continue;
+        }
+
+        KFS_LOG_VA_DEBUG("For chunk %ld size read from : %s; nbytes =  %d",
+                         i->chunkId,
+                         i->chunkServers[0].ToString().c_str(), nbytes);
+
+        MD5_Update(&ctx, (unsigned char *) buf1.get(), nbytes);
+
+        for (uint32_t k = 1; k < i->chunkServers.size(); k++) {
+            int n;
+            n = GetChunkFromReplica(i->chunkServers[k], i->chunkId, i->chunkVersion, buf2.get());
+            if (n < 0) {
+                KFS_LOG_VA_INFO("Didn't get data from server %s", i->chunkServers[k].ToString().c_str());
+                match = false;
+                continue;
+            }
+            if (nbytes != n) {
+                KFS_LOG_VA_INFO("For chunk %ld size differs between <%s, %d> and <%s, %d>", 
+                                i->chunkId,
+                                i->chunkServers[0].ToString().c_str(), nbytes,
+                                i->chunkServers[k].ToString().c_str(), n);
+                match = false;
+                continue;
+            }
+            if (memcmp(buf1.get(), buf2.get(), nbytes) != 0) {
+                KFS_LOG_VA_INFO("For chunk %ld data differs between <%s, %d> and <%s, %d>", 
+                                i->chunkId,
+                                i->chunkServers[0].ToString().c_str(), nbytes,
+                                i->chunkServers[k].ToString().c_str(), n);
+                match = false;
+                continue;
+            }
+            KFS_LOG_VA_DEBUG("For chunk %ld size read from : %s; nbytes =  %d",
+                             i->chunkId,
+                             i->chunkServers[k].ToString().c_str(), nbytes);
+        }
+    }
+    MD5_Final(md5digest, &ctx);
+    char md5s[2 * MD5_DIGEST_LENGTH + 1];
+    md5s[2 * MD5_DIGEST_LENGTH] = '\0';
+    for (uint32_t i = 0; i < MD5_DIGEST_LENGTH; i++)
+        sprintf(md5s + i * 2, "%02x", md5digest[i]);
+    md5sum = md5s;
+    
+    return match;
+}
+
+int
+KfsClientImpl::GetChunkFromReplica(const ServerLocation &loc, kfsChunkId_t chunkId,
+                                   int64_t chunkVersion, char *buffer)
+{
+    TcpSocket sock;
+    int res;
+
+    if (sock.Connect(loc) < 0) {
+        return -1;
+    }
+
+    char *curr = buffer;
+    int nread = 0;
+    const int nparts = CHUNKSIZE / (1 << 20);
+    for (int i = 0; i < nparts; i++) {
+        ReadOp op(nextSeq(), chunkId, chunkVersion);
+        op.numBytes = 1 << 20;
+        op.AttachContentBuf(curr, op.numBytes);
+        curr += op.numBytes;
+        op.offset = (i * op.numBytes);
+
+        res = DoOpCommon(&op, &sock);
+        if (res >= 0) {
+            // on a success, the status contains the # of bytes read
+            if (op.status < 0)
+                res = op.status;
+            else {
+                res = op.contentLength;
+                nread += res;
+            }
+        }
+        op.ReleaseContentBuf();
+        op.contentLength = 0;
+        if (op.status < 0)
+            break;
+    }
+    return nread;
 }
