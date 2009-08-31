@@ -472,6 +472,10 @@ public:
     /// Debug API to print out the size/location of each block of a file.
     int EnumerateBlocks(const std::string & pathname);
 
+    /// Given a file in KFS, verify that all N copies of each chunk are identical.
+    /// @retval status code
+    bool CompareChunkReplicas(const std::string & pathname, std::string &md5sum);
+
     /// API to verify that checksums computed on source data matches
     /// what was pushed into KFS.  This verification is done by
     /// pulling KFS checksums from all the replicas for each chunk.
@@ -920,6 +924,8 @@ private:
 
     bool VerifyDataChecksums(int fte, const vector<uint32_t> &checksums);
     bool VerifyChecksum(ReadOp* op, TcpSocket* sock);
+    int GetChunkFromReplica(const ServerLocation &loc, kfsChunkId_t chunkId,
+                            int64_t chunkVersion, char *buffer);
     friend class PendingChunkRead;
 };
 

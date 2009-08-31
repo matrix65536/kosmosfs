@@ -38,8 +38,10 @@
 
 extern "C" {
 #include <signal.h>
+#include <openssl/md5.h>
 }
 
+#include <cstdio>
 #include <cstdlib>
 
 #include <cerrno>
@@ -242,6 +244,12 @@ KfsClient::EnumerateBlocks(const string & pathname)
 }
 
 bool
+KfsClient::CompareChunkReplicas(const string & pathname, string &md5sum)
+{
+    return mImpl->CompareChunkReplicas(pathname, md5sum);
+}
+
+bool
 KfsClient::VerifyDataChecksums(const string & pathname, const vector<uint32_t> &checksums)
 {
     return mImpl->VerifyDataChecksums(pathname, checksums);
@@ -272,7 +280,7 @@ KfsClient::Rename(const string & oldpath, const string & newpath, bool overwrite
 }
 
 int 
-KfsClient::Open(const string & pathname, int openFlags, int numReplicas)
+KfsClient::Open(const string &pathname, int openFlags, int numReplicas)
 {
     return mImpl->Open(pathname, openFlags, numReplicas);
 }

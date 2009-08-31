@@ -173,6 +173,11 @@ public:
     ///
     int EnumerateBlocks(const std::string & pathname);
 
+    /// Given a file in KFS, verify that all N copies of each chunk are identical.
+    /// @param[out] md5sum  A string representation of the md5sum of the file
+    /// @retval status code
+    bool CompareChunkReplicas(const std::string &pathname, std::string &md5sum);
+
     /// Given a vector of checksums, one value per checksum block,
     /// verify that it matches with what is stored at each of the
     /// replicas in KFS.
