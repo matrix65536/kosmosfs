@@ -49,6 +49,9 @@ public:
         NodeT& inNode,
         NodeT& inAfter)
     {
+        if (&inNode == &inAfter) {
+            return;
+        }
         // Remove.
         inNode.mPrevPtr[ListT]->mNextPtr[ListT] = inNode.mNextPtr[ListT];
         inNode.mNextPtr[ListT]->mPrevPtr[ListT] = inNode.mPrevPtr[ListT];
@@ -197,8 +200,12 @@ public:
     // IsInList isn't completely foolproof, node can be in a different list.
     static bool IsInList(
         NodeT*const* inListPtr,
-        NodeT&       inNode)
-        { return (&inNode == inListPtr[ListT] || ListOp::IsInList(inNode)); }
+        const NodeT& inNode)
+    {
+        return (inListPtr[ListT] &&
+            (&inNode == inListPtr[ListT] || ListOp::IsInList(inNode))
+        );
+    }
     static NodeT* Front(
         NodeT*const* inListPtr)
         { return inListPtr[ListT]; }
