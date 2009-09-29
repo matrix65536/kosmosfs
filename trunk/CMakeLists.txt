@@ -28,7 +28,7 @@ cmake_minimum_required(VERSION 2.4.6)
 
 # Locate Boost
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
-set(Boost_ADDITIONAL_VERSIONS "1.37" "1.38")
+set(Boost_ADDITIONAL_VERSIONS "1.37" "1.38" "1.39")
 find_package(Boost REQUIRED)
 find_package(Log4cpp REQUIRED)
 # Locate the path to jni.h
