@@ -29,17 +29,16 @@
 #include <cstdlib>
 #include "properties.h"
 
-using std::string;
 using namespace KFS;
 
 Properties::Properties()
 {
-    propmap = new std::map<string, string>;
+    propmap = new std::map<std::string, std::string>;
 }
 
 Properties::Properties(const Properties &p)
 {
-    propmap = new std::map<string, string>(*(p.propmap));
+    propmap = new std::map<std::string, std::string>(*(p.propmap));
 }
 
 Properties::~Properties()
@@ -47,10 +46,10 @@ Properties::~Properties()
     delete propmap;
 }
 
-int Properties::loadProperties(const char * fileName, char delimiter, bool verbose, bool multiline /*=false*/)
+int Properties::loadProperties(const char* fileName, char delimiter, bool verbose, bool multiline /*=false*/)
 {
     std::ifstream input(fileName);
-    string line;
+    std::string line;
 
     if(!input.is_open()) 
     {
@@ -64,21 +63,21 @@ int Properties::loadProperties(const char * fileName, char delimiter, bool verbo
 
 int Properties::loadProperties(std::istream &ist, char delimiter, bool verbose, bool multiline /*=false*/)
 {
-    string line;
+    std::string line;
 
     while(ist)
     {
         getline(ist, line);                       //read one line at a time
         if  (line.find('#') == 0)
             continue;                               //ignore comments
-        string::size_type pos =
+        std::string::size_type pos =
             line.find(delimiter);                   //find the delimiter
         
         if( pos == line.npos )
             continue;                               //ignore if no delimiter is found
-        string key = line.substr(0,pos);       // get the key
+        std::string key = line.substr(0,pos);       // get the key
         key = removeLTSpaces(key);
-        string value = line.substr(pos+1);     //get the value
+        std::string value = line.substr(pos+1);     //get the value
         value = removeLTSpaces(value);
 
 		if (multiline)
@@ -92,12 +91,19 @@ int Properties::loadProperties(std::istream &ist, char delimiter, bool verbose, 
     return 0;
 }
 
-string Properties::removeLTSpaces(string str){
+
+
+void Properties::setValue(const std::string key, const std::string value) {
+    (*propmap)[key] = value;
+    return;
+}
+
+std::string Properties::removeLTSpaces(std::string str){
 
     char const* delims = " \t\r\n";
 
     // trim leading whitespace
-    string::size_type  notwhite = str.find_first_not_of(delims);
+    std::string::size_type  notwhite = str.find_first_not_of(delims);
     str.erase(0,notwhite);
 
    // trim trailing whitespace
@@ -106,8 +112,48 @@ string Properties::removeLTSpaces(string str){
    return(str);
 }
 
-void Properties::getList(string &outBuf, const string & linePrefix) const {
-  std::map<string, string>::iterator iter;
+std::string Properties::getValue(std::string key, std::string def) const
+{
+    if(propmap->find(key) == propmap->end()) return def;
+        return (*propmap)[key];
+}
+const char* Properties::getValue(std::string key, const char* def) const
+{
+    if(propmap->find(key) == propmap->end()) return def;
+        return (((*propmap)[key]).c_str());
+}
+
+int Properties::getValue(std::string key, int def) const
+{
+    if(propmap->find(key) == propmap->end()) return def;
+        return (atoi(((*propmap)[key]).c_str()));
+}
+long Properties::getValue(std::string key, long def) const
+{
+    if(propmap->find(key) == propmap->end()) return def;
+        return (atoll(((*propmap)[key]).c_str()));
+}
+
+long long Properties::getValue(std::string key, long long def) const
+{
+    if(propmap->find(key) == propmap->end()) return def;
+        return (atoll(((*propmap)[key]).c_str()));
+}
+
+uint64_t Properties::getValue(std::string key, uint64_t def) const
+{
+    if(propmap->find(key) == propmap->end()) return def;
+        return (atoll(((*propmap)[key]).c_str()));
+}
+
+double Properties::getValue(std::string key, double def) const
+{
+    if(propmap->find(key) == propmap->end()) return def;
+        return (atof(((*propmap)[key]).c_str()));
+}
+
+void Properties::getList(std::string &outBuf, std::string linePrefix) const {
+  std::map<std::string, std::string>::iterator iter;
 
   for (iter = propmap->begin(); iter != propmap->end(); iter++) {
     if ((*iter).first.size() > 0) {
@@ -120,22 +166,4 @@ void Properties::getList(string &outBuf, const string & linePrefix) const {
   }
 
   return;
-}
-
-string Properties::getValue ( const std::string & key, const std::string & defaultValue ) const
-{
-  std::map<std::string, std::string>::const_iterator it = propmap->find ( key );
-
-  if ( it == propmap->end() ) return defaultValue;
-
-  return it->second;
-}
-
-const char* Properties::getValue ( const std::string & key, const char* defaultValue ) const
-{
-  std::map<std::string, std::string>::const_iterator it = propmap->find ( key );
-
-  if ( it == propmap->end() ) return defaultValue;
-
-  return ( it->second ).c_str();
 }
