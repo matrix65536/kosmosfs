@@ -51,19 +51,13 @@ using namespace KFS::libkfsio;
 using boost::scoped_array;
 
 const int kMaxCmdHeaderLength = 2 << 10;
+int  RemoteSyncSM::sOpResponseTimeoutSec = 5 * 60; // 5 min op response timeout
 
 RemoteSyncSM::~RemoteSyncSM()
 {
-    if (mTimer) {
-        globals().netManager.UnRegisterTimeoutHandler(mTimer);
-    }
-    delete mTimer;
-    mTimer = NULL;
-
     if (mNetConnection)
         mNetConnection->Close();
     assert(mDispatchedOps.size() == 0);
-    assert(mPendingOps.empty());
 }
 
 bool
@@ -71,6 +65,8 @@ RemoteSyncSM::Connect()
 {
     TcpSocket *sock;
     int res;
+
+    assert(! mNetConnection);
 
     KFS_LOG_VA_DEBUG("Trying to connect to: %s", mLocation.ToString().c_str());
 
@@ -84,11 +80,6 @@ RemoteSyncSM::Connect()
         return false;
     }
 
-    if (mTimer == NULL) {
-        mTimer = new RemoteSyncSMTimeoutImpl(this);
-        globals().netManager.RegisterTimeoutHandler(mTimer);
-    }
-
     KFS_LOG_VA_INFO("Connect to remote server (%s) succeeded (res = %d)...",
                     mLocation.ToString().c_str(), res);
 
@@ -98,9 +89,9 @@ RemoteSyncSM::Connect()
     mNetConnection->SetDoingNonblockingConnect();
     mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
     
-    // If there is no activity on this socket for 30 minutes, we want
+    // If there is no activity on this socket, we want
     // to be notified, so that we can close connection.
-    mNetConnection->SetInactivityTimeout(30 * 60);
+    mNetConnection->SetInactivityTimeout(sOpResponseTimeoutSec);
     // Add this to the poll vector
     globals().netManager.AddConnection(mNetConnection);
 
@@ -111,7 +102,6 @@ void
 RemoteSyncSM::Enqueue(KfsOp *op)
 {
     if (!mNetConnection) {
-        mLastRequestSent = mLastResponseRecd = time(0);
         if (!Connect()) {
             KFS_LOG_VA_INFO("Connect to peer %s failed; failing ops", mLocation.ToString().c_str());
             mDispatchedOps.push_back(op);
@@ -124,6 +114,8 @@ RemoteSyncSM::Enqueue(KfsOp *op)
         KFS_LOG_VA_INFO("Lost the connection to peer %s; failing ops", mLocation.ToString().c_str());
         mDispatchedOps.push_back(op);
         FailAllOps();
+        mNetConnection->Close();
+        mNetConnection.reset();
         return;
     }
 
@@ -139,7 +131,6 @@ RemoteSyncSM::Enqueue(KfsOp *op)
         KFS::SubmitOpResponse(op);            
     }
     else {
-        mLastRequestSent = time(0);
         mDispatchedOps.push_back(op);
     }
     mNetConnection->StartFlush();
@@ -164,7 +155,6 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 	// We read something from the network.  Run the RPC that
 	// came in if we got all the data for the RPC
 	iobuf = (IOBuffer *) data;
-        mLastResponseRecd = time(0);
 	while (mReplyNumBytes > 0 || IsMsgAvail(iobuf, &msgLen)) {
 	    res = HandleResponse(iobuf, msgLen);
             if (res < 0)
@@ -189,12 +179,6 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 
 	if (mNetConnection)
 	    mNetConnection->Close();
-
-        if (mTimer != NULL) {
-            globals().netManager.UnRegisterTimeoutHandler(mTimer);
-            delete mTimer;
-            mTimer = NULL;
-        }
 
         // we are done...
         Finish();
@@ -326,12 +310,6 @@ public:
 void
 RemoteSyncSM::FailAllOps()
 {
-    KfsOp *op;
-    // get rid of the pending ones as well
-    while ((op = mPendingOps.dequeue_nowait()) != NULL) {
-        mDispatchedOps.push_back(op);
-    }
-    
     for_each(mDispatchedOps.begin(), mDispatchedOps.end(),
              OpFailer(-EHOSTUNREACH));
     mDispatchedOps.clear();
@@ -345,6 +323,10 @@ RemoteSyncSM::Finish()
 #endif    
 
     FailAllOps();
+    if (mNetConnection) {
+	mNetConnection->Close();
+        mNetConnection.reset();
+    }
     // if the object was owned by the chunkserver, have it release the reference
     gChunkServer.RemoveServer(this);
 }

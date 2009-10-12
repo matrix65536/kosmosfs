@@ -48,6 +48,7 @@
 using std::map;
 using std::string;
 using std::ofstream;
+using std::ifstream;
 using std::istringstream;
 using std::ostringstream;
 using std::ostream;
@@ -356,6 +357,8 @@ parseHandlerRead(Properties &prop, KfsOp **c)
     rc->chunkVersion = prop.getValue("Chunk-version", (int64_t) -1);
     rc->offset = prop.getValue("Offset", (off_t) 0);
     rc->numBytes = prop.getValue("Num-bytes", (long long) 0);
+    if (rc->numBytes > CHUNKSIZE)
+        rc->numBytes = 131072;
     *c = rc;
 
     return 0;
@@ -434,6 +437,7 @@ parseHandlerSize(Properties &prop, KfsOp **c)
     parseCommon(prop, seq);
 
     sc = new SizeOp(seq);
+    sc->fileId = prop.getValue("File-handle", (kfsFileId_t) -1);
     sc->chunkId = prop.getValue("Chunk-handle", (kfsChunkId_t) -1);
     sc->chunkVersion = prop.getValue("Chunk-version", (int64_t) -1);
     *c = sc;
@@ -695,8 +699,9 @@ ReadOp::HandleDone(int code, void *data)
         gettimeofday(&timeNow, NULL);
         diskIOTime = ComputeTimeDiff(startTime, timeNow);
     }
-
-    gChunkManager.ChunkSize(chunkId, &chunkSize);
+    
+    kfsFileId_t dummy;
+    gChunkManager.ChunkSize(chunkId, dummy, &chunkSize);
 
     if (wop != NULL) {
         // if the read was triggered by a write, then resume execution of write
@@ -709,6 +714,13 @@ ReadOp::HandleDone(int code, void *data)
         // If we have read the full chunk, close out the fd.  The
         // observation is that reads are sequential and when we
         // finished a chunk, the client will move to the next one.
+        //
+        // Release disk io first for CloseChunk to have effect: normally
+        // this method is invoked from io completion routine, and diskIo has a
+        // reference to file dataFH.
+        // DiskIo completion path doesn't expect diskIo pointer to remain valid
+        // upon return.
+        diskIo.reset();
         gChunkManager.CloseChunk(chunkId);
     }
 
@@ -761,7 +773,6 @@ WriteOp::HandleWriteDone(int code, void *data)
             status = *(int *) data;
             KFS_LOG_VA_INFO("Disk error: errno = %d, chunkid = %lld", status, chunkId);
         }
-        gChunkManager.SetWriteStatus(chunkId, status);
         gChunkManager.ChunkIOFailed(chunkId, status);
 
         wpop->HandleEvent(EVENT_CMD_DONE, this);
@@ -834,7 +845,8 @@ WriteOp::HandleSyncDone(int code, void *data)
     }
 
     if (status >= 0) {
-        gChunkManager.ChunkSize(chunkId, &chunkSize);
+        kfsFileId_t dummy;
+        gChunkManager.ChunkSize(chunkId, dummy, &chunkSize);
         SET_HANDLER(this, &WriteOp::HandleLoggingDone);
         gLogger.Submit(this);
     }
@@ -1103,6 +1115,18 @@ HeartbeatOp::Execute()
     totalSpace = gChunkManager.GetTotalSpace();
     usedSpace = gChunkManager.GetUsedSpace();
     numChunks = gChunkManager.GetNumChunks();
+#ifdef KFS_OS_NAME_LINUX
+    ifstream rawavg("/proc/loadavg");
+    if (rawavg.fail())
+        cpuLoadavg = 0.0;
+    else {
+        string buffer;
+        getline(rawavg,buffer);
+        rawavg.close();
+        istringstream ist(buffer);
+        ist >> cpuLoadavg;
+    }
+#endif
     status = 0;
     // clnt->HandleEvent(EVENT_CMD_DONE, this);
     gLogger.Submit(this);
@@ -1134,6 +1158,12 @@ ReadOp::Execute()
 {
     UpdateCounter(CMD_READ);
 
+    if (numBytes > CHUNKSIZE) {
+        status = -EINVAL;
+        gLogger.Submit(this);
+        return;
+    }
+   
     SET_HANDLER(this, &ReadOp::HandleChunkMetaReadDone);
     if (gChunkManager.ReadChunkMetadata(chunkId, this) < 0) {
         status = -EINVAL;
@@ -1430,6 +1460,17 @@ WritePrepareOp::Execute()
         }
     }
 
+    // will clone only when the op is good
+    writeOp = gChunkManager.CloneWriteOp(writeId);
+    UpdateCounter(CMD_WRITE);
+
+    if (writeOp == NULL) {
+        // the write has previously failed; so fail this op and move on
+        status = gChunkManager.GetWriteStatus(writeId);
+        gLogger.Submit(this);
+        return;
+    }
+
     if (needToForward) {
         IOBuffer *clonedData = dataBuf->Clone();
 
@@ -1453,12 +1494,6 @@ WritePrepareOp::Execute()
         }
     }
 
-    // will clone only when the op is good
-    writeOp = gChunkManager.CloneWriteOp(writeId);
-    UpdateCounter(CMD_WRITE);
-
-    assert(writeOp != NULL);
-
     writeOp->offset = offset;
     writeOp->numBytes = numBytes;
     writeOp->dataBuf = dataBuf;
@@ -1474,8 +1509,11 @@ WritePrepareOp::Execute()
 
     status = gChunkManager.WriteChunk(writeOp);
     
-    if (status < 0)
+    if (status < 0) {
+        // so that the error goes out on a sync
+        gChunkManager.SetWriteStatus(writeId, status);
         gLogger.Submit(this);
+    }
 }
 
 int
@@ -1568,8 +1606,9 @@ WriteSyncOp::Execute()
 
     if (!gChunkManager.IsChunkMetadataLoaded(chunkId)) {
         off_t csize;
+        kfsFileId_t dummy;
 
-        gChunkManager.ChunkSize(chunkId, &csize);
+        gChunkManager.ChunkSize(chunkId, dummy, &csize);
         if (csize > 0 && (csize >= (off_t) KFS::CHUNKSIZE)) {
             // the metadata block could be paged out by a previous sync
             needToWriteMetadata = false;
@@ -1713,8 +1752,15 @@ void
 SizeOp::Execute()
 {
     UpdateCounter(CMD_SIZE);
+    kfsFileId_t fid;
 
-    status = gChunkManager.ChunkSize(chunkId, &size);
+    size = -1;
+    status = gChunkManager.ChunkSize(chunkId, fid, &size);
+    if ((fileId != -1) && (fid != fileId)) {
+        KFS_LOG_VA_INFO("Mismatch on fid/chunkid: actual = %lld, %lld, asked = %lld, %lld",
+                        fid, chunkId, fid, chunkId);
+        status = -EINVAL;
+    }
     // clnt->HandleEvent(EVENT_CMD_DONE, this);
     gLogger.Submit(this);
 }
@@ -1745,8 +1791,9 @@ GetChunkMetadataOp::HandleChunkMetaReadDone(int code, void *data)
     uint32_t *checksums = NULL;
     status = gChunkManager.GetChunkChecksums(chunkId, &checksums);
     if ((status == 0) && (checksums != NULL)) {
+        kfsFileId_t dummy;
         chunkVersion = gChunkManager.GetChunkVersion(chunkId);
-        gChunkManager.ChunkSize(chunkId, &chunkSize);
+        gChunkManager.ChunkSize(chunkId, dummy, &chunkSize);
         dataBuf = new IOBuffer();
         dataBuf->CopyIn((const char *) checksums, MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
         numBytesIO = dataBuf->BytesConsumable();
@@ -1864,6 +1911,7 @@ ReadOp::Response(ostream &os)
     }
     os << "Status: " << status << "\r\n";
     os << "DiskIOtime: " << diskIOTime << "\r\n";
+    os << "Drivename: " << driveName << "\r\n";
     os << "Checksum-entries: " << checksum.size() << "\r\n";
     if (checksum.size() == 0) {
         os << "Checksums: " << 0 << "\r\n";
@@ -2002,6 +2050,7 @@ HeartbeatOp::Response(ostream &os)
     os << "Status: " << status << "\r\n";
     os << "Total-space: " << totalSpace << "\r\n";
     os << "Used-space: " << usedSpace << "\r\n";
+    os << "CPU-load-avg: " << cpuLoadavg << "\r\n";
     os << "Num-chunks: " << numChunks << "\r\n\r\n";
 }
 
@@ -2175,8 +2224,6 @@ WriteOp::~WriteOp()
         // Read op destructor deletes dataBuf.
         delete rop;
     }
-    if (diskIo)
-        diskIo->Close();
 }
 
 WriteIdAllocOp::~WriteIdAllocOp()

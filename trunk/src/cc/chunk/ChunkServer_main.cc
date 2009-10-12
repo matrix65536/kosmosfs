@@ -46,6 +46,7 @@ extern "C" {
 #include "ClientManager.h"
 #include "ChunkManager.h"
 #include "Logger.h"
+#include "RemoteSyncSM.h"
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -296,6 +297,10 @@ ReadChunkServerProperties(char *fileName)
     gClientManager.SetTimeouts(
         gProp.getValue("chunkServer.client.ioTimeoutSec",    5 * 60),
         gProp.getValue("chunkServer.client.idleTimeoutSec", 30 * 60)
+    );
+    RemoteSyncSM::SetResponseTimeoutSec(
+        gProp.getValue("chunkServer.remoteSync.responseTimeoutSec",
+            RemoteSyncSM::GetResponseTimeoutSec())
     );
 
     logLevel = gProp.getValue("chunkServer.loglevel", defLogLevel);

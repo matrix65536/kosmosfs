@@ -154,9 +154,10 @@ public:
     void	ReplicationDone(kfsChunkId_t chunkId);
     /// Determine the size of a chunk.
     /// @param[in] chunkId  The chunk whose size is needed
+    /// @param[out] fid     Return the file-id that owns the chunk
     /// @param[out] chunkSize  The size of the chunk
     /// @retval status code
-    int 	ChunkSize(kfsChunkId_t chunkId, off_t *chunkSize);
+    int 	ChunkSize(kfsChunkId_t chunkId, kfsFileId_t &fid, off_t *chunkSize);
 
     /// Cancel a previously scheduled chunk operation.
     /// @param[in] cont   The callback object that scheduled the
@@ -283,6 +284,7 @@ public:
 
     /// Set the status for a given write id
     void SetWriteStatus(int64_t writeId, int status);
+    int  GetWriteStatus(int64_t writeId);
     
     /// Is the write id a valid one
     bool IsValidWriteId(int64_t writeId) {
@@ -309,6 +311,7 @@ public:
     void Shutdown();
 
     inline void LruUpdate(ChunkInfoHandle& cih);
+    inline bool IsInLru(const ChunkInfoHandle& cih) const;
     enum { kChunkInfoHandleListCount = 2 };
 
 private:
@@ -587,6 +590,10 @@ private:
     time_t           mNextPendingMetaSyncScanTime;
     int              mMetaSyncDelayTimeSecs;
 
+    /// Periodically do an IO and check the chunk dirs and identify failed drives
+    time_t	     mNextChunkDirsCheckTime;
+    int              mChunkDirsCheckIntervalSecs;
+
     // Cleanup fds on which no I/O has been done for the past N secs
     int    mInactiveFdsCleanupIntervalSecs;
     time_t mNextInactiveFdCleanupTime;
@@ -601,6 +608,8 @@ private:
     /// Of the various directories this chunkserver is configured with, find the directory to store a chunk file.  
     /// This method does a "directory allocation".
     std::string GetDirForChunk();
+
+    void CheckChunkDirs();
 
     /// Utility function that given a chunkId, returns the full path
     /// to the chunk filename.
