@@ -59,6 +59,9 @@ extern "C" {
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
+    jboolean Java_org_kosmix_kosmosfs_access_KfsAccess_compareChunkReplicas(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jobject stringbuffermd5);
+
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdirs(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
 
@@ -98,6 +101,9 @@ extern "C" {
 
     jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath);
+
+    jint Java_org_kosmix_kosmosfs_access_KfsAccess_setModificationTime(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jlong jmsec);
 
     jint Java_org_kosmix_kosmosfs_access_KfsAccess_open(
         JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jstring jmode, jint jnumReplicas);
@@ -177,10 +183,36 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_initF(
 
     string path;
     setStr(path, jenv, jpath);
-    clnt = getKfsClientFactory()->GetClient(path);
+    clnt = getKfsClientFactory()->GetClient(path.c_str());
     if (!clnt)
         return 0;
     return (jlong) (clnt.get());
+}
+
+jboolean Java_org_kosmix_kosmosfs_access_KfsAccess_compareChunkReplicas(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jobject stringbuffermd5)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+    string path , md5Sum;
+    setStr(path, jenv, jpath);
+
+    if (clnt->CompareChunkReplicas(path.c_str(), md5Sum) == true)
+    {
+        jcls = jenv->GetObjectClass(stringbuffermd5);
+        jmethodID mid = jenv->GetMethodID (jcls, "append",
+                                           "(Ljava/lang/String;)Ljava/lang/StringBuffer;");
+        if(mid == 0)
+        {
+            return false;
+        }
+        jstring _jstring = jenv->NewStringUTF (md5Sum.c_str());
+        jenv->CallObjectMethod (stringbuffermd5, mid, _jstring);
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
 
 jlong Java_org_kosmix_kosmosfs_access_KfsAccess_initS(
@@ -203,7 +235,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_cd(
 
     string path;
     setStr(path, jenv, jpath);
-    return clnt->Cd(path);
+    return clnt->Cd(path.c_str());
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_mkdirs(
@@ -213,7 +245,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_mkdirs(
 
     string path;
     setStr(path, jenv, jpath);
-    return clnt->Mkdirs(path);
+    return clnt->Mkdirs(path.c_str());
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
@@ -223,7 +255,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdir(
 
     string path;
     setStr(path, jenv, jpath);
-    return clnt->Rmdir(path);
+    return clnt->Rmdir(path.c_str());
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdirs(
@@ -233,7 +265,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rmdirs(
 
     string path;
     setStr(path, jenv, jpath);
-    return clnt->Rmdirs(path);
+    return clnt->Rmdirs(path.c_str());
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdirplus(
@@ -247,27 +279,26 @@ jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdirplus(
     setStr(path, jenv, jpath);
 
     std::vector<KFS::KfsFileAttr> fattr;
-    res = clnt->ReaddirPlus(path, fattr);
+    res = clnt->ReaddirPlus(path.c_str(), fattr);
     if ((res < 0) || (fattr.size() == 0))
         return NULL;
 
     jclass jstrClass = jenv->FindClass("Ljava/lang/String;");
 
-    // construct a key value pair of strings for each attribute and
-    // then unpack in java side.
+    // send the results as strings to java side; the values are sent in a certain order.
     jentries = jenv->NewObjectArray(fattr.size(), jstrClass, NULL);
     for (vector<string>::size_type i = 0; i < fattr.size(); i++) {
         ostringstream os;
         jstring s;
 
-        os << "Filename: " << fattr[i].filename << "\n";
+        os << fattr[i].filename << "\n";
         if (fattr[i].isDirectory)
-            os << "IsDirectory: true" << "\n";
+            os << "true" << "\n";
         else
-            os << "IsDirectory: false" << "\n";
-        os << "Filesize: " << fattr[i].fileSize << "\n";
-        os << "M-Time: " << ((jlong) fattr[i].mtime.tv_sec) * 1000 << "\n";
-        os << "Replicas: " << fattr[i].numReplicas << "\n";
+            os << "false" << "\n";
+        os << fattr[i].fileSize << "\n";
+        os << ((jlong) fattr[i].mtime.tv_sec) * 1000 << "\n";
+        os << fattr[i].numReplicas << "\n";
 
         s = jenv->NewStringUTF(os.str().c_str());
 
@@ -292,7 +323,7 @@ jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
 
     if (jpreloadattr) {
         std::vector<KFS::KfsFileAttr> fattr;
-        res = clnt->ReaddirPlus(path, fattr);
+        res = clnt->ReaddirPlus(path.c_str(), fattr);
         if (res == 0) {
             for (uint32_t i = 0; i < fattr.size(); i++) {
                 entries.push_back(fattr[i].filename);
@@ -300,7 +331,7 @@ jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_readdir(
         }
     }
     else {
-        res = clnt->Readdir(path, entries);
+        res = clnt->Readdir(path.c_str(), entries);
     }
     if ((res < 0) || (entries.size() == 0))
         return NULL;
@@ -336,7 +367,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_open(
     else if (mode == "a")
         openMode = O_WRONLY | O_APPEND;
 
-    return clnt->Open(path, openMode, jnumReplicas);
+    return clnt->Open(path.c_str(), openMode, jnumReplicas);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_close(
@@ -362,7 +393,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_create(
 
     string path;
     setStr(path, jenv, jpath);
-    return clnt->Create(path, jnumReplicas, jexclusive);
+    return clnt->Create(path.c_str(), jnumReplicas, jexclusive);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_remove(
@@ -372,7 +403,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_remove(
 
     string path;
     setStr(path, jenv, jpath);
-    return clnt->Remove(path);
+    return clnt->Remove(path.c_str());
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsAccess_rename(
@@ -385,7 +416,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_rename(
     setStr(opath, jenv, joldpath);
     setStr(npath, jenv, jnewpath);
 
-    return clnt->Rename(opath, npath, joverwrite);
+    return clnt->Rename(opath.c_str(), npath.c_str(), joverwrite);
 }
 
 jlong Java_org_kosmix_kosmosfs_access_KfsAccess_setDefaultIoBufferSize(
@@ -500,7 +531,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_exists(
     string path;
     setStr(path, jenv, jpath);
     
-    if (clnt->Exists(path))
+    if (clnt->Exists(path.c_str()))
         return 1;
     
     return 0;
@@ -514,7 +545,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_isFile(
     string path;
     setStr(path, jenv, jpath);
     
-    if (clnt->IsFile(path))
+    if (clnt->IsFile(path.c_str()))
         return 1;
     return 0;
 }
@@ -527,7 +558,7 @@ jint Java_org_kosmix_kosmosfs_access_KfsAccess_isDirectory(
     string path;
     setStr(path, jenv, jpath);
     
-    if (clnt->IsDirectory(path))
+    if (clnt->IsDirectory(path.c_str()))
         return 1;
     return 0;
 }
@@ -537,14 +568,14 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_filesize(
 {
     KfsClient *clnt = (KfsClient *) jptr;
 
-    KfsFileStat result;
+    struct stat result;
     string path;
     setStr(path, jenv, jpath);
     
-    if (clnt->Stat(path, result) != 0)
+    if (clnt->Stat(path.c_str(), result) != 0)
         return -1;
     
-    return result.size;
+    return result.st_size;
 }
 
 jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
@@ -552,15 +583,34 @@ jlong Java_org_kosmix_kosmosfs_access_KfsAccess_getModificationTime(
 {
     KfsClient *clnt = (KfsClient *) jptr;
 
-    KfsFileStat result;
+    struct stat result;
     string path;
     setStr(path, jenv, jpath);
     
-    if (clnt->Stat(path, result) != 0)
+    if (clnt->Stat(path.c_str(), result) != 0)
         return -1;
     
     // The expected return value is in ms
-    return ((jlong) result.mtime) * 1000;
+    return ((jlong) result.st_mtime) * 1000;
+}
+
+jint Java_org_kosmix_kosmosfs_access_KfsAccess_setModificationTime(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jstring jpath, jlong jmsec)
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+
+    string path;
+    setStr(path, jenv, jpath);
+
+    struct timeval mtime;
+
+    // the input is in ms
+    mtime.tv_sec = jmsec / 1000;
+    mtime.tv_usec = jmsec % 1000;
+    if (clnt->SetMtime(path.c_str(), mtime) != 0)
+        return -1;
+    
+    return 0;
 }
 
 jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_getDataLocation(
@@ -577,7 +627,7 @@ jobjectArray Java_org_kosmix_kosmosfs_access_KfsAccess_getDataLocation(
 
     setStr(path, jenv, jpath);
 
-    res = clnt->GetDataLocation(path, jstart, jlen, entries);
+    res = clnt->GetDataLocation(path.c_str(), jstart, jlen, entries);
     if ((res < 0) || (entries.size() == 0))
         return NULL;
 
@@ -609,7 +659,7 @@ jshort Java_org_kosmix_kosmosfs_access_KfsAccess_getReplication(
     string path;
 
     setStr(path, jenv, jpath);
-    return clnt->GetReplicationFactor(path);
+    return clnt->GetReplicationFactor(path.c_str());
 }
 
 jshort Java_org_kosmix_kosmosfs_access_KfsAccess_setReplication(
@@ -620,7 +670,7 @@ jshort Java_org_kosmix_kosmosfs_access_KfsAccess_setReplication(
     string path;
 
     setStr(path, jenv, jpath);
-    return clnt->SetReplicationFactor(path, jnumReplicas);
+    return clnt->SetReplicationFactor(path.c_str(), jnumReplicas);
 }
 
 jint Java_org_kosmix_kosmosfs_access_KfsInputChannel_read(

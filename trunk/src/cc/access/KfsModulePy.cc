@@ -75,6 +75,8 @@ static PyObject *kfs_readdir(PyObject *pself, PyObject *args);
 static PyObject *kfs_readdirplus(PyObject *pself, PyObject *args);
 static PyObject *kfs_create(PyObject *pself, PyObject *args);
 static PyObject *kfs_stat(PyObject *pself, PyObject *args);
+static PyObject *kfs_getNumChunks(PyObject *pself, PyObject *args);
+static PyObject *kfs_getChunkSize(PyObject *pself, PyObject *args);
 static PyObject *kfs_remove(PyObject *pself, PyObject *args);
 static PyObject *kfs_rename(PyObject *pself, PyObject *args);
 static PyObject *kfs_open(PyObject *pself, PyObject *args);
@@ -99,6 +101,8 @@ static PyMethodDef Client_methods[] = {
 	{ "readdirplus", kfs_readdirplus, METH_VARARGS,
 		"Read directory with attributes." },
 	{ "stat", kfs_stat, METH_VARARGS, "Stat file." },
+	{ "getNumChunks", kfs_getNumChunks, METH_VARARGS, "Get # of chunks in a file." },
+	{ "getChunkSize", kfs_getChunkSize, METH_VARARGS, "Get default chunksize for a file." },
 	{ "create", kfs_create, METH_VARARGS, "Create file." },
 	{ "remove", kfs_remove, METH_VARARGS, "Remove file." },
 	{ "rename", kfs_rename, METH_VARARGS, "Rename file or directory." },
@@ -127,7 +131,9 @@ PyDoc_STRVAR(Client_doc,
 "\tisdir(path) -- return TRUE if path is a directory\n"
 "\tisfile(path) -- return TRUE if path is a file\n"
 "\tstat(path)   --  file attributes, compatible with os.stat\n"
-"\tcreate(path) -- create a file and return a kfs.file object for it\n"
+"\tgetNumChunks(path)   --  return the # of chunks in a file\n"
+"\tgetChunkSize(path)   --  return the default size of chunks in a file\n"
+"\tcreate(path, numReplicas=3) -- create a file and return a kfs.file object for it\n"
 "\tremove(path) -- remove a file\n"
 "\topen(path[, mode]) -- open a file and return an object for it\n"
 "\tcd(path)     -- change current directory\n"
@@ -761,7 +767,7 @@ build_path(PyObject *cwd, const char *input)
 static PyObject *
 kfs_cd(PyObject *pself, PyObject *args)
 {
-	KfsFileStat s;
+	struct stat s;
 	kfs_Client *self = (kfs_Client *)pself;
 	char *patharg;
 
@@ -769,12 +775,12 @@ kfs_cd(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Stat(path, s);
+	int status = self->client->Stat(path.c_str(), s);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
 	}
-	if (!S_ISDIR(s.mode)) {
+	if (!S_ISDIR(s.st_mode)) {
 		PyErr_SetString(PyExc_IOError, strerror(ENOTDIR));
 		return NULL;
 	}
@@ -809,7 +815,7 @@ kfs_isdir(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	bool res = self->client->IsDirectory(path);
+	bool res = self->client->IsDirectory(path.c_str());
         return Py_BuildValue("b", res);
 }
 
@@ -823,7 +829,7 @@ kfs_isfile(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	bool res = self->client->IsFile(path);
+	bool res = self->client->IsFile(path.c_str());
         return Py_BuildValue("b", res);
 }
 
@@ -837,7 +843,7 @@ kfs_mkdir(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status  = self->client->Mkdir(path);
+	int status  = self->client->Mkdir(path.c_str());
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -855,7 +861,7 @@ kfs_mkdirs(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status  = self->client->Mkdirs(path);
+	int status  = self->client->Mkdirs(path.c_str());
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -873,7 +879,7 @@ kfs_rmdir(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Rmdir(path);
+	int status = self->client->Rmdir(path.c_str());
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -891,7 +897,7 @@ kfs_rmdirs(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Rmdirs(path);
+	int status = self->client->Rmdirs(path.c_str());
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -917,7 +923,7 @@ kfs_readdir(PyObject *pself, PyObject *args)
 
 	string path = build_path(self->cwd, patharg);
 	vector <string> result;
-	int status = self->client->Readdir(path, result);
+	int status = self->client->Readdir(path.c_str(), result);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -969,7 +975,7 @@ kfs_readdirplus(PyObject *pself, PyObject *args)
 	string path = build_path(self->cwd, patharg);
 
 	vector <KfsFileAttr> result;
-	int status = self->client->ReaddirPlus(path, result);
+	int status = self->client->ReaddirPlus(path.c_str(), result);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -994,7 +1000,7 @@ kfs_stat(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Stat(path, s, true);
+	int status = self->client->Stat(path.c_str(), s, true);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -1019,7 +1025,7 @@ kfs_stat(PyObject *pself, PyObject *args)
 }
 
 static PyObject *
-kfs_create(PyObject *pself, PyObject *args)
+kfs_getNumChunks(PyObject *pself, PyObject *args)
 {
 	kfs_Client *self = (kfs_Client *)pself;
 	char *patharg;
@@ -1028,7 +1034,39 @@ kfs_create(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int fd = self->client->Create(path);
+	int chunkCount = self->client->GetNumChunks(path.c_str());
+	if (chunkCount < 0) {
+		PyErr_SetString(PyExc_IOError, strerror(-1));
+		return NULL;
+	}
+        return Py_BuildValue("i", chunkCount);
+}
+
+static PyObject *
+kfs_getChunkSize(PyObject *pself, PyObject *args)
+{
+	kfs_Client *self = (kfs_Client *)pself;
+	char *patharg;
+
+	if (PyArg_ParseTuple(args, "s", &patharg) == -1)
+		return NULL;
+	string path = build_path(self->cwd, patharg);
+	int chunksz = self->client->GetChunkSize(path.c_str());
+        return Py_BuildValue("i", chunksz);
+}
+
+static PyObject *
+kfs_create(PyObject *pself, PyObject *args)
+{
+	kfs_Client *self = (kfs_Client *)pself;
+	char *patharg;
+        int numReplicas = 3;
+
+	if (PyArg_ParseTuple(args, "s|i", &patharg, &numReplicas) == -1)
+		return NULL;
+
+	string path = build_path(self->cwd, patharg);
+	int fd = self->client->Create(path.c_str(), numReplicas);
 	if (fd < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-fd));
 		return NULL;
@@ -1051,7 +1089,7 @@ kfs_remove(PyObject *pself, PyObject *args)
 		return NULL;
 
 	string path = build_path(self->cwd, patharg);
-	int status = self->client->Remove(path);
+	int status = self->client->Remove(path.c_str());
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
@@ -1071,7 +1109,7 @@ kfs_rename(PyObject *pself, PyObject *args)
 
 	string spath = build_path(self->cwd, srcpath);
 	string dpath = build_path(self->cwd, dstpath);
-	int status = self->client->Rename(spath, dpath, overwrite);
+	int status = self->client->Rename(spath.c_str(), dpath.c_str(), overwrite);
 	if (status < 0) {
 		PyErr_SetString(PyExc_IOError, strerror(-status));
 		return NULL;
