@@ -218,6 +218,21 @@ public:
     int Rename(const std::string & oldpath, const std::string & newpath, bool overwrite = true);
 
     ///
+    /// Set the mtime for a path
+    /// @param[in] pathname  for which mtime has to be set
+    /// @param[in] mtime     the desired mtime
+    /// @retval status code
+    ///
+    int SetMtime(const std::string &pathname, const struct timeval &mtime);
+
+    /// 
+    /// Given a file, return the # of chunks in the file
+    /// @param[in] pathname	The full pathname such as /.../foo
+    /// @retval    On success, # of chunks in the file; otherwise -1
+    ///
+    int GetNumChunks(const std::string &pathname);
+
+    ///
     /// Open a file
     /// @param[in] pathname that has to be opened
     /// @param[in] openFlags modeled after open().  The specific set

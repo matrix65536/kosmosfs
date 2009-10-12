@@ -55,6 +55,7 @@ enum KfsOp_t {
     CMD_CREATE,
     CMD_REMOVE,
     CMD_RENAME,
+    CMD_SETMTIME,
     CMD_LEASE_ACQUIRE,
     CMD_LEASE_RENEW,
     CMD_LEASE_RELINQUISH,
@@ -106,7 +107,7 @@ struct KfsOp {
         contentBufLen = 0;
     }
     // Build a request RPC that can be sent to the server
-    virtual void Request(std::ostringstream &os) = 0;
+    virtual void Request(std::ostream &os) = 0;
 
     // Common parsing code: parse the response from string and fill
     // that into a properties structure.
@@ -132,7 +133,7 @@ struct CreateOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -151,7 +152,7 @@ struct RemoveOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     std::string Show() const {
         std::ostringstream os;
 
@@ -169,7 +170,7 @@ struct MkdirOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -188,7 +189,7 @@ struct RmdirOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     // default parsing of OK/Cseq/Status/Content-length will suffice.
 
     std::string Show() const {
@@ -212,7 +213,7 @@ struct RenameOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
 
     // default parsing of OK/Cseq/Status/Content-length will suffice.
 
@@ -237,7 +238,7 @@ struct ReaddirOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     // This will only extract out the default+num-entries.  The actual
     // dir. entries are in the content-length portion of things
     void ParseResponseHeader(char *buf, int len);
@@ -249,12 +250,27 @@ struct ReaddirOp : public KfsOp {
     }
 };
 
+struct SetMtimeOp : public KfsOp {
+    const char *pathname;
+    struct timeval mtime;
+    SetMtimeOp(kfsSeq_t s, const char *p, const struct timeval &m):
+        KfsOp(CMD_SETMTIME, s), pathname(p), mtime(m) 
+    {
+    }
+    void Request(std::ostream &os);
+    std::string Show() const {
+        std::ostringstream os;
+        os << "setmtime: " << pathname << " mtime: " << mtime.tv_sec << ':' << mtime.tv_usec;
+        return os.str();
+    }
+};
+
 struct DumpChunkServerMapOp : public KfsOp {
 	DumpChunkServerMapOp(kfsSeq_t s):
 		KfsOp(CMD_DUMP_CHUNKTOSERVERMAP, s)
 	{
 	}
-	void Request(std::ostringstream &os);
+	void Request(std::ostream &os);
 	void ParseResponseHeader(char *buf, int len);
 	std::string Show() const {
 		std::ostringstream os;
@@ -268,7 +284,7 @@ struct UpServersOp : public KfsOp {
         KfsOp(CMD_UPSERVERS, s)
     {
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -282,7 +298,7 @@ struct DumpChunkMapOp : public KfsOp {
 		KfsOp(CMD_DUMP_CHUNKMAP, s)
 	{
 	}
-	void Request(std::ostringstream &os);
+	void Request(std::ostream &os);
 	void ParseResponseHeader(char *buf, int len);
 	std::string Show() const {
 		std::ostringstream os;
@@ -299,7 +315,7 @@ struct ReaddirPlusOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     // This will only extract out the default+num-entries.  The actual
     // dir. entries are in the content-length portion of things
     void ParseResponseHeader(char *buf, int len);
@@ -320,7 +336,7 @@ struct GetDirSummaryOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     // This will only extract out the default+num-entries.  The actual
     // dir. entries are in the content-length portion of things
     void ParseResponseHeader(char *buf, int len);
@@ -342,7 +358,7 @@ struct LookupOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
 
     std::string Show() const {
@@ -363,7 +379,7 @@ struct LookupPathOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
 
     std::string Show() const {
@@ -388,7 +404,7 @@ struct GetAllocOp: public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -417,7 +433,7 @@ struct GetLayoutOp: public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
     int ParseLayoutInfo();
     std::string Show() const {
@@ -433,7 +449,7 @@ struct GetChunkMetadataOp: public KfsOp {
     kfsChunkId_t chunkId;
     GetChunkMetadataOp(kfsSeq_t s, kfsChunkId_t c) :
         KfsOp(CMD_GET_CHUNK_METADATA, s), chunkId(c) { }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     std::string Show() const {
         std::ostringstream os;
 
@@ -457,7 +473,7 @@ struct AllocateOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
     string Show() const {
         std::ostringstream os;
@@ -476,7 +492,7 @@ struct TruncateOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     std::string Show() const {
         std::ostringstream os;
 
@@ -493,7 +509,7 @@ struct OpenOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     std::string Show() const {
         std::ostringstream os;
 
@@ -509,7 +525,7 @@ struct CloseOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     std::string Show() const {
         std::ostringstream os;
 
@@ -528,7 +544,7 @@ struct SizeOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -548,6 +564,7 @@ struct ReadOp : public KfsOp {
     std::vector<uint32_t> checksums; /* checksum for each 64KB block */
     float   diskIOTime; /* as reported by the server */
     float   elapsedTime; /* as measured by the client */
+    std::string drivename; /* drive from which data was read */
 
     ReadOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
         KfsOp(CMD_READ, s), chunkId(c), chunkVersion(v),
@@ -555,7 +572,7 @@ struct ReadOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
 
     std::string Show() const {
@@ -582,7 +599,7 @@ struct WriteIdAllocOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -632,7 +649,7 @@ struct WritePrepareOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     // void ParseResponseHeader(char *buf, int len);
     std::string Show() const {
         std::ostringstream os;
@@ -658,7 +675,7 @@ struct WriteSyncOp : public KfsOp {
         chunkVersion = v;
         writeInfo = w;
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     std::string Show() const {
         std::ostringstream os;
 
@@ -678,7 +695,7 @@ struct LeaseAcquireOp : public KfsOp {
 
     }
 
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
 
     std::string Show() const {
@@ -698,7 +715,7 @@ struct LeaseRenewOp : public KfsOp {
 
     }
 
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     // default parsing of status is sufficient
 
     std::string Show() const {
@@ -719,7 +736,7 @@ struct LeaseRelinquishOp : public KfsOp {
     {
 
     }
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     // defaut parsing of status is sufficient
     std::string Show() const {
         std::ostringstream os;
@@ -739,7 +756,7 @@ struct ChangeFileReplicationOp : public KfsOp {
 
     }
 
-    void Request(std::ostringstream &os);
+    void Request(std::ostream &os);
     void ParseResponseHeader(char *buf, int len);
 
     std::string Show() const {
