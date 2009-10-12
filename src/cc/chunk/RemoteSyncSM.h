@@ -54,11 +54,10 @@ class RemoteSyncSM : public KfsCallbackObj,
 public:
 
     RemoteSyncSM(const ServerLocation &location) :
-        mLocation(location), mSeqnum(1), mTimer(NULL),
+        mLocation(location), mSeqnum(1),
         mReplyNumBytes(0)
     { 
-        mLastResponseRecd = mLastRequestSent = time(0);
-    };
+    }
 
     ~RemoteSyncSM();
 
@@ -78,38 +77,20 @@ public:
     ServerLocation GetLocation() const {
         return mLocation;
     }
+    static void SetResponseTimeoutSec(int timeoutSec) {
+        sOpResponseTimeoutSec = timeoutSec;
+    }
+    static int GetResponseTimeoutSec() {
+        return sOpResponseTimeoutSec;
+    }
 
 private:
-
-    // if we don't get a reply back for an RPC in 5 mins, we assume
-    // that the peer is non-responsive on the socket we are using/peer
-    // could be dead and socket isn't telling us.  
-    //
-    static const int32_t INACTIVE_SERVER_TIMEOUT = 300;
-
     NetConnectionPtr mNetConnection;
 
     ServerLocation mLocation;
 
     /// Assign a sequence # for each op we send to the remote server
     kfsSeq_t mSeqnum;
-
-    // if over N minutes have passed between the last request - last
-    // response, that likely means that the chunkserver at the other
-    // end isn't responding on this connection.  We use these values
-    // to timeout connections.
-    time_t mLastRequestSent;
-    time_t mLastResponseRecd;
-    
-    /// A timer to periodically dispatch pending
-    /// messages to the remote server
-    RemoteSyncSMTimeoutImpl *mTimer;
-
-    /// Queue of outstanding ops to be dispatched: this is the queue
-    /// shared between event processor and the network threads.  When
-    /// the network dispatcher runs, it pulls messages from this queue
-    /// and stashes them away in the dispatched ops list.
-    MetaQueue<KfsOp> mPendingOps;
 
     /// Queue of outstanding ops sent to remote server.
     std::list<KfsOp *> mDispatchedOps;
@@ -124,24 +105,8 @@ private:
     /// @retval 0 if we got the response; -1 if we need to wait
     int HandleResponse(IOBuffer *iobuf, int cmdLen);
     void FailAllOps();
+    static int  sOpResponseTimeoutSec;
 };
-
-/// A Timeout interface object for dispatching messages.
-class RemoteSyncSMTimeoutImpl : public ITimeout {
-public:
-    RemoteSyncSMTimeoutImpl(RemoteSyncSM *mgr) {
-        mRemoteSyncSM = mgr; 
-    };
-    /// On each timeout, check that the connection with the server is
-    /// good.  Also, dispatch any pending messages.
-    void Timeout() {
-        // mRemoteSyncSM->Dispatch();
-    };
-private:
-    /// Owning remote-sync SM.
-    RemoteSyncSM        *mRemoteSyncSM;
-};
-
 
 typedef boost::shared_ptr<RemoteSyncSM> RemoteSyncSMPtr;
 

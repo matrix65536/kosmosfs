@@ -276,8 +276,9 @@ struct HeartbeatOp : public KfsOp {
     int64_t totalSpace;
     int64_t usedSpace;
     long numChunks;
+    double cpuLoadavg; // provide CPU load to metaserver and help in placement
     HeartbeatOp(kfsSeq_t s) :
-        KfsOp(CMD_HEARTBEAT, s)
+        KfsOp(CMD_HEARTBEAT, s), cpuLoadavg(0.0)
     {
         // the fields will be filled in when we execute
     }
@@ -658,6 +659,7 @@ struct ReadOp : public KfsOp {
     IOBuffer *dataBuf; /* buffer with the data read */
     std::vector<uint32_t> checksum; /* checksum over the data that is sent back to client */
     float diskIOTime; /* how long did the AIOs take */
+    std::string driveName; /* for telemetry, provide the drive info to the client */
     /*
      * for writes that require the associated checksum block to be
      * read in, store the pointer to the associated write op.
@@ -680,9 +682,6 @@ struct ReadOp : public KfsOp {
     ~ReadOp() {
         assert(wop == NULL);
         delete dataBuf;
-        if (diskIo) {
-            diskIo->Close();
-        }
     }
 
     void Request(std::ostream &os);
@@ -704,6 +703,7 @@ struct ReadOp : public KfsOp {
 
 // used for retrieving a chunk's size
 struct SizeOp : public KfsOp {
+    kfsFileId_t  fileId; // optional
     kfsChunkId_t chunkId;
     int64_t	 chunkVersion;
     off_t     size; /* result */
