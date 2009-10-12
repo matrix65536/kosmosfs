@@ -260,6 +260,12 @@ namespace KFS
 
 		virtual ~LayoutManager() { }
 
+		/// On a startup, # of secs to wait before we are open for
+		/// reads/writes/re-replication.
+		void SetRecoveryInterval(int secs) { 
+			mRecoveryIntervalSecs = secs;
+		}
+
                 /// A new chunk server has joined and sent a HELLO message.
                 /// Use it to configure information about that server
                 /// @param[in] r  The MetaHello request sent by the
@@ -513,6 +519,9 @@ namespace KFS
 		/// we may learn about leases that we had handed out before crashing.
 		time_t mRecoveryStartTime;
 
+		/// Defaults to the width of a lease window
+		int mRecoveryIntervalSecs;
+
 		/// Periodically clean out dead leases
 		LeaseCleaner mLeaseCleaner;
 
@@ -692,7 +701,7 @@ namespace KFS
 				return true;
 			time_t now = time(0);
 			return now - mRecoveryStartTime <=
-				KFS::LEASE_INTERVAL_SECS;
+				mRecoveryIntervalSecs;
 		}
 
         };
@@ -707,6 +716,8 @@ namespace KFS
 	};
 
         extern LayoutManager gLayoutManager;
+	void SetRecoveryInterval(int secs);
+	void SetPercentLoadedNodesToAvoidForWrites(double percent);
 }
 
 #endif // META_LAYOUTMANAGER_H

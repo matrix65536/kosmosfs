@@ -66,7 +66,7 @@ ClientSM::~ClientSM()
 void
 ClientSM::SendResponse(MetaRequest *op)
 {
-	ostringstream os;
+	IOBuffer::OStream os;
 
 	op->response(os);
 
@@ -87,7 +87,7 @@ ClientSM::SendResponse(MetaRequest *op)
 				mClientIP.c_str(), op->Show().c_str(), op->status);
 	}
 
-	mNetConnection->Write(os.str().c_str(), os.str().length());
+	mNetConnection->Write(&os);
 }
 
 ///
@@ -104,14 +104,22 @@ ClientSM::HandleRequest(int code, void *data)
 	IOBuffer *iobuf;
 	MetaRequest *op;
 	int cmdLen;
+        int hdrsz;
 
 	switch (code) {
 	case EVENT_NET_READ:
 		// We read something from the network.  Run the RPC that
 		// came in.
 		iobuf = (IOBuffer *) data;
-		if (IsMsgAvail(iobuf, &cmdLen))
-			HandleClientCmd(iobuf, cmdLen);
+		while (IsMsgAvail(iobuf, &cmdLen)) {
+                    HandleClientCmd(iobuf, cmdLen);
+                }
+                if ((hdrsz = iobuf->BytesConsumable()) > MAX_RPC_HEADER_LEN) {
+                    KFS_LOG_VA_ERROR("exceeded max request header size: %d > %d,"
+                        " closing connection\n", (int)hdrsz, (int)MAX_RPC_HEADER_LEN);
+                    iobuf->Clear();
+                    HandleRequest(EVENT_NET_ERROR, NULL);
+                }
 		break;
 
 	case EVENT_NET_WROTE:
@@ -190,21 +198,21 @@ ClientSM::HandleTerminate(int code, void *data)
 void
 ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 {
-	scoped_array<char> buf(new char[cmdLen + 1]);
 	MetaRequest *op;
 
-	if (mClientIP == "")
-		mClientIP = mNetConnection->GetPeerName();
-
-	iobuf->CopyOut(buf.get(), cmdLen);
-	buf[cmdLen] = '\0';
-    
-	if (ParseCommand(buf.get(), cmdLen, &op) != 0) {
-		iobuf->Consume(cmdLen);
-
-		KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
-		// got a bogus command
-		return;
+	if (mClientIP.empty()) {
+            mClientIP = mNetConnection->GetPeerName();
+        }
+        IOBuffer::IStream is(*iobuf, cmdLen);
+	if (ParseCommand(is, &op) != 0) {
+            is.Rewind(cmdLen);
+            char buf[128];
+            while (is.getline(buf, sizeof(buf))) {
+		KFS_LOG_VA_DEBUG("client = %s Aye?: %s", mClientIP.c_str(), buf);
+            }
+	    // got a bogus command
+	    iobuf->Consume(cmdLen);
+	    return;
 	}
 
 	// Command is ready to be pushed down.  So remove the cmd from the buffer.
@@ -237,5 +245,4 @@ ClientSM::SubmitOp()
 	mOp->clnt = this;
 	// send it on its merry way
 	submit_request(mOp);
-    
 }

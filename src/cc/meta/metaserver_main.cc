@@ -36,6 +36,7 @@
 #include "startup.h"
 #include "ChunkServer.h"
 #include "ChildProcessTracker.h"
+#include "LayoutManager.h"
 
 using namespace KFS;
 
@@ -54,6 +55,8 @@ string gLogDir, gCPDir;
 uint32_t gMinChunkservers;
 
 int16_t gMinReplicasPerFile;
+
+int gRecoveryIntervalSecs = KFS::LEASE_INTERVAL_SECS;
 
 Properties gProp;
 
@@ -124,6 +127,12 @@ ReadMetaServerProperties(char *fileName)
         if (gProp.loadProperties(fileName, '=', true) != 0)
                 return -1;
 
+	logLevel = gProp.getValue("metaServer.loglevel", defLogLevel);
+        if (logLevel == "INFO")
+	        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+	else
+		KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+
         gClientPort = gProp.getValue("metaServer.clientPort", -1);
         if (gClientPort < 0) {
                 cout << "Aborting...bad client port: " << gClientPort << endl;
@@ -169,11 +178,11 @@ ReadMetaServerProperties(char *fileName)
 	string chunkmapDumpDir = gProp.getValue("metaServer.chunkmapDumpDir", ".");
 	setChunkmapDumpDir(chunkmapDumpDir);
 
-	logLevel = gProp.getValue("metaServer.loglevel", defLogLevel);
-        if (logLevel == "INFO")
-	        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
-	else
-		KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+	gRecoveryIntervalSecs = gProp.getValue("metaServer.recoveryInterval", LEASE_INTERVAL_SECS);
+        SetRecoveryInterval(gRecoveryIntervalSecs);
+
+	double percent = gProp.getValue("metaServer.percentLoadedNodesToAvoidForWrites", (double) 0.3);
+	SetPercentLoadedNodesToAvoidForWrites(percent);
 
         return 0;
 }
