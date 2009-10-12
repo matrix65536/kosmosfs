@@ -35,6 +35,8 @@ namespace KFS
     static const int OPNAME_LEN = 32;
     static const int MAX_NODES_PER_PKT = 32;
     static const uint32_t MAX_IO_INFO_PER_PKT = 32;
+    // optional message
+    static const int MSG_LEN = 32;
 
     // Packet sent to the telemetry service by the clients: each
     // client identifies itself and the target that is "slow".  This
@@ -53,10 +55,16 @@ namespace KFS
         double timetaken;
         // for each individual request, send the time it took
         // how many IOs are we reporting per packet
+        // XXX: Packet alignment :-(  Count should be moved up and a
+        // padding should be added; otherwise, if we have components
+        // compiled in 32 and 64-bit running in the same environment,
+        // packets wont' line up.  need to move this field around and
+        // setup a padding or claim it to be uint64
         uint32_t count;
         double diskIOTime[MAX_IO_INFO_PER_PKT];
         double elapsedTime[MAX_IO_INFO_PER_PKT];
         char opname[OPNAME_LEN];
+        char msg[MSG_LEN];
     };
 
     // set of nodes that are slow for a given op-type

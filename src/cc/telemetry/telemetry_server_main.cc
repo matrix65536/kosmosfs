@@ -199,8 +199,11 @@ KFS::gatherState(int sock)
     TelemetryClntPacket_t tpkt;
     int res, status;
     time_t startTime, now;
+    char *buf;
+    const uint32_t bufsz = sizeof(TelemetryClntPacket_t);
     
     startTime = time(0);
+    buf = new char[bufsz];
     while (1) {
         // poll for 10 secs
         int pollTimeout = 10;
@@ -219,11 +222,38 @@ KFS::gatherState(int sock)
         
         res = poll(&pollfds, 1, pollTimeout * 1000);
         if (pollfds.revents & POLLIN) {
-            status = recv(sock, &tpkt, sizeof(TelemetryClntPacket_t), 0);
+            // status = recv(sock, &tpkt, sizeof(TelemetryClntPacket_t), 0);
+            status = recv(sock, buf, bufsz, 0);
             KFS_LOG_VA_DEBUG("Received: %d bytes", status);
-            if (status == sizeof(TelemetryClntPacket_t)) {
-                updateNodeState(tpkt);
+            if (status < (int) (sizeof(TelemetryClntPacket_t) - 4)) {
+                // dont know what this packet is
+                continue;
             }
+            if (status == sizeof(TelemetryClntPacket_t)) {
+                memcpy(&tpkt, buf, bufsz);
+            } else {
+                // packet-len == sizeof TelemetryClntPackt_t - 4...so, fix up
+                int offset = 0;
+                memcpy(&tpkt.source, buf, sizeof(in_addr));
+                offset += sizeof(in_addr);
+                memcpy(&tpkt.target, buf + offset, sizeof(in_addr));
+                offset += sizeof(in_addr);
+                memcpy(&tpkt.timetaken, buf + offset, sizeof(double));
+                offset += sizeof(double);
+                memcpy(&tpkt.count, buf + offset, sizeof(uint32_t));
+                offset += sizeof(uint32_t);
+                memcpy(tpkt.diskIOTime, buf + offset, sizeof(double) * MAX_IO_INFO_PER_PKT);
+                offset += (sizeof(double) * MAX_IO_INFO_PER_PKT);
+                memcpy(tpkt.elapsedTime, buf + offset, sizeof(double) * MAX_IO_INFO_PER_PKT);
+                offset += (sizeof(double) * MAX_IO_INFO_PER_PKT);
+                memcpy(tpkt.opname, buf + offset, sizeof(char) * OPNAME_LEN);
+                offset += OPNAME_LEN;
+                memcpy(tpkt.msg, buf + offset, sizeof(char) * MSG_LEN);
+
+            }
+
+            updateNodeState(tpkt);
+
         }
     }
 }
@@ -247,16 +277,24 @@ KFS::updateNodeState(TelemetryClntPacket_t &tpkt)
         return;
         
     }
-    KFS_LOG_VA_INFO("%s reports that %s takes %.3f for %s",
-                    buffer, s.c_str(), tpkt.timetaken, tpkt.opname);
 
-    if (tpkt.opname == "READ") {
+
+    if (strncmp(tpkt.opname,"READ", 4) == 0) {
+        KFS_LOG_VA_INFO("%s reports that %s takes %.3f for %s with msg: %s",
+                        buffer, s.c_str(), tpkt.timetaken, tpkt.opname, tpkt.msg);
+
         // dump out individual times for READ
         ostringstream os;
         for (uint32_t i = 0; i < tpkt.count; i++) {
-            os << "(" << tpkt.diskIOTime[i] << " , " << tpkt.elapsedTime << " ) ";
+            if ((i > 0) && (tpkt.elapsedTime[i] < tpkt.elapsedTime[i - 1]))
+                // we are getting some bogus times...
+                tpkt.elapsedTime[i] = tpkt.elapsedTime[i - 1];
+            os << "(" << tpkt.diskIOTime[i] << " , " << tpkt.elapsedTime[i] << " ) ";
         }
         KFS_LOG_VA_INFO("Breakdown: %s", os.str().c_str());
+    } else {
+        KFS_LOG_VA_INFO("%s reports that %s takes %.3f for %s",
+                        buffer, s.c_str(), tpkt.timetaken, tpkt.opname);
     }
     
     if (iter != gNodeMap.end()) {
