@@ -33,8 +33,6 @@ namespace log4cpp
 {
     /**
      * Enhance the file appender and roll the log file on each day.
-     * The appender has to be in the log4cpp namespace; otherwise, it
-     * won't compile.
      */
     class LOG4CPP_EXPORT DailyRollingFileAppender : public FileAppender {
     public:

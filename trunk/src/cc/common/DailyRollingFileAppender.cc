@@ -36,7 +36,7 @@ DailyRollingFileAppender::DailyRollingFileAppender(const string &name, const str
                                                    unsigned int maxDaysToKeep,
                                                    bool append, mode_t mode) :
     log4cpp::FileAppender(name, fileName, append, mode),
-    _maxDaysToKeep(maxDaysToKeep > 0 ? maxDaysToKeep : 2)
+    _maxDaysToKeep(maxDaysToKeep > 0 ? maxDaysToKeep : 7)
 {
     struct stat statBuf;
     int res;
@@ -97,8 +97,9 @@ void DailyRollingFileAppender::rollOver()
             continue;
         }
         if (statBuf.st_mtime < oldest) {
+            string fname = dirname + "/" + entries[i]->d_name;
             // file is too old; prune away
-            ::unlink(entries[i]->d_name);
+            ::unlink(fname.c_str());
         }
         free(entries[i]);
     }
@@ -107,19 +108,18 @@ void DailyRollingFileAppender::rollOver()
 
 void DailyRollingFileAppender::_append(const log4cpp::LoggingEvent &event)
 {
-    log4cpp::FileAppender::_append(event);
     struct tm now;
     time_t t = time(NULL);
 
-    if (localtime_r(&t, &now) == NULL)
-        return;
-
-    if ((now.tm_year != _logsTime.tm_year) ||
-        (now.tm_mon != _logsTime.tm_mon) ||
-        (now.tm_mday != _logsTime.tm_mday)) {
-        rollOver();
-        _logsTime = now;
+    if (localtime_r(&t, &now) != NULL) {
+        if ((now.tm_year != _logsTime.tm_year) ||
+            (now.tm_mon != _logsTime.tm_mon) ||
+            (now.tm_mday != _logsTime.tm_mday)) {
+            rollOver();
+            _logsTime = now;
+        }
     }
+    log4cpp::FileAppender::_append(event);
 
 }
 
