@@ -278,18 +278,18 @@ int TcpSocket::DoSynchSend(const char *buf, int bufLen)
 {
     int numSent = 0;
     int res = 0, nfds;
-    fd_set fds;
-    struct timeval timeout;
+    struct pollfd pfd;
+    // 1 second in ms units
+    const int kTimeout = 1000;
 
     while (numSent < bufLen) {
         if (mSockFd < 0)
             break;
         if (res < 0) {
-            FD_ZERO(&fds);
-            FD_SET(mSockFd, &fds);
-            timeout.tv_sec = 1;
-            timeout.tv_usec = 0;
-            nfds = select(mSockFd + 1, NULL, &fds, &fds, &timeout);
+            pfd.fd = mSockFd;
+            pfd.events = POLLOUT | POLLIN;
+            pfd.revents = 0;
+            nfds = poll(&pfd, 1, kTimeout);
             if (nfds == 0)
                 continue;
         }

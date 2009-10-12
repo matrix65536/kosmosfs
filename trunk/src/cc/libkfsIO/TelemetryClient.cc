@@ -141,6 +141,26 @@ TelemetryClient::publish(struct in_addr &target, double timetaken, string opname
 }
 
 void
+TelemetryClient::publish(struct in_addr &target, double timetaken, string opname,
+                         string msg,
+                         uint32_t count, double *diskIOTime, double *elapsedTime)
+{
+    if (mSock < 0)
+        return;
+
+    TelemetryClntPacket_t tpkt(mAddr, target, timetaken, opname.c_str());
+    int len = std::min(MSG_LEN, (int) msg.size());
+
+    tpkt.count = count;
+    memcpy(tpkt.diskIOTime, diskIOTime, sizeof(double) * count);
+    memcpy(tpkt.elapsedTime, elapsedTime, sizeof(double) * count);
+    if (len > 0)
+        strncpy(tpkt.msg, msg.c_str(), len);
+    tpkt.msg[len] = '\0';
+    publish(tpkt);
+}
+
+void
 TelemetryClient::publish(TelemetryClntPacket_t &tpkt)
 {
     if (mSock < 0)

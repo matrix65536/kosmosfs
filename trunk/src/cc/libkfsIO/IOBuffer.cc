@@ -518,11 +518,11 @@ void IOBuffer::ReplaceKeepBuffersFull(IOBuffer* srcBuf, int inOffset, int numByt
     assert(moveLen >= 0 && dstLen >= 0 &&
         mByteCount >= 0 && srcBuf->mByteCount >= moveLen);
 
-    BList& dst = mBuf;
-    BList& src = srcBuf->mBuf;
-    BList::iterator di;
-    int off;
-    for (di = dst.begin(), off = 0; di != dst.end(); ) {
+    BList&          dst = mBuf;
+    BList&          src = srcBuf->mBuf;
+    BList::iterator di  = offset == mByteCount ? dst.end() : dst.begin();
+    int             off = offset == mByteCount ? offset    : 0;
+    while (di != dst.end()) {
         const int nb = di->BytesConsumable();
         if (nb <= 0) {
             di = dst.erase(di);
@@ -1143,42 +1143,52 @@ int IOBuffer::IndexOf(int offset, const char* str) const
         const int         nb = it->BytesConsumable();
         const char* const c  = it->Consumer();
         const char*       n  = c + nBytes;
-        const char* const e  = n + nb;
+        const char* const e  = c + nb;
         nBytes = 0;
-        while (n < e &&
-                (n = idx < 0 ? (const char*)memchr(n, *s, e - n) : n)) {
-            const char* const f = n;
-            while (*++s != 0 && ++n < e && *n == *s)
-            {}
-            if (*s == 0) {
-                // Found.
-                DebugVerify();
-               return (idx < 0 ? off + int(f - c) : idx);
+        if (idx >= 0) {
+            while (n < e && *s == *n) {
+                if (*++s == 0) {
+                    // Found.
+                    DebugVerify();
+                    return idx;
+                }
+                n++;
             }
             if (n < e) {
                 // Start over, from prefix start index plus one.
                 s = ss;
-                if (idx >= 0) {
-                    assert(pbo >= 0);
-                    it     = pit;
-                    off    = idx - pbo;
-                    nBytes = pbo + 1;
-                    pbo    = -1;
-                    idx    = -1;
-                    break;
+                assert(pbo >= 0);
+                it     = pit;
+                off    = idx - pbo;
+                nBytes = pbo + 1;
+                pbo    = -1;
+                idx    = -1;
+                continue;
+            }
+        } else {
+            while (n < e && (n = (const char*)memchr(n, *s, e - n))) {
+                const char* const f = n;
+                while (*++s != 0 && ++n < e && *n == *s)
+                {}
+                if (*s == 0) {
+                    // Found.
+                    DebugVerify();
+                    return (off + int(f - c));
                 }
-                n = f + 1;
-            } else if (idx < 0) {
-                // Prefix start, end of buffer: remember the prefix position.
-                pbo = int(f - c);
-                pit = it;
-                idx = off + pbo;
+                if (n < e) {
+                    // Start over, from prefix start index plus one.
+                    s = ss;
+                    n = f + 1;
+                } else {
+                    // Prefix start, end of buffer: remember the prefix position.
+                    pbo = int(f - c);
+                    pit = it;
+                    idx = off + pbo;
+                }
             }
         }
-        if (! n || n >= e) {
-            off += nb;
-            ++it;
-        }
+        off += nb;
+        ++it;
     }
     DebugVerify();
     return -1;

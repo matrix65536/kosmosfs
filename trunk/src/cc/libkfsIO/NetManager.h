@@ -95,6 +95,7 @@ public:
     void Shutdown() { mRunFlag = false; }
     /// Methods used by NetConnection only.
     void Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTimer);
+    time_t Now() const { return mNow; }
 private:
     typedef NetConnection::NetManagerEntry::List List;
     enum { kTimerWheelSize = (1 << 8) };
