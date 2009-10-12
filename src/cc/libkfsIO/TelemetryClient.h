@@ -67,6 +67,10 @@ namespace KFS
         void publish(struct in_addr &target, double timetaken, std::string opname);
         void publish(struct in_addr &target, double timetaken, std::string opname,
                      uint32_t count, double *diskIOTime, double *elapsedTime);
+
+        void publish(struct in_addr &target, double timetaken, std::string opname,
+                     std::string message,
+                     uint32_t count, double *diskIOTime, double *elapsedTime);
         
         // get notification from the server of slow nodes in the system.
         // @param[in/out] slowNodes --- the set of slow nodes as
