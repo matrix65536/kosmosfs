@@ -36,7 +36,7 @@ extern "C" {
 #include "Utils.h"
 
 using std::istringstream;
-using std::ostringstream;
+using std::ostream;
 using std::string;
 
 #include <iostream>
@@ -49,11 +49,11 @@ using namespace KFS;
 
 ///
 /// All Request() methods build a request RPC based on the KFS
-/// protocol and output the request into a ostringstream.
+/// protocol and output the request into a ostream.
 /// @param[out] os which contains the request RPC.
 ///
 void
-CreateOp::Request(ostringstream &os)
+CreateOp::Request(ostream &os)
 {
     int e = exclusive ? 1 : 0;
 
@@ -67,7 +67,7 @@ CreateOp::Request(ostringstream &os)
 }
 
 void
-MkdirOp::Request(ostringstream &os)
+MkdirOp::Request(ostream &os)
 {
     os << "MKDIR " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -77,7 +77,7 @@ MkdirOp::Request(ostringstream &os)
 }
 
 void
-RmdirOp::Request(ostringstream &os)
+RmdirOp::Request(ostream &os)
 {
     os << "RMDIR " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -88,7 +88,7 @@ RmdirOp::Request(ostringstream &os)
 }
 
 void
-RenameOp::Request(ostringstream &os)
+RenameOp::Request(ostream &os)
 {
     int o = overwrite ? 1 : 0;
 
@@ -103,7 +103,7 @@ RenameOp::Request(ostringstream &os)
 }
 
 void
-ReaddirOp::Request(ostringstream &os)
+ReaddirOp::Request(ostream &os)
 {
     os << "READDIR " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -112,7 +112,18 @@ ReaddirOp::Request(ostringstream &os)
 }
 
 void
-DumpChunkServerMapOp::Request(ostringstream &os)
+SetMtimeOp::Request(ostream &os)
+{
+    os << "SET_MTIME" << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Pathname: " << pathname << "\r\n";
+    os << "Mtime-sec: " << mtime.tv_sec << "\r\n";
+    os << "Mtime-usec: " << mtime.tv_usec << "\r\n\r\n";
+}
+
+void
+DumpChunkServerMapOp::Request(ostream &os)
 {
 	os << "DUMP_CHUNKTOSERVERMAP" << "\r\n";
 	os << "Cseq: " << seq << "\r\n";
@@ -120,7 +131,7 @@ DumpChunkServerMapOp::Request(ostringstream &os)
 }
 
 void
-DumpChunkMapOp::Request(ostringstream &os)
+DumpChunkMapOp::Request(ostream &os)
 {
 	os << "DUMP_CHUNKMAP" << "\r\n";
 	os << "Cseq: " << seq << "\r\n";
@@ -128,7 +139,7 @@ DumpChunkMapOp::Request(ostringstream &os)
 }
 
 void
-UpServersOp::Request(ostringstream &os)
+UpServersOp::Request(ostream &os)
 {
     os << "UPSERVERS" << "\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -136,7 +147,7 @@ UpServersOp::Request(ostringstream &os)
 }
 
 void
-ReaddirPlusOp::Request(ostringstream &os)
+ReaddirPlusOp::Request(ostream &os)
 {
     os << "READDIRPLUS " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -145,7 +156,7 @@ ReaddirPlusOp::Request(ostringstream &os)
 }
 
 void
-GetDirSummaryOp::Request(ostringstream &os)
+GetDirSummaryOp::Request(ostream &os)
 {
     os << "GETDIRSUMMARY " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -154,7 +165,7 @@ GetDirSummaryOp::Request(ostringstream &os)
 }
 
 void
-RemoveOp::Request(ostringstream &os)
+RemoveOp::Request(ostream &os)
 {
     os << "REMOVE " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -165,7 +176,7 @@ RemoveOp::Request(ostringstream &os)
 }
 
 void
-LookupOp::Request(ostringstream &os)
+LookupOp::Request(ostream &os)
 {
     os << "LOOKUP \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -175,7 +186,7 @@ LookupOp::Request(ostringstream &os)
 }
 
 void
-LookupPathOp::Request(ostringstream &os)
+LookupPathOp::Request(ostream &os)
 {
     os << "LOOKUP_PATH \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -185,7 +196,7 @@ LookupPathOp::Request(ostringstream &os)
 }
 
 void
-GetAllocOp::Request(ostringstream &os)
+GetAllocOp::Request(ostream &os)
 {
     assert(fileOffset >= 0);
 
@@ -198,7 +209,7 @@ GetAllocOp::Request(ostringstream &os)
 }
 
 void
-GetLayoutOp::Request(ostringstream &os)
+GetLayoutOp::Request(ostream &os)
 {
     os << "GETLAYOUT \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -207,7 +218,7 @@ GetLayoutOp::Request(ostringstream &os)
 }
 
 void
-GetChunkMetadataOp::Request(ostringstream &os)
+GetChunkMetadataOp::Request(ostream &os)
 {
     os << "GET_CHUNK_METADATA \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -216,7 +227,7 @@ GetChunkMetadataOp::Request(ostringstream &os)
 }
 
 void
-AllocateOp::Request(ostringstream &os)
+AllocateOp::Request(ostream &os)
 {
     static const int MAXHOSTNAMELEN = 256;
     char hostname[MAXHOSTNAMELEN];
@@ -233,7 +244,7 @@ AllocateOp::Request(ostringstream &os)
 }
 
 void
-TruncateOp::Request(ostringstream &os)
+TruncateOp::Request(ostream &os)
 {
     os << "TRUNCATE \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -244,7 +255,7 @@ TruncateOp::Request(ostringstream &os)
 }
 
 void
-OpenOp::Request(ostringstream &os)
+OpenOp::Request(ostream &os)
 {
     const char *modeStr;
 
@@ -263,7 +274,7 @@ OpenOp::Request(ostringstream &os)
 }
 
 void
-CloseOp::Request(ostringstream &os)
+CloseOp::Request(ostream &os)
 {
     os << "CLOSE \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -272,7 +283,7 @@ CloseOp::Request(ostringstream &os)
 }
 
 void
-ReadOp::Request(ostringstream &os)
+ReadOp::Request(ostream &os)
 {
     os << "READ \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -284,7 +295,7 @@ ReadOp::Request(ostringstream &os)
 }
 
 void
-WriteIdAllocOp::Request(ostringstream &os)
+WriteIdAllocOp::Request(ostream &os)
 {
     os << "WRITE_ID_ALLOC \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -305,7 +316,7 @@ WriteIdAllocOp::Request(ostringstream &os)
 }
 
 void
-WritePrepareOp::Request(ostringstream &os)
+WritePrepareOp::Request(ostream &os)
 {
     os << "WRITE_PREPARE \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -325,7 +336,7 @@ WritePrepareOp::Request(ostringstream &os)
 }
 
 void
-WriteSyncOp::Request(ostringstream &os)
+WriteSyncOp::Request(ostream &os)
 {
     os << "WRITE_SYNC \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -342,7 +353,7 @@ WriteSyncOp::Request(ostringstream &os)
 }
 
 void
-SizeOp::Request(ostringstream &os)
+SizeOp::Request(ostream &os)
 {
     os << "SIZE \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -352,7 +363,7 @@ SizeOp::Request(ostringstream &os)
 }
 
 void
-LeaseAcquireOp::Request(ostringstream &os)
+LeaseAcquireOp::Request(ostream &os)
 {
     os << "LEASE_ACQUIRE \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -362,7 +373,7 @@ LeaseAcquireOp::Request(ostringstream &os)
 }
 
 void
-LeaseRenewOp::Request(ostringstream &os)
+LeaseRenewOp::Request(ostream &os)
 {
     os << "LEASE_RENEW \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -374,7 +385,7 @@ LeaseRenewOp::Request(ostringstream &os)
 }
 
 void
-LeaseRelinquishOp::Request(ostringstream &os)
+LeaseRelinquishOp::Request(ostream &os)
 {
     os << "LEASE_RELINQUISH\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
@@ -385,7 +396,7 @@ LeaseRelinquishOp::Request(ostringstream &os)
 }
 
 void
-ChangeFileReplicationOp::Request(ostringstream &os)
+ChangeFileReplicationOp::Request(ostream &os)
 {
     os << "CHANGE_FILE_REPLICATION \r\n";
     os << "Cseq: " << seq << "\r\n";
@@ -684,6 +695,7 @@ ReadOp::ParseResponseHeader(char *buf, int len)
     nentries = prop.getValue("Checksum-entries", 0);
     checksumStr = prop.getValue("Checksums", "");
     diskIOTime = prop.getValue("DiskIOtime", 0.0);
+    drivename = prop.getValue("Drivename", "");
     istringstream ist(checksumStr);
     checksums.clear();
     for (uint32_t i = 0; i < nentries; i++) {

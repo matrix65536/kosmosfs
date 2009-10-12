@@ -105,6 +105,18 @@ KfsClientFactory::GetClient(const string & propFile)
 
 }
 
+class MatchingServer {
+    ServerLocation loc;
+public:
+    MatchingServer(const ServerLocation &l) : loc(l) { }
+    bool operator()(KfsClientPtr &clnt) const {
+        return clnt->GetMetaserverLocation() == loc;
+    }
+    bool operator()(const ServerLocation &other) const {
+        return other == loc;
+    }
+};
+
 KfsClientPtr
 KfsClientFactory::GetClient(const std::string & metaServerHost, int metaServerPort)
 {
@@ -219,6 +231,12 @@ KfsClient::Stat(const string & pathname, KfsFileStat &result, bool computeFilesi
     return mImpl->Stat(pathname, result, computeFilesize);
 }
 
+int
+KfsClient::GetNumChunks(const string &pathname)
+{
+    return mImpl->GetNumChunks(pathname);
+}
+
 bool 
 KfsClient::Exists(const string & pathname)
 {
@@ -280,7 +298,13 @@ KfsClient::Rename(const string & oldpath, const string & newpath, bool overwrite
 }
 
 int 
-KfsClient::Open(const string &pathname, int openFlags, int numReplicas)
+KfsClient::SetMtime(const string & pathname, const struct timeval &mtime)
+{
+    return mImpl->SetMtime(pathname, mtime);
+}
+
+int 
+KfsClient::Open(const string & pathname, int openFlags, int numReplicas)
 {
     return mImpl->Open(pathname, openFlags, numReplicas);
 }

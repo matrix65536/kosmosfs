@@ -896,6 +896,37 @@ KfsClientImpl::Rename(const string & oldpath, const string & newpath, bool overw
 }
 
 int
+KfsClientImpl::GetNumChunks(const string &pathname)
+{
+    MutexLock l(&mMutex);
+    kfsFileId_t parentFid;
+    string filename;
+    
+    int res = GetPathComponents(pathname, &parentFid, filename);
+    if (res == 0) {
+        LookupOp op(nextSeq(), parentFid, filename.c_str());
+
+        (void)DoMetaOpWithRetry(&op);
+        if (op.status < 0)
+            return op.status;
+        
+        return op.fattr.chunkCount;
+
+    }
+    return -1;
+}
+
+int
+KfsClientImpl::SetMtime(const string &pathname, const struct timeval &mtime)
+{
+    MutexLock l(&mMutex);
+
+    SetMtimeOp op(nextSeq(), pathname.c_str(), mtime);
+    (void)DoMetaOpWithRetry(&op);
+    return op.status;
+}
+
+int
 KfsClientImpl::Fileno(const string & pathname)
 {
     kfsFileId_t parentFid;
