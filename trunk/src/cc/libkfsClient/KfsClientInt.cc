@@ -163,6 +163,7 @@ int KfsClientImpl::Init(const string & metaServerHost, int metaServerPort)
     }
 
 
+#if 0
     // setup the telemetry stuff...
     struct ip_mreq imreq;
     string srvIp = "10.2.0.10";
@@ -174,6 +175,7 @@ int KfsClientImpl::Init(const string & metaServerHost, int metaServerPort)
     
     // will setup this for release
     mTelemetryReporter.Init(imreq, multicastPort, srvIp, srvPort);
+#endif
 
     mIsInitialized = true;
     return 0;
