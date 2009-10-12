@@ -74,6 +74,10 @@ public class KfsAccess
     private final static native
     long getModificationTime(long ptr, String path);
 
+    // pass the mtime in milli-secs
+    private final static native
+    int setModificationTime(long ptr, String path, long msecs);
+
     private final static native
     int create(long ptr, String path, int numReplicas, boolean exclusive);
 
@@ -103,6 +107,9 @@ public class KfsAccess
 
     public final static native
     long getDefaultIoBufferSize();
+    
+    private final static native
+    boolean compareChunkReplicas(long ptr, String path, StringBuffer md5sum);
 
     public final static native
     long setDefaultReadAheadSize(long size);
@@ -127,7 +134,7 @@ public class KfsAccess
             System.loadLibrary("kfs_access");
         } catch (UnsatisfiedLinkError e) {
             e.printStackTrace();
-            System.err.println("Unable to load kfs_access native library");
+            System.err.println("Unable to load kfs_access native library: " + System.getProperty("java.library.path"));
             System.exit(1);
         }
     }
@@ -191,40 +198,21 @@ public class KfsAccess
             return null;
 
         KfsFileAttr[] fattr = new KfsFileAttr[entries.length];
-        
+
         for (int i = 0; i < entries.length; i++) {
-            // put everything into a properties object and pick up
-            // values.  StringInputStream is deprecated; so, we are
-            // using byte-array-inputstream.
-            byte[] arr = entries[i].getBytes();
-            ByteArrayInputStream bis = new ByteArrayInputStream(arr);
-            Properties prop = new Properties();
-            String s;
+            String[] fields = entries[i].split("\n");
 
-            try {
-                prop.load(bis);
-                fattr[i] = new KfsFileAttr();
+            fattr[i] = new KfsFileAttr();
 
-                fattr[i].filename = prop.getProperty("Filename", "");
-                s = prop.getProperty("IsDirectory", "false");
-                if (s.startsWith("true"))
-                    fattr[i].isDirectory = true;
-                else
-                    fattr[i].isDirectory = false;
+            fattr[i].filename = fields[0];
+            if (fields[1].startsWith("true"))
+                fattr[i].isDirectory = true;
+            else
+                fattr[i].isDirectory = false;
 
-                s = prop.getProperty("Filesize", "0");
-                fattr[i].filesize = Long.parseLong(s);
-
-                s = prop.getProperty("M-Time", "0");
-                fattr[i].modificationTime = Long.parseLong(s);
-
-                s = prop.getProperty("Replicas", "1");
-                fattr[i].replication = Integer.parseInt(s);
-
-            } catch (Exception e) {
-                e.printStackTrace();
-                fattr[i] = null;
-            }
+            fattr[i].filesize = Long.parseLong(fields[2]);
+            fattr[i].modificationTime = Long.parseLong(fields[3]);
+            fattr[i].replication = Integer.parseInt(fields[4]);
         }
         return fattr;
     }
@@ -256,6 +244,11 @@ public class KfsAccess
         if (fd < 0)
             return null;
         return new KfsOutputChannel(cPtr, fd);
+    }
+    
+    public boolean kfs_compareChunkReplicas(String path, StringBuffer md5sum)
+    {
+    	return compareChunkReplicas(cPtr, path, md5sum);
     }
 
     public KfsOutputChannel kfs_create(String path, int numReplicas, boolean exclusive,
@@ -355,6 +348,11 @@ public class KfsAccess
     public long kfs_getModificationTime(String path)
     {
         return getModificationTime(cPtr, path);
+    }
+
+    public int kfs_setModificationTime(String path, long msecs)
+    {
+        return setModificationTime(cPtr, path, msecs);
     }
 
     protected void finalize() throws Throwable
