@@ -307,6 +307,10 @@ namespace KFS
 			return mRackId;
 		}
 
+		double GetCPULoadAvg() const {
+			return mCpuLoadAvg;
+		}
+
 		/// Available space is defined as the difference
 		/// between the total storage space available
 		/// on the server and the amount of space that
@@ -446,6 +450,12 @@ namespace KFS
 		/// # of chunks hosted on this server; useful for
 		/// reporting purposes
 		long mNumChunks;
+
+		/// An estimate of the CPU load average as reported by the
+		/// chunkserver.  When selecting nodes for block allocation, we
+		/// can use this info to weed out the most heavily loaded N% of
+		/// the nodes.
+		double mCpuLoadAvg;
 
 		/// An estimate of the # of writes that are being handled
 		/// by this server.  We use this value to update mAllocSpace

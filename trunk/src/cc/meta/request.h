@@ -37,6 +37,7 @@
 #include "thread.h"
 #include "util.h"
 #include <deque>
+#include <istream>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -46,6 +47,7 @@
 using std::ofstream;
 using std::vector;
 using std::ostringstream;
+using std::ostream;
 
 namespace KFS {
 
@@ -131,7 +133,7 @@ struct MetaRequest {
 	//!< when an op finishes execution, we send a response back to
 	//!< the client.  This function should generate the appropriate
 	//!< response to be sent back as per the KFS protocol.
-	virtual void response(ostringstream &os)
+	virtual void response(ostream &os)
 	{
 		(void) os; // XXX avoid spurious compiler warnings
 	};
@@ -149,7 +151,7 @@ struct MetaLookup: public MetaRequest {
 	MetaLookup(seq_t s, fid_t d, string n):
 		MetaRequest(META_LOOKUP, s, false), dir(d), name(n) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -170,7 +172,7 @@ struct MetaLookupPath: public MetaRequest {
 	MetaLookupPath(seq_t s, fid_t r, string p):
 		MetaRequest(META_LOOKUP_PATH, s, false), root(r), path(p) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -194,7 +196,7 @@ struct MetaCreate: public MetaRequest {
 		MetaRequest(META_CREATE, s, true), dir(d),
 		name(n), numReplicas(r), exclusive(e) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -216,7 +218,7 @@ struct MetaMkdir: public MetaRequest {
 	MetaMkdir(seq_t s, fid_t d, string n):
 		MetaRequest(META_MKDIR, s, true), dir(d), name(n) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -238,7 +240,7 @@ struct MetaRemove: public MetaRequest {
 	MetaRemove(seq_t s, fid_t d, string n):
 		MetaRequest(META_REMOVE, s, true), dir(d), name(n), filesize(0) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -259,7 +261,7 @@ struct MetaRmdir: public MetaRequest {
 	MetaRmdir(seq_t s, fid_t d, string n):
 		MetaRequest(META_RMDIR, s, true), dir(d), name(n) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -279,7 +281,7 @@ struct MetaReaddir: public MetaRequest {
 	MetaReaddir(seq_t s, fid_t d):
 		MetaRequest(META_READDIR, s, false), dir(d) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -299,7 +301,7 @@ struct MetaReaddirPlus: public MetaRequest {
 	MetaReaddirPlus(seq_t s, fid_t d):
 		MetaRequest(META_READDIRPLUS, s, false), dir(d) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -322,7 +324,7 @@ struct MetaGetalloc: public MetaRequest {
 	MetaGetalloc(seq_t s, fid_t f, chunkOff_t o):
 		MetaRequest(META_GETALLOC, s, false), fid(f), offset(o) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -364,7 +366,7 @@ struct MetaGetlayout: public MetaRequest {
 	MetaGetlayout(seq_t s, fid_t f):
 		MetaRequest(META_GETLAYOUT, s, false), fid(f) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -400,7 +402,7 @@ struct MetaAllocate: public MetaRequest {
 		MetaRequest(META_ALLOCATE, s, true), req(NULL), fid(f),
 		offset(o), layoutDone(false), numServerReplies(0) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -421,7 +423,7 @@ struct MetaTruncate: public MetaRequest {
 	MetaTruncate(seq_t s, fid_t f, chunkOff_t o):
 		MetaRequest(META_TRUNCATE, s, true), fid(f), offset(o) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -445,7 +447,7 @@ struct MetaRename: public MetaRequest {
 		MetaRequest(META_RENAME, s, true), dir(d),
 			oldname(o), newname(n), overwrite(c) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -467,7 +469,7 @@ struct MetaSetMtime: public MetaRequest {
 	MetaSetMtime(seq_t s, string p, struct timeval &m):
 		MetaRequest(META_SETMTIME, s, true), pathname(p), mtime(m) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -487,7 +489,7 @@ struct MetaChangeFileReplication: public MetaRequest {
 	MetaChangeFileReplication(seq_t s, fid_t f, int16_t n):
 		MetaRequest(META_CHANGE_FILE_REPLICATION, s, true), fid(f), numReplicas(n) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -517,7 +519,7 @@ struct MetaRetireChunkserver : public MetaRequest {
 		MetaRequest(META_RETIRE_CHUNKSERVER, s, false), location(l),
 		nSecsDown(d) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		if (nSecsDown > 0)
@@ -536,7 +538,7 @@ struct MetaToggleRebalancing : public MetaRequest {
 	MetaToggleRebalancing(seq_t s, bool v) :
 		MetaRequest(META_TOGGLE_REBALANCING, s, false), value(v) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		if (value)
@@ -555,7 +557,7 @@ struct MetaExecuteRebalancePlan : public MetaRequest {
 	MetaExecuteRebalancePlan(seq_t s, const std::string &p) :
 		MetaRequest(META_EXECUTE_REBALANCEPLAN, s, false), planPathname(p) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "Execute rebalance plan : " + planPathname;
@@ -609,7 +611,7 @@ struct MetaHello: public MetaRequest {
 	vector<ChunkInfo> chunks; //!< Chunks  hosted on this server
 	MetaHello(seq_t s): MetaRequest(META_HELLO, s, false) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "Chunkserver Hello";
@@ -645,7 +647,7 @@ struct MetaChunkRequest: public MetaRequest {
 
 	//!< generate a request message (in string format) as per the
 	//!< KFS protocol.
-	virtual void request(ostringstream &os) = 0;
+	virtual void request(ostream &os) = 0;
 };
 
 /*!
@@ -657,7 +659,7 @@ struct MetaChunkAllocate: public MetaChunkRequest {
 		MetaChunkRequest(META_CHUNK_ALLOCATE, n, false, r, s),
 		leaseId(l) { }
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	int log(ofstream &file) const;
 	string Show()
 	{
@@ -676,7 +678,7 @@ struct MetaChunkVersChange: public MetaChunkRequest {
 		MetaChunkRequest(META_CHUNK_VERSCHANGE, n, false, NULL, s),
 		fid(f), chunkId(c), chunkVersion(v) { }
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	int log(ofstream &file) const;
 	string Show()
 	{
@@ -698,7 +700,7 @@ struct MetaChunkDelete: public MetaChunkRequest {
 	MetaChunkDelete(seq_t n, ChunkServer *s, chunkId_t c):
 		MetaChunkRequest(META_CHUNK_DELETE, n, false, NULL, s), chunkId(c) { }
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	int log(ofstream &file) const;
 	string Show()
 	{
@@ -720,7 +722,7 @@ struct MetaChunkTruncate: public MetaChunkRequest {
 		MetaChunkRequest(META_CHUNK_TRUNCATE, n, false, NULL, s),
 		chunkId(c), chunkSize(sz) { }
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	int log(ofstream &file) const;
 	string Show()
 	{
@@ -752,7 +754,7 @@ struct MetaChunkReplicate: public MetaChunkRequest {
 		MetaChunkRequest(META_CHUNK_REPLICATE, n, false, NULL, s),
 		fid(f), chunkId(c), chunkVersion(v), srcLocation(l) { }
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	int log(ofstream &file) const;
 	string Show()
 	{
@@ -786,7 +788,7 @@ struct MetaChunkSize: public MetaChunkRequest {
 		MetaChunkRequest(META_CHUNK_SIZE, n, true, NULL, s),
 		fid(f), chunkId(c), chunkSize(-1), filesize(-1), pathname(p) { }
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	int log(ofstream &file) const;
 	string Show()
 	{
@@ -808,7 +810,7 @@ struct MetaChunkHeartbeat: public MetaChunkRequest {
 	MetaChunkHeartbeat(seq_t n, ChunkServer *s):
 		MetaChunkRequest(META_CHUNK_HEARTBEAT, n, false, NULL, s) { }
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	int log(ofstream &file) const;
 	string Show()
 	{
@@ -826,7 +828,7 @@ struct MetaChunkStaleNotify: public MetaChunkRequest {
 		MetaChunkRequest(META_CHUNK_STALENOTIFY, n, false, NULL, s) { }
 	vector<chunkId_t> staleChunkIds; //!< chunk ids that are stale
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	int log(ofstream &file) const;
 	string Show()
 	{
@@ -843,7 +845,7 @@ struct MetaChunkRetire: public MetaChunkRequest {
 		MetaChunkRequest(META_CHUNK_RETIRE, n, false, NULL, s) { }
 	int log(ofstream &file) const;
 	//!< generate the request string that should be sent out
-	void request(ostringstream &os);
+	void request(ostream &os);
 	string Show()
 	{
 		return "chunkserver retire";
@@ -864,7 +866,7 @@ struct MetaPing: public MetaRequest {
 	MetaPing(seq_t s):
 		MetaRequest(META_PING, s, false) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "ping";
@@ -880,7 +882,7 @@ struct MetaUpServers: public MetaRequest {
 	MetaUpServers(seq_t s):
 		MetaRequest(META_UPSERVERS, s, false) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "upservers";
@@ -896,7 +898,7 @@ struct MetaToggleWORM: public MetaRequest {
 	MetaToggleWORM(seq_t s, bool v):
 		MetaRequest(META_TOGGLE_WORM, s, false), value(v) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		if (value)
@@ -915,7 +917,7 @@ struct MetaStats: public MetaRequest {
 	MetaStats(seq_t s):
 		MetaRequest(META_STATS, s, false) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "stats";
@@ -929,7 +931,7 @@ struct MetaRecomputeDirsize: public MetaRequest {
 	MetaRecomputeDirsize(seq_t s):
 		MetaRequest(META_RECOMPUTE_DIRSIZE, s, false) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "recompute dir size";
@@ -945,7 +947,7 @@ struct MetaDumpChunkToServerMap: public MetaRequest {
 	MetaDumpChunkToServerMap(seq_t s):
 		MetaRequest(META_DUMP_CHUNKTOSERVERMAP, s, false) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "dump chunk2server map";
@@ -959,7 +961,7 @@ struct MetaCheckLeases: public MetaRequest {
 	MetaCheckLeases(seq_t s):
 		MetaRequest(META_CHECK_LEASES, s, false) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "checking all leases";
@@ -976,7 +978,7 @@ struct MetaDumpChunkReplicationCandidates: public MetaRequest {
 	// list of blocks that are being re-replicated
 	std::string blocks;
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "dump chunk replication candidates";
@@ -994,7 +996,7 @@ struct MetaOpenFiles: public MetaRequest {
 	MetaOpenFiles(seq_t s):
 		MetaRequest(META_OPEN_FILES, s, false) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		return "open files";
@@ -1012,7 +1014,7 @@ struct MetaChunkCorrupt: public MetaRequest {
 		MetaRequest(META_CHUNK_CORRUPT, s, false),
 		fid(f), chunkId(c) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -1034,7 +1036,7 @@ struct MetaLeaseAcquire: public MetaRequest {
 		MetaRequest(META_LEASE_ACQUIRE, s, false),
 		leaseType(READ_LEASE), chunkId(c), leaseId(-1) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -1062,7 +1064,7 @@ struct MetaLeaseRenew: public MetaRequest {
 		MetaRequest(META_LEASE_RENEW, s, false),
 		leaseType(t), chunkId(c), leaseId(l) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -1089,7 +1091,7 @@ struct MetaLeaseRelinquish: public MetaRequest {
 		MetaRequest(META_LEASE_RELINQUISH, s, false),
 		leaseType(t), chunkId(c), leaseId(l) { }
 	int log(ofstream &file) const;
-	void response(ostringstream &os);
+	void response(ostream &os);
 	string Show()
 	{
 		ostringstream os;
@@ -1136,7 +1138,7 @@ struct MetaChunkReplicationCheck : public MetaRequest {
 	}
 };
 
-extern int ParseCommand(char *cmdBuf, int cmdLen, MetaRequest **res);
+extern int ParseCommand(std::istream& is, MetaRequest **res);
 
 extern void initialize_request_handlers();
 extern void process_request(MetaRequest *r);

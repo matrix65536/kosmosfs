@@ -44,7 +44,6 @@ using std::string;
 using std::istringstream;
 using std::ifstream;
 using std::min;
-using std::max;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -415,9 +414,9 @@ public:
 };
 
 class ListServerLocations {
-	ostringstream &os;
+	ostream &os;
 public:
-	ListServerLocations(ostringstream &out): os(out) { }
+	ListServerLocations(ostream &out): os(out) { }
 	void operator () (const ServerLocation &s)
 	{
 		os << " " <<  s.ToString();
@@ -425,9 +424,9 @@ public:
 };
 
 class EnumerateReaddirPlusInfo {
-	ostringstream &os;
+	ostream &os;
 public:
-	EnumerateReaddirPlusInfo(ostringstream &o) : os(o) { }
+	EnumerateReaddirPlusInfo(ostream &o) : os(o) { }
 	void operator()(MetaDentry *entry) {
 		static string fname[] = { "empty", "file", "dir" };
 		MetaFattr *fa = metatree.getFattr(entry->id());
@@ -930,8 +929,9 @@ handle_chunk_size_done(MetaRequest *r)
 		if (req->chunkId == lastChunk->chunkId) {
 			sizeEstimate = (fa->chunkcount - 1) * CHUNKSIZE +
 					req->chunkSize;
+			fa->filesize = sizeEstimate;
 		}
-		fa->filesize = max(fa->filesize, sizeEstimate);
+		// fa->filesize = max(fa->filesize, sizeEstimate);
 		// stash the value away so that we can log it.
 		req->filesize = fa->filesize;
 		//
@@ -939,7 +939,7 @@ handle_chunk_size_done(MetaRequest *r)
 		// before and after
 		//
 		spaceUsageDelta = fa->filesize - spaceUsageDelta;
-		if (spaceUsageDelta > 0) {
+		if (spaceUsageDelta != 0) {
 			/*
 			if (req->pathname == "") {
 				req->pathname = metatree.getPathname(req->fid);
@@ -949,10 +949,10 @@ handle_chunk_size_done(MetaRequest *r)
 				metatree.updateSpaceUsageForPath(req->pathname, spaceUsageDelta);
 			}
 			else {
-				KFS_LOG_VA_INFO("Got size %lld for chunk %lld; Will need to force recomputation of dir size",
-						req->chunkSize, req->chunkId);
+				KFS_LOG_VA_INFO("Got size %lld for file %lld, chunk %lld; Will need to force recomputation of dir size",
+						req->chunkSize, req->fid, req->chunkId);
 				// don't write out a log entry
-				req->status = -1;
+				// req->status = -1;
 			}
 		}
 	}
@@ -1705,7 +1705,7 @@ MetaChunkReplicationCheck::log(ofstream &file) const
  * @retval 0 on success;  -1 if there is an error
  */
 int
-KFS::ParseCommand(char *cmdBuf, int cmdLen, MetaRequest **res)
+KFS::ParseCommand(std::istream& is, MetaRequest **res)
 {
 	const char *delims = " \r\n";
 	// header/value pairs are separated by a :
@@ -1713,14 +1713,13 @@ KFS::ParseCommand(char *cmdBuf, int cmdLen, MetaRequest **res)
 	string cmdStr;
 	string::size_type cmdEnd;
 	Properties prop;
-	istringstream ist(cmdBuf);
 	ParseHandlerMapIter entry;
 	ParseHandler handler;
 
 	*res = NULL;
 
 	// get the first line and find the command name
-	ist >> cmdStr;
+	is >> cmdStr;
 	// trim the command
 	cmdEnd = cmdStr.find_first_of(delims);
 	if (cmdEnd != cmdStr.npos) {
@@ -1733,7 +1732,7 @@ KFS::ParseCommand(char *cmdBuf, int cmdLen, MetaRequest **res)
 		return -1;
 	handler = entry->second;
 
-	prop.loadProperties(ist, separator, false);
+	prop.loadProperties(is, separator, false);
 
 	return (*handler)(prop, res);
 }
@@ -2356,7 +2355,7 @@ parseHandlerOpenFiles(Properties &prop, MetaRequest **r)
  * @param[out] os: A string stream that contains the response.
  */
 void
-MetaLookup::response(ostringstream &os)
+MetaLookup::response(ostream &os)
 {
 	static string fname[] = { "empty", "file", "dir" };
 
@@ -2378,7 +2377,7 @@ MetaLookup::response(ostringstream &os)
 }
 
 void
-MetaLookupPath::response(ostringstream &os)
+MetaLookupPath::response(ostream &os)
 {
 	static string fname[] = { "empty", "file", "dir" };
 
@@ -2400,7 +2399,7 @@ MetaLookupPath::response(ostringstream &os)
 }
 
 void
-MetaCreate::response(ostringstream &os)
+MetaCreate::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2413,7 +2412,7 @@ MetaCreate::response(ostringstream &os)
 }
 
 void
-MetaRemove::response(ostringstream &os)
+MetaRemove::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2421,7 +2420,7 @@ MetaRemove::response(ostringstream &os)
 }
 
 void
-MetaMkdir::response(ostringstream &os)
+MetaMkdir::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2434,7 +2433,7 @@ MetaMkdir::response(ostringstream &os)
 }
 
 void
-MetaRmdir::response(ostringstream &os)
+MetaRmdir::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2442,7 +2441,7 @@ MetaRmdir::response(ostringstream &os)
 }
 
 void
-MetaReaddir::response(ostringstream &os)
+MetaReaddir::response(ostream &os)
 {
 	vector<MetaDentry *>::iterator iter;
 	ostringstream entries;
@@ -2477,7 +2476,7 @@ MetaReaddir::response(ostringstream &os)
 }
 
 void
-MetaReaddirPlus::response(ostringstream &os)
+MetaReaddirPlus::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2492,7 +2491,7 @@ MetaReaddirPlus::response(ostringstream &os)
 }
 
 void
-MetaRename::response(ostringstream &os)
+MetaRename::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2500,7 +2499,7 @@ MetaRename::response(ostringstream &os)
 }
 
 void
-MetaSetMtime::response(ostringstream &os)
+MetaSetMtime::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2508,7 +2507,7 @@ MetaSetMtime::response(ostringstream &os)
 }
 
 void
-MetaGetalloc::response(ostringstream &os)
+MetaGetalloc::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2529,7 +2528,7 @@ MetaGetalloc::response(ostringstream &os)
 }
 
 void
-MetaGetlayout::response(ostringstream &os)
+MetaGetlayout::response(ostream &os)
 {
 	vector<ChunkLayoutInfo>::iterator iter;
 	ChunkLayoutInfo l;
@@ -2555,9 +2554,9 @@ MetaGetlayout::response(ostringstream &os)
 }
 
 class PrintChunkServerLocations {
-	ostringstream &os;
+	ostream &os;
 public:
-	PrintChunkServerLocations(ostringstream &out): os(out) { }
+	PrintChunkServerLocations(ostream &out): os(out) { }
 	void operator () (ChunkServerPtr &s)
 	{
 		os << " " <<  s->ServerID();
@@ -2565,7 +2564,7 @@ public:
 };
 
 void
-MetaAllocate::response(ostringstream &os)
+MetaAllocate::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2587,7 +2586,7 @@ MetaAllocate::response(ostringstream &os)
 }
 
 void
-MetaLeaseAcquire::response(ostringstream &os)
+MetaLeaseAcquire::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2599,7 +2598,7 @@ MetaLeaseAcquire::response(ostringstream &os)
 }
 
 void
-MetaLeaseRenew::response(ostringstream &os)
+MetaLeaseRenew::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2607,7 +2606,7 @@ MetaLeaseRenew::response(ostringstream &os)
 }
 
 void
-MetaLeaseRelinquish::response(ostringstream &os)
+MetaLeaseRelinquish::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2615,7 +2614,7 @@ MetaLeaseRelinquish::response(ostringstream &os)
 }
 
 void
-MetaHello::response(ostringstream &os)
+MetaHello::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2623,7 +2622,7 @@ MetaHello::response(ostringstream &os)
 }
 
 void
-MetaChunkCorrupt::response(ostringstream &os)
+MetaChunkCorrupt::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2631,7 +2630,7 @@ MetaChunkCorrupt::response(ostringstream &os)
 }
 
 void
-MetaTruncate::response(ostringstream &os)
+MetaTruncate::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2639,7 +2638,7 @@ MetaTruncate::response(ostringstream &os)
 }
 
 void
-MetaChangeFileReplication::response(ostringstream &os)
+MetaChangeFileReplication::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2648,7 +2647,7 @@ MetaChangeFileReplication::response(ostringstream &os)
 }
 
 void
-MetaRetireChunkserver::response(ostringstream &os)
+MetaRetireChunkserver::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2656,7 +2655,7 @@ MetaRetireChunkserver::response(ostringstream &os)
 }
 
 void
-MetaToggleRebalancing::response(ostringstream &os)
+MetaToggleRebalancing::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2664,7 +2663,7 @@ MetaToggleRebalancing::response(ostringstream &os)
 }
 
 void
-MetaToggleWORM::response(ostringstream &os)
+MetaToggleWORM::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2672,7 +2671,7 @@ MetaToggleWORM::response(ostringstream &os)
 }
 
 void
-MetaExecuteRebalancePlan::response(ostringstream &os)
+MetaExecuteRebalancePlan::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2680,7 +2679,7 @@ MetaExecuteRebalancePlan::response(ostringstream &os)
 }
 
 void
-MetaPing::response(ostringstream &os)
+MetaPing::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2698,7 +2697,7 @@ MetaPing::response(ostringstream &os)
 }
 
 void
-MetaUpServers::response(ostringstream &os)
+MetaUpServers::response(ostream &os)
 {
     os << "OK\r\n";
     os << "Cseq: " << opSeqno << "\r\n";
@@ -2709,7 +2708,7 @@ MetaUpServers::response(ostringstream &os)
 }
 
 void
-MetaStats::response(ostringstream &os)
+MetaStats::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2718,7 +2717,7 @@ MetaStats::response(ostringstream &os)
 }
 
 void
-MetaCheckLeases::response(ostringstream &os)
+MetaCheckLeases::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2726,7 +2725,7 @@ MetaCheckLeases::response(ostringstream &os)
 }
 
 void
-MetaRecomputeDirsize::response(ostringstream &os)
+MetaRecomputeDirsize::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2734,7 +2733,7 @@ MetaRecomputeDirsize::response(ostringstream &os)
 }
 
 void
-MetaDumpChunkToServerMap::response(ostringstream &os)
+MetaDumpChunkToServerMap::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2743,7 +2742,7 @@ MetaDumpChunkToServerMap::response(ostringstream &os)
 }
 
 void
-MetaDumpChunkReplicationCandidates::response(ostringstream &os)
+MetaDumpChunkReplicationCandidates::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2754,7 +2753,7 @@ MetaDumpChunkReplicationCandidates::response(ostringstream &os)
 }
 
 void
-MetaOpenFiles::response(ostringstream &os)
+MetaOpenFiles::response(ostream &os)
 {
 	os << "OK\r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2770,7 +2769,7 @@ MetaOpenFiles::response(ostringstream &os)
  * @param[out] os: A string stream that contains the response.
  */
 void
-MetaChunkAllocate::request(ostringstream &os)
+MetaChunkAllocate::request(ostream &os)
 {
 	MetaAllocate *allocOp = static_cast<MetaAllocate *>(req);
 	assert(allocOp != NULL);
@@ -2795,7 +2794,7 @@ MetaChunkAllocate::request(ostringstream &os)
 }
 
 void
-MetaChunkDelete::request(ostringstream &os)
+MetaChunkDelete::request(ostream &os)
 {
 	os << "DELETE \r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2804,7 +2803,7 @@ MetaChunkDelete::request(ostringstream &os)
 }
 
 void
-MetaChunkTruncate::request(ostringstream &os)
+MetaChunkTruncate::request(ostream &os)
 {
 	os << "TRUNCATE \r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2814,7 +2813,7 @@ MetaChunkTruncate::request(ostringstream &os)
 }
 
 void
-MetaChunkHeartbeat::request(ostringstream &os)
+MetaChunkHeartbeat::request(ostream &os)
 {
 	os << "HEARTBEAT \r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2822,7 +2821,7 @@ MetaChunkHeartbeat::request(ostringstream &os)
 }
 
 void
-MetaChunkStaleNotify::request(ostringstream &os)
+MetaChunkStaleNotify::request(ostream &os)
 {
 	string s;
 	vector<chunkId_t>::size_type i;
@@ -2840,7 +2839,7 @@ MetaChunkStaleNotify::request(ostringstream &os)
 }
 
 void
-MetaChunkRetire::request(ostringstream &os)
+MetaChunkRetire::request(ostream &os)
 {
 	os << "RETIRE \r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2848,7 +2847,7 @@ MetaChunkRetire::request(ostringstream &os)
 }
 
 void
-MetaChunkVersChange::request(ostringstream &os)
+MetaChunkVersChange::request(ostream &os)
 {
 	os << "CHUNK_VERS_CHANGE \r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2859,7 +2858,7 @@ MetaChunkVersChange::request(ostringstream &os)
 }
 
 void
-MetaChunkReplicate::request(ostringstream &os)
+MetaChunkReplicate::request(ostream &os)
 {
 	os << "REPLICATE \r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
@@ -2871,7 +2870,7 @@ MetaChunkReplicate::request(ostringstream &os)
 }
 
 void
-MetaChunkSize::request(ostringstream &os)
+MetaChunkSize::request(ostream &os)
 {
 	os << "SIZE \r\n";
 	os << "Cseq: " << opSeqno << "\r\n";

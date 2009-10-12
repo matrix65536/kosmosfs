@@ -33,7 +33,7 @@
 
 using std::string;
 using std::deque;
-using std::ostringstream;
+using std::ostream;
 
 namespace KFS {
 
@@ -47,7 +47,7 @@ extern bool file_exists(string s);
 extern void warn(const string s, bool use_perror);
 extern void panic(const string s, bool use_perror);
 
-extern void sendtime(ostringstream &os, const string &prefix, 
+extern void sendtime(ostream &os, const string &prefix, 
 		     struct timeval &t, const string &suffix);
 
 extern string timeToStr(time_t val);

@@ -63,7 +63,7 @@ ChunkServer::ChunkServer() :
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
 	mHeartbeatSkipped(false), mIsRetiring(false), mRackId(-1), 
 	mNumCorruptChunks(0), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
-	mNumChunks(0), mNumChunkWrites(0), 
+	mNumChunks(0), mCpuLoadAvg(0.0), mNumChunkWrites(0), 
 	mNumChunkWriteReplications(0), mNumChunkReadReplications(0)
 {
 	// this is used in emulation mode...
@@ -75,7 +75,7 @@ ChunkServer::ChunkServer(NetConnectionPtr &conn) :
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
 	mHeartbeatSkipped(false), mIsRetiring(false), mRackId(-1), 
 	mNumCorruptChunks(0), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
-	mNumChunks(0), mNumChunkWrites(0), 
+	mNumChunks(0), mCpuLoadAvg(0.0), mNumChunkWrites(0), 
 	mNumChunkWriteReplications(0), mNumChunkReadReplications(0)
 {
         // Receive HELLO message
@@ -251,22 +251,27 @@ ChunkServer::HandleMsg(IOBuffer *iobuf, int msgLen)
 int
 ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 {
-	scoped_array<char> buf, contentBuf;
+	scoped_array<char> buf;
         MetaRequest *op;
         MetaHello *helloOp;
         int i, nAvail;
-	istringstream ist;
+
+        assert(!mHelloDone);
 
         buf.reset(new char[msgLen + 1]);
         iobuf->CopyOut(buf.get(), msgLen);
         buf[msgLen] = '\0';
 
-        assert(!mHelloDone);
-    
         // We should only get a HELLO message here; anything
         // else is bad.
-        if (ParseCommand(buf.get(), msgLen, &op) < 0) {
-            KFS_LOG_VA_DEBUG("Aye?: %s", buf.get());
+        IOBuffer::IStream is(*iobuf, msgLen);
+        if (ParseCommand(is, &op) < 0) {
+            const string loc = mLocation.ToString();
+            is.Rewind(msgLen);
+            char buf[128];
+            while (is.getline(buf, sizeof(buf))) {
+                KFS_LOG_VA_DEBUG("%s: Aye?: %s", loc.c_str(), buf);
+            }
             iobuf->Consume(msgLen);
             // we couldn't parse out hello
             return -1;
@@ -284,6 +289,7 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 
         helloOp = static_cast<MetaHello *> (op);
 
+        KFS_LOG_VA_INFO("New server: \n%s", buf.get());
         op->clnt = this;
         helloOp->server = shared_from_this();
         // make sure we have the chunk ids...
@@ -296,29 +302,23 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
             }
             // we have everything
             iobuf->Consume(msgLen);
-
-            contentBuf.reset(new char[helloOp->contentLength + 1]);
-            contentBuf[helloOp->contentLength] = '\0';
                         
             // get the chunkids
-            iobuf->CopyOut(contentBuf.get(), helloOp->contentLength);
-            iobuf->Consume(helloOp->contentLength);
-
-            ist.str(contentBuf.get());
+            is.Rewind(helloOp->contentLength);
             for (i = 0; i < helloOp->numChunks; ++i) {
                 ChunkInfo c;
 
-                ist >> c.fileId;
-                ist >> c.chunkId;
-                ist >> c.chunkVersion;
+                is >> c.fileId;
+                is >> c.chunkId;
+                is >> c.chunkVersion;
                 helloOp->chunks.push_back(c);
                 // KFS_LOG_VA_DEBUG("Server has chunk: %lld", chunkId);
             }
+            iobuf->Consume(helloOp->contentLength);
         } else {
             // Message is ready to be pushed down.  So remove it.
             iobuf->Consume(msgLen);
         }
-        KFS_LOG_VA_INFO("New server: \n%s", buf.get());
 	// Hello message successfully processed.  Setup to handle RPCs
 	SET_HANDLER(this, &ChunkServer::HandleRequest);
         // send it on its merry way
@@ -332,21 +332,25 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 int
 ChunkServer::HandleCmd(IOBuffer *iobuf, int msgLen)
 {
-	scoped_array<char> buf;
         MetaRequest *op;
 
-        buf.reset(new char[msgLen + 1]);
-        iobuf->CopyOut(buf.get(), msgLen);
-        buf[msgLen] = '\0';
-
         assert(mHelloDone);
-    
-        // Message is ready to be pushed down.  So remove it.
-        iobuf->Consume(msgLen);
 
-        if (ParseCommand(buf.get(), msgLen, &op) != 0) {
+        IOBuffer::IStream is(*iobuf, msgLen);
+        if (ParseCommand(is, &op) != 0) {
+            const string loc = mLocation.ToString();
+            is.Rewind(msgLen);
+            char buf[128];
+            while (is.getline(buf, sizeof(buf))) {
+                KFS_LOG_VA_DEBUG("%s: Aye?: %s", loc.c_str(), buf);
+            }
+            iobuf->Consume(msgLen);
+            // we couldn't parse out hello
             return -1;
         }
+
+        // Message is ready to be pushed down.  So remove it.
+        iobuf->Consume(msgLen);
 	if (op->op == META_CHUNK_CORRUPT) {
 		MetaChunkCorrupt *ccop = static_cast<MetaChunkCorrupt *>(op);
 
@@ -399,8 +403,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
             // Uh-oh...this can happen if the server restarts between sending
 	    // the message and getting reply back
             // assert(!"Unable to find command for a response");
-	    string s = mLocation.ToString();
-	    KFS_LOG_VA_WARN("%s: Unable to find command for response (cseq = %d)", s.c_str(), cseq);
+	    KFS_LOG_VA_WARN("Unable to find command for response (cseq = %d)", cseq);
             return -1;
         }
         // KFS_LOG_VA_DEBUG("Got response for cseq=%d", cseq);
@@ -413,6 +416,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
             mUsedSpace = prop.getValue("Used-space", (long long) 0);
             mNumChunks = prop.getValue("Num-chunks", 0);
 	    mAllocSpace = mUsedSpace + mNumChunkWrites * CHUNKSIZE;
+            mCpuLoadAvg = prop.getValue("CPU-load-avg", 0.0);
 	    mHeartbeatSent = false;
 	} else if (submittedOp->op == META_CHUNK_REPLICATE) {
 	    MetaChunkReplicate *mcr = static_cast <MetaChunkReplicate *> (op);
@@ -420,10 +424,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
 	    mcr->chunkVersion = prop.getValue("Chunk-version", (long long) 0);
 	} else if (submittedOp->op == META_CHUNK_SIZE) {
 	    MetaChunkSize *mcs = static_cast <MetaChunkSize *> (op);
-	    string s = mLocation.ToString();
-	    mcs->chunkSize = prop.getValue("Size", (int) -1);
-	    KFS_LOG_VA_INFO("%s: cseq = %d, Chunksize: file = %lld, chunk = %lld, size = %d",
-	    		s.c_str(), cseq, mcs->fid, mcs->chunkId, (int) mcs->chunkSize);
+	    mcs->chunkSize = prop.getValue("Size", (off_t) -1);
 	}
         ResumeOp(op);
     
@@ -639,12 +640,9 @@ int
 ChunkServer::GetChunkSize(fid_t fid, chunkId_t chunkId, const string &pathname)
 {
 	MetaChunkSize *r;
-	string s = mLocation.ToString();
 
 	r = new MetaChunkSize(NextSeq(), this, fid, chunkId, pathname);
 
-	KFS_LOG_VA_INFO("%s: cseq = %d, Chunksize: file = %lld, chunk = %lld",
-	    		s.c_str(), r->opSeqno, r->fid, r->chunkId);
 	// save a pointer to the request so that we can match up the
 	// response whenever we get it.
 	Enqueue(r);
@@ -791,7 +789,7 @@ public:
 		server(s), conn(c) { }
 	void operator()(MetaRequest *r) {
 
-        	ostringstream os;
+        	IOBuffer::OStream os;
         	MetaChunkRequest *cr = static_cast <MetaChunkRequest *> (r);
 
         	if (!conn) {
@@ -806,7 +804,7 @@ public:
         	cr->request(os);
 
         	// Send it on its merry way
-        	conn->Write(os.str().c_str(), os.str().length());
+        	conn->Write(&os);
 
 		if (cr->op == META_CHUNK_REPLICATE) {
 			MetaChunkReplicate *mcr = static_cast <MetaChunkReplicate *> (cr);
@@ -943,10 +941,7 @@ ChunkServer::Ping(string &result)
 void
 ChunkServer::SendResponse(MetaRequest *op)
 {
-        ostringstream os;
-
+        IOBuffer::OStream os;
         op->response(os);
-
-        if (os.str().length() > 0)
-            mNetConnection->Write(os.str().c_str(), os.str().length());
+        mNetConnection->Write(&os);
 }

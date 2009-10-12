@@ -62,6 +62,9 @@ LayoutManager KFS::gLayoutManager;
 const int MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE = 5;
 const int MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE = 10;
 
+/// Take out the highest 30% loaded nodes (say, CPU) from the write allocator.
+static double gPercentLoadedNodesToAvoidForWrites = 0.3;
+
 ///
 /// When placing chunks, we see the space available on the node as well as
 /// we take our estimate of the # of writes on
@@ -84,6 +87,23 @@ public:
 };
 
 
+/// On a startup, the # of secs to wait before we are open for reads/writes
+void
+KFS::SetRecoveryInterval(int secs)
+{
+	gLayoutManager.SetRecoveryInterval(secs);
+}
+
+/// Set the %-age of nodes we want to take out write allocation because they are
+/// heavily loaded.
+void
+KFS::SetPercentLoadedNodesToAvoidForWrites(double percent)
+{
+	gPercentLoadedNodesToAvoidForWrites = std::min(percent, 1.0);
+	KFS_LOG_VA_INFO("Setting the percent loaded nodes to avoid for writes to: %.3lf", 
+			gPercentLoadedNodesToAvoidForWrites);
+}
+
 /// The rebalancing thresholds should be set in the emulator to get desired
 /// behavior.
 
@@ -94,7 +114,8 @@ LayoutManager::LayoutManager() :
 	mMinRebalanceSpaceUtilThreshold(0.0),
 	mIsExecutingRebalancePlan(false),
 	mLastChunkRebalanced(1), mLastChunkReplicated(1),
-	mRecoveryStartTime(0), mMinChunkserversToExitRecovery(1)
+	mRecoveryStartTime(0), mRecoveryIntervalSecs(KFS::LEASE_INTERVAL_SECS),
+	mMinChunkserversToExitRecovery(1)
 {
 	pthread_mutex_init(&mChunkServersMutex, NULL);
 
@@ -190,12 +211,22 @@ LayoutManager::AddNewServer(MetaHello *r)
 				// get the chunksize for the last chunk of fid
 				// stored on this server
 				MetaFattr *fa = metatree.getFattr(r->chunks[i].fileId);
-				if ((fa->filesize < 0) || (fa->filesize < (off_t) (fa->chunkcount * CHUNKSIZE))) {
+				// if ((fa->filesize < 0) || (fa->filesize < (off_t) (fa->chunkcount * CHUNKSIZE))) {
+				if ((fa->filesize < 0) || ((fa->chunkcount > 0) &&
+					(fa->filesize <= (off_t) ((fa->chunkcount - 1 ) * CHUNKSIZE)))) {
+					// either we don't know the file's size
+					// or our view of the file's size does
+					// not include the last chunk, then ask
+					// the chunkserver for the size.
 					MetaChunkInfo *lastChunk = v.back();
-					if (lastChunk->chunkId == r->chunks[i].chunkId)
+					if (lastChunk->chunkId == r->chunks[i].chunkId) {
+						KFS_LOG_VA_DEBUG("Asking size of f=%lld, c=%lld",
+								r->chunks[i].fileId,
+								r->chunks[i].chunkId);
 						s->GetChunkSize(r->chunks[i].fileId,
 								r->chunks[i].chunkId,
 								"");
+					}
 				}
 
 				if (mci->chunkVersion < r->chunks[i].chunkVersion) {
@@ -663,6 +694,29 @@ IsCandidateServer(ChunkServerPtr &c)
 	return true;
 }
 
+static void
+SortServersByCPULoad(vector<ChunkServerPtr> &servers)
+{
+	vector<ServerSpaceUtil> ss;
+	vector<ChunkServerPtr> temp;
+
+	ss.resize(servers.size());
+	temp.resize(servers.size());
+
+	// XXX: hack for now. utilization thinks it is space, but we are
+	// sticking in CPU load
+	for (vector<ChunkServerPtr>::size_type i = 0; i < servers.size(); i++) {
+		ss[i].serverIdx = i;
+		ss[i].utilization = servers[i]->GetCPULoadAvg();
+		temp[i] = servers[i];
+	}
+
+	sort(ss.begin(), ss.end());
+	for (vector<ChunkServerPtr>::size_type i = 0; i < servers.size(); i++) {
+		servers[i] = temp[ss[i].serverIdx];
+	}
+}
+
 void
 LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 				const vector<ChunkServerPtr> &sources,
@@ -699,6 +753,13 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 	}
 	if (candidates.size() == 0)
 		return;
+	SortServersByCPULoad(candidates);
+	// drop the nodes which are in the bottom N%
+	int32_t maxNodesToUse = candidates.size();
+	maxNodesToUse -= (int32_t)(maxNodesToUse * gPercentLoadedNodesToAvoidForWrites);
+	if ((maxNodesToUse > 0) && (maxNodesToUse < (int) candidates.size())) {
+		candidates.resize(maxNodesToUse);
+	}
 	random_shuffle(candidates.begin(), candidates.end());
 	for (i = 0; i < candidates.size(); i++) {
 		result.push_back(candidates[i]);

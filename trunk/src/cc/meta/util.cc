@@ -159,28 +159,12 @@ bool
 KFS::IsMsgAvail(IOBuffer *iobuf,
                 int *msgLen)
 {
-        char buf[MAX_RPC_HEADER_LEN];
-        int nAvail, len = 0, i;
-
-        nAvail = iobuf->BytesConsumable();
-        if (nAvail > MAX_RPC_HEADER_LEN)
-                nAvail = MAX_RPC_HEADER_LEN;
-
-        len = iobuf->CopyOut(buf, nAvail);
-
-        // Find the first occurence of "\r\n\r\n"
-        for (i = 3; i < len; ++i) {
-                if ((buf[i - 3] == '\r') &&
-                    (buf[i - 2] == '\n') &&
-                    (buf[i - 1] == '\r') &&
-                    (buf[i] == '\n')) {
-                        // The command we got is from 0..i.  The strlen of the
-                        // command is i+1.
-                        *msgLen = i + 1;
-                        return true;
-                }
-        }
+    const int idx = iobuf->IndexOf(0, "\r\n\r\n");
+    if (idx < 0) {
         return false;
+    }
+    *msgLen = idx + 4; // including terminating seq. length.
+    return true;
 }
 
 /*!
@@ -188,7 +172,7 @@ KFS::IsMsgAvail(IOBuffer *iobuf,
  * a prefix/suffix string around the time values.
  */
 void
-KFS::sendtime(ostringstream &os, const string &prefix, 
+KFS::sendtime(ostream &os, const string &prefix, 
 	      struct timeval &t, 
 	      const string &suffix)
 {
