@@ -70,7 +70,7 @@ ChunkServerEmulator::Dispatch()
         if (r->op == META_CHUNK_REPLICATE) {
             MetaChunkReplicate *mcr = static_cast<MetaChunkReplicate *>(r);
             mcr->status = 0;
-            mcr->chunkVersion = gLayoutEmulator.GetChunkversion(mcr->fid, mcr->chunkId);
+            mcr->chunkVersion = 1;
             mNumChunks++;
             chunksz = gLayoutEmulator.GetChunkSize(mcr->chunkId);
             mUsedSpace += chunksz;
