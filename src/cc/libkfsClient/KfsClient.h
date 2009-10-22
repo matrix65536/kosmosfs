@@ -232,6 +232,10 @@ public:
     ///
     int GetNumChunks(const std::string &pathname);
 
+    int GetChunkSize(const char *pathname) {
+        return KFS::CHUNKSIZE;
+    }
+
     ///
     /// Open a file
     /// @param[in] pathname that has to be opened
