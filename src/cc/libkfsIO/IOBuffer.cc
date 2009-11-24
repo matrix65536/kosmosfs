@@ -535,31 +535,34 @@ void IOBuffer::ReplaceKeepBuffersFull(IOBuffer* srcBuf, int inOffset, int numByt
         }
     }
     int rem = numBytes;
-    int nFill = offset - off;
-    if (nFill > 0 && ! dst.empty()) {
-        nFill -= dst.back().ZeroFill(nFill);
-    }
-    while (nFill > 0) {
-        dst.push_back(IOBufferData());
-        IOBufferData& d = dst.back();
-        nFill -= d.ZeroFill(nFill);
-        if (nFill <= 0) {
-            assert(nFill == 0);
-            // Start copying into the last buffer if it is not full.
-            while (rem > 0 && ! src.empty() && ! d.IsFull()) {
-                IOBufferData& s = src.front();
-                rem -= s.Consume(d.CopyIn(&s, rem));
-                if (s.IsEmpty()) {
-                    src.pop_front();
-                }
-            }
-            assert(rem == 0 || d.IsFull());
-            off = offset;
-            di = dst.end();
+    if (offset > off) {
+        int nFill = offset - off;
+        if (! dst.empty()) {
+            nFill -= dst.back().ZeroFill(nFill);
         }
-    }
-    off -= offset;
-    if (off == 0) {
+        while (nFill > 0) {
+            dst.push_back(IOBufferData());
+            IOBufferData& d = dst.back();
+            nFill -= d.ZeroFill(nFill);
+        }
+        assert(nFill == 0);
+        // Fill the last buffer.
+        IOBufferData& d = dst.back();
+        while (rem > 0 && ! src.empty() && ! d.IsFull()) {
+            IOBufferData& s = src.front();
+            rem -= s.Consume(d.CopyIn(&s, rem));
+            if (s.IsEmpty()) {
+                src.pop_front();
+            }
+        }
+        assert(rem == 0 || d.IsFull());
+        di = dst.end();
+        off = 0;
+    } else if ((off -= offset) != 0) {
+        assert(di != dst.end());
+        off = di->BytesConsumable() - off;
+        assert(off >= 0);
+    } else {
         // Find the last buffer, and make sure it is full.
         IOBufferData* d = 0;
         if (di != dst.end()) {
