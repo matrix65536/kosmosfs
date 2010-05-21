@@ -86,10 +86,11 @@ function ts_resortTable(lnk) {
 	if (table.rows.length <= 1) return;
 	var itm = ts_getInnerText(table.rows[1].cells[column]);
 	sortfn = ts_sort_caseinsensitive;
-	if (itm.match(/^\d\d[\/-]\d\d[\/-]\d\d\d\d$/)) sortfn = ts_sort_date;
-	if (itm.match(/^\d\d[\/-]\d\d[\/-]\d\d$/)) sortfn = ts_sort_date;
-	if (itm.match(/^[£$€]/)) sortfn = ts_sort_currency;
-	if (itm.match(/^[\d\.]+$/)) sortfn = ts_sort_numeric;
+	if (itm.match(/^\s*\d\d[\/-]\d\d[\/-]\d\d\d\d\s+/)) sortfn = ts_sort_date;
+	else if (itm.match(/^\s*\d\d[\/-]\d\d[\/-]\d\d$/)) sortfn = ts_sort_date;
+	else if (itm.match(/^\s*[£$€]/)) sortfn = ts_sort_currency;
+	else if (itm.match(/^\s*\d+\.\d+\.\d+\.\d+\s*$/)) sortfn = ts_sort_ip;
+	else if (itm.match(/^\s*[\d\.]+/)) sortfn = ts_sort_numeric;
 	SORT_COLUMN_INDEX = column;
 	var firstRow = new Array();
 	var newRows = new Array();
@@ -149,8 +150,10 @@ function getParent(el, pTagName) {
 }
 function ts_sort_date(a,b) {
 	// y2k notes: two digit years less than 50 are treated as 20XX, greater than 50 are treated as 19XX
-	aa = ts_getInnerText(a.cells[SORT_COLUMN_INDEX]);
-	bb = ts_getInnerText(b.cells[SORT_COLUMN_INDEX]);
+	atext =  ts_getInnerText(a.cells[SORT_COLUMN_INDEX]);
+	btext =  ts_getInnerText(b.cells[SORT_COLUMN_INDEX]);
+	aa = atext.match(/^\s*(\d\d[\/-]\d\d[\/-]\d+)\s+/)[1];
+	bb = btext.match(/^\s*(\d\d[\/-]\d\d[\/-]\d+)\s+/)[1];
 	if (aa.length == 10) {
 			dt1 = aa.substr(6,4)+aa.substr(3,2)+aa.substr(0,2);
 	} else {
@@ -173,19 +176,40 @@ function ts_sort_date(a,b) {
 			}
 			dt2 = yr+bb.substr(3,2)+bb.substr(0,2);
 	}
-	if (dt1==dt2) {
-		return 0;
-	}
+
 	if (dt1<dt2) { 
 		return -1;
 	}
-	return 1;
+	if (dt1>dt2) { 
+		return 1;
+	}
+	aa = atext.match(/^\s*\d\d[\/-]\d\d[\/-]\d+\s+(\d+:\d+:\d+)/)[1];
+	bb = btext.match(/^\s*\d\d[\/-]\d\d[\/-]\d+\s+(\d+:\d+:\d+)/)[1];
+	dt1 = aa.substr(0,2)+aa.substr(3,2)+aa.substr(6,2)
+	dt2 = bb.substr(0,2)+bb.substr(3,2)+bb.substr(6,2)
+	if (dt1<dt2) { 
+ 		return -1;
+ 	}
+	if (dt1>dt2) { 
+ 	    return 1;
+	}
+	return 0;
 }
 
 function ts_sort_currency(a,b) { 
 	aa = ts_getInnerText(a.cells[SORT_COLUMN_INDEX]).replace(/[^0-9.]/g,'');
 	bb = ts_getInnerText(b.cells[SORT_COLUMN_INDEX]).replace(/[^0-9.]/g,'');
 	return parseFloat(aa) - parseFloat(bb);
+}
+
+function ts_sort_ip(a,b) { 
+	aa = ts_getInnerText(a.cells[SORT_COLUMN_INDEX]).match(/(\d+\.\d+\.\d+\.\d+)/)[0].split('.',4);
+	bb = ts_getInnerText(b.cells[SORT_COLUMN_INDEX]).match(/(\d+\.\d+\.\d+\.\d+)/)[0].split('.',4);
+        for (i=0;i<=3;i++) {
+		if (parseFloat(aa[i]) > parseFloat(bb[i])) { return 1; }
+		if (parseFloat(aa[i]) < parseFloat(bb[i])) { return -1; }
+	}
+	return 0;
 }
 
 function ts_sort_numeric(a,b) { 

@@ -4,8 +4,6 @@
 #
 # Copyright 2008 Quantcast Corp.
 #
-# Author: Sriram Rao (Quantcast Corp.)
-#
 # This file is part of Kosmos File System (KFS).
 #
 # Licensed under the Apache License, Version 2.0
@@ -50,6 +48,7 @@ class SystemInfo:
         self.startedAt = ""
         self.totalSpace = 0
         self.usedSpace = 0
+        self.wormMode = "Disabled"
 
 systemInfo = SystemInfo()
 
@@ -130,10 +129,14 @@ class UpServer:
     def __init__(self, info):
         if isinstance(info, str):
             serverInfo = info.split(',')
-            # order here is host, port, rack, used, free, util, nblocks, last heard, nblks corrupt
+            # order here is host, port, rack, used, free, util, nblocks, last
+	    # heard, nblks corrupt, numDrives
             for i in xrange(len(serverInfo)):
                 s = serverInfo[i].split('=')
                 setattr(self, s[0].strip(), s[1].strip())
+
+            if not hasattr(self, 'numDrives'):
+	    	self.numDrives = 0
 
             if hasattr(self, 'ncorrupt'):
                 n = int(self.ncorrupt)
@@ -187,6 +190,7 @@ class UpServer:
         if self.down:
             print >> buffer, '''</tr>'''            
             return
+        print >> buffer, '''<td align="center">''', self.numDrives, '''</td>'''
         util = self.util.split('%')
         self.util = '%.2f' % float(util[0])
         print >> buffer, '''<td>''', self.used, '''</td>'''
@@ -276,16 +280,16 @@ def processRetiringNodes(nodes):
 def bytesToReadable(v):
     s = long(v)
     if (v > (1 << 50)):
-        r = "%.2f PB" % (v / (1 << 50))
+        r = "%.2f PB" % (float(v) / (1 << 50))
         return r
     if (v > (1 << 40)):
-        r = "%.2f TB" % (v / (1 << 40))
+        r = "%.2f TB" % (float(v) / (1 << 40))
         return r
     if (v > (1 << 30)):
-        r = "%.2f GB" % (v / (1 << 30))
+        r = "%.2f GB" % (float(v) / (1 << 30))
         return r
     if (v > (1 << 20)):
-        r = "%.2f MB" % (v / (1 << 20))
+        r = "%.2f MB" % (float(v) / (1 << 20))
         return r
     return "%.2f bytes" % (v)
     
@@ -350,6 +354,15 @@ def ping(metaserver):
             processRetiringNodes(retiringNodes)
             continue
 
+        if line.find('WORM:') == 0:
+            try:
+                global systemInfo
+                wormMode = line.split(':')[1].strip()
+                if int(wormMode) == 1:
+                    systemInfo.wormMode = "Enabled"
+            except:
+                pass
+            
         if line.find('System Info:') == 0:
             if (len(line.split(':')) < 2):
                 continue
@@ -394,6 +407,7 @@ def systemStatus(buffer):
     <tr> <td> Started at </td><td>:</td><td> ''', systemInfo.startedAt, ''' </td></tr>
     <tr> <td> Total space </td><td>:</td><td> ''', systemInfo.totalSpace, ''' </td></tr>
     <tr> <td> Used space </td><td>:</td><td> ''', systemInfo.usedSpace, '''</td></tr>
+    <tr> <td> WORM mode </td><td>:</td><td> ''', systemInfo.wormMode,  '''</td></tr>
     <tr> <td> Number of alive nodes</td><td>:</td><td> ''', len(upServers), '''</td></tr>
     <tr> <td> Number of dead nodes</td><td>:</td><td>''', numReallyDownServers, '''</td></tr>
     <tr> <td> Number of retiring nodes </td><td>:</td><td>''', len(retiringServers), '''</td></tr>
@@ -406,7 +420,7 @@ def systemStatus(buffer):
      <table class="sortable status-table" id="table1" cellspacing="0" cellpadding="0.1em" summary="Status of nodes in the system: who is up/down and when we last heard from them">
      <caption> All Nodes </caption>
      <thead>
-     <tr><th> Chunkserver </th> <th> Used </th> <th> Free </th> <th> Used% </th> <th> # of blocks </th> <th> Last heard </th> </tr>
+     <tr><th> Chunkserver </th> <th> # of drives </th> <th> Used </th> <th> Free </th> <th> Used% </th> <th> # of blocks </th> <th> Last heard </th> </tr>
      </thead>
      <tbody>
     '''
