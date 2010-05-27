@@ -3,7 +3,6 @@
  *
  * \file kfstree.h
  * \brief Search tree for the KFS metadata server.
- * \author Blake Lewis (Kosmix Corp.)
  *
  * The tree is a B+ tree with leaves representing the structure
  * of the file system, e.g., directory entries, file attributes, etc.

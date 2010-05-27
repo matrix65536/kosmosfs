@@ -3,7 +3,6 @@
  *
  * \file replay.cc
  * \brief log replay
- * \author Blake Lewis (Kosmix Corp.)
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.
@@ -550,6 +549,12 @@ restore_makechunkstable(deque <string> &c, bool addFlag)
 	checksum = (uint32_t)tmp;
 	ok = pop_fid(tmp, "hasChecksum", c, ok);
 	hasChecksum = tmp != 0;
+	if (!ok) {
+		std::cerr << "Ignore log line for mkstable <"
+			<< fid << ',' << chunkId << ',' << chunkVersion
+			<< ">" << std::endl;	
+		return true;
+	}
 	if (ok) {
 		gLayoutManager.ReplayPendingMakeStable(
 			chunkId, chunkVersion, chunkSize,

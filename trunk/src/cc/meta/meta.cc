@@ -3,7 +3,6 @@
  *
  * \file meta.cc
  * \brief Operations on the various metadata types.
- * \author Blake Lewis (Kosmix Corp.)
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.

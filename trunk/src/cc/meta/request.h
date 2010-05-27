@@ -3,7 +3,6 @@
  *
  * \file request.h
  * \brief protocol requests to KFS metadata server
- * \author Blake Lewis (Kosmix Corp.)
  *
  * The model is that various receiver threads handle network
  * connections and extract RPC parameters, then queue a request

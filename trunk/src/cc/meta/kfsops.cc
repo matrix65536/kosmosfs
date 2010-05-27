@@ -3,7 +3,6 @@
  *
  * \file kfsops.cc
  * \brief KFS file system operations.
- * \author Blake Lewis and Sriram Rao
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.

@@ -3,7 +3,6 @@
  *
  * \file restore.cc
  * \brief rebuild metatree from saved checkpoint
- * \author Blake Lewis (Kosmix Corp.)
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.

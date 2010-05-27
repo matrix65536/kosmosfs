@@ -3,7 +3,6 @@
  *
  * \file request.cc
  * \brief process queue of outstanding metadata requests
- * \author Blake Lewis and Sriram Rao
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.

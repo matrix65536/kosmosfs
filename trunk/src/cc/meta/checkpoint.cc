@@ -21,7 +21,6 @@
  *
  * \file checkpoint.cc
  * \brief KFS metadata checkpointing
- * \author Sriram Rao and Blake Lewis
  *
  * The metaserver during its normal operation writes out log records.  Every
  * N minutes, the metaserver rolls over the log file.  Periodically, a sequence

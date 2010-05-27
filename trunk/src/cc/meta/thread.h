@@ -21,7 +21,6 @@
  *
  * \file thread.h
  * \brief thread control for KFS metadata server
- * \author Blake Lewis (Kosmix Corp.)
  */
 #if !defined(KFS_THREAD_H)
 #define KFS_THREAD_H
