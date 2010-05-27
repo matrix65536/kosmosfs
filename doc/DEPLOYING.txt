@@ -22,7 +22,6 @@
 #
 # Sriram Rao
 # Kosmix Corp.
-# (sriram at kosmix dot com)
 
 CONTENTS:
 =========
