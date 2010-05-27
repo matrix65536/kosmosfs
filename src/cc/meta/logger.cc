@@ -20,7 +20,6 @@
  *
  * \file logger.cc
  * \brief thread for logging metadata updates
- * \author Sriram Rao (Quantcast Corp) and Blake Lewis (Kosmix Corp.) 
  */
 
 #include <csignal>

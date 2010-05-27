@@ -3,7 +3,6 @@
  *
  * \file util.h
  * \brief miscellaneous metadata server code
- * \author Blake Lewis (Kosmix Corp.)
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.

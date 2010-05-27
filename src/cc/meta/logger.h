@@ -3,7 +3,6 @@
  *
  * \file logger.h
  * \brief metadata logger
- * \author Blake Lewis (Kosmix Corp.)
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.

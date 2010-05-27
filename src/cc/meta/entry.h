@@ -3,7 +3,6 @@
  *
  * \file entry.h
  * \brief process entries from the checkpoint and log files
- * \author Blake Lewis (Kosmix Corp.)
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.

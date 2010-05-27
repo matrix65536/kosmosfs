@@ -21,7 +21,6 @@
  *
  * \file startup.h
  * \brief code for starting up the metadata server
- * \author Blake Lewis and Sriram Rao
  */
 #if !defined(KFS_STARTUP_H)
 #define KFS_STARTUP_H

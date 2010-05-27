@@ -21,7 +21,6 @@
  *
  * \file startup.cc
  * \brief code for starting up the metadata server
- * \author Blake Lewis and Sriram Rao
  *
  */
 #include "startup.h"
