@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2009/01/17
-// Author: Mike Ovsiannikov
 //
 // Copyright 2009 Quantcast Corp.
 //
@@ -28,11 +27,13 @@
 #include <limits>
 
 #include "DiskIo.h"
+#include "BufferManager.h"
 
 #include "libkfsIO/IOBuffer.h"
 #include "libkfsIO/Globals.h"
 #include "common/properties.h"
 #include "common/log.h"
+#include "common/kfstypes.h"
 
 #include "qcdio/qcdllist.h"
 #include "qcdio/qcmutex.h"
@@ -127,6 +128,7 @@ public:
     enum { kDiskQueueIdNone = -1 };
 
     typedef QCDLList<DiskIo, 0> DoneQueue;
+    typedef DiskIo::Counters Counters;
 
     DiskIoQueues(
             const Properties& inConfig)
@@ -143,7 +145,7 @@ public:
             "chunkServer.ioBufferPool.partitionCount", 1)),
           mBufferPoolPartitionBufferCount(inConfig.getValue(
             "chunkServer.ioBufferPool.partitionBufferCount",
-                (sizeof(size_t) < 8 ? 16 : 50) << 10)),
+                (sizeof(size_t) < 8 ? 32 : 192) << 10)),
           mBufferPoolBufferSize(inConfig.getValue(
             "chunkServer.ioBufferPool.bufferSize", 4 << 10)),
           mBufferPoolLockMemoryFlag(inConfig.getValue(
@@ -154,8 +156,24 @@ public:
           mDiskClearOverloadedPendingRequestCount(inConfig.getValue(
             "chunkServer.diskIo.ClearOverloadedPendingRequestCount",
                 mDiskOverloadedPendingRequestCount * 3 / 4)),
+          mDiskOverloadedMinFreeBufferCount(inConfig.getValue(
+            "chunkServer.diskIo.OverloadedMinFreeBufferCount",
+                int(int64_t(mBufferPoolPartitionCount) *
+                    mBufferPoolPartitionBufferCount / 16))),
+          mDiskClearOverloadedMinFreeBufferCount(inConfig.getValue(
+            "chunkServer.diskIo.OverloadedClearMinFreeBufferCount",
+                mDiskOverloadedMinFreeBufferCount * 2 / 3)),
+          mDiskOverloadedPendingWriteByteCount(inConfig.getValue(
+            "chunkServer.diskIo.OverloadedPendingWriteByteCount",
+                int64_t(mBufferPoolPartitionBufferCount) *
+                mBufferPoolBufferSize * mBufferPoolPartitionCount / 4)),
+          mDiskClearOverloadedPendingWriteByteCount(inConfig.getValue(
+            "chunkServer.diskIo.ClearOverloadedPendingWriteByteCount",
+            mDiskOverloadedPendingWriteByteCount * 2 / 3)),
           mCrashOnErrorFlag(inConfig.getValue(
             "chunkServer.diskIo.crashOnError", false)),
+          mBufferManagerMaxRatio(inConfig.getValue(
+            "chunkServer.bufferManager.maxRatio", 0.4)),
           mOverloadedFlag(false),
           mMaxRequestSize(0),
           mWriteCancelWaiterPtr(0),
@@ -164,8 +182,11 @@ public:
           mReadReqCount(0),
           mWriteReqCount(0),
           mMutex(),
-          mBufferAllocator()
+          mBufferAllocator(),
+          mBufferManager(inConfig.getValue(
+            "chunkServer.bufferManager.enabled", true))
     {
+        mCounters.Clear();
         DoneQueue::Init(mIoQueuesPtr);
         DiskQueueList::Init(mDiskQueuesPtr);
         // Call Timeout() every time NetManager goes trough its work loop.
@@ -210,7 +231,15 @@ public:
                     theMaxReqSize) {
                 mMaxRequestSize = std::numeric_limits<size_t>::max();
             }
-            libkfsio::globals().netManager.RegisterTimeoutHandler(this);
+            libkfsio::globalNetManager().RegisterTimeoutHandler(this);
+            mBufferManager.Init(
+                &GetBufferPool(),
+                int64_t(mBufferManagerMaxRatio * mBufferAllocator.GetBufferSize() *
+                    mBufferPoolPartitionCount * mBufferPoolPartitionBufferCount),
+                KFS::CHUNKSIZE,
+                mDiskOverloadedPendingWriteByteCount /
+                    mBufferAllocator.GetBufferSize()
+            );
         }
         return (! theSysError);
     }
@@ -222,7 +251,7 @@ public:
         }
         delete mWriteCancelWaiterPtr;
         mWriteCancelWaiterPtr = 0;
-        libkfsio::globals().netManager.UnRegisterTimeoutHandler(this);
+        libkfsio::globalNetManager().UnRegisterTimeoutHandler(this);
         mMaxRequestSize = 0;
         if (DoneQueue::IsEmpty(mIoQueuesPtr)) {
             return true;
@@ -234,12 +263,15 @@ public:
         }
         return false;
     }
-    void RunCompletion()
+    bool RunCompletion()
     {
+        bool    theRet = false;
         DiskIo* thePtr;
         while ((thePtr = Get())) {
             thePtr->RunCompletion();
+            theRet = true;
         }
+        return theRet;
     }
     void Put(
         DiskIo& inIo)
@@ -248,7 +280,7 @@ public:
             QCStMutexLocker theLocker(mMutex);
             DoneQueue::PushBack(mIoQueuesPtr, inIo);
         }
-        libkfsio::globals().netKicker.Kick();
+        libkfsio::globalNetManager().Wakeup();
     }
     DiskIo* Get()
     {
@@ -266,6 +298,8 @@ public:
             if (inIo.mReadLength <= 0 && ! inIo.mIoBuffers.empty()) {
                 // Hold on to the write buffers, while waiting for write to
                 // complete.
+                WritePending(-int64_t(inIo.mIoBuffers.size() *
+                    GetBufferAllocator().GetBufferSize()));
                 if (! mWriteCancelWaiterPtr) {
                     mWriteCancelWaiterPtr = new WriteCancelWaiter();
                 }
@@ -278,7 +312,11 @@ public:
                     mWriteCancelWaiterPtr->mIoBuffers.clear();
                 }
             } else {
+                if (inIo.mReadLength > 0) {
+                    ReadPending(-int64_t(inIo.mReadLength));
+                }
                 // When read completes it can just discard buffers.
+                // Sync doesn't have any buffers attached.
                 theQueuePtr->CancelOrSetCompletionIfInFlight(
                     inIo.mRequestId, 0);
             }
@@ -345,6 +383,8 @@ public:
         { return mDiskQueueMaxEnqueueWaitNanoSec; }
     libkfsio::IOBufferAllocator& GetBufferAllocator()
         { return mBufferAllocator; }
+    BufferManager& GetBufferManager()
+        { return mBufferManager; }
     void ReportError(
         const char* inMsgPtr)
     {
@@ -355,10 +395,19 @@ public:
     size_t GetMaxRequestSize() const
         { return mMaxRequestSize; }
     void ReadPending(
-        int64_t inReqBytes)
+        int64_t inReqBytes,
+        ssize_t inRetCode = 0)
     {
         if (inReqBytes == 0) {
             return;
+        }
+        if (inReqBytes < 0) {
+            mCounters.mReadCount++;
+            if (inRetCode >= 0) {
+                mCounters.mReadByteCount += inRetCode;
+            } else {
+                mCounters.mReadErrorCount++;
+            }
         }
         mReadPendingBytes += inReqBytes;
         mReadReqCount += inReqBytes > 0 ? 1 : -1;
@@ -366,18 +415,39 @@ public:
         CheckIfOverloaded();
     }
     void WritePending(
-        int64_t inReqBytes)
+        int64_t inReqBytes,
+        ssize_t inRetCode = 0)
     {
         if (inReqBytes == 0) {
             return;
+        }
+        if (inReqBytes < 0) {
+            mCounters.mWriteCount++;
+            if (inRetCode >= 0) {
+                mCounters.mWriteByteCount += inRetCode;
+            } else {
+                mCounters.mWriteErrorCount++;
+            }
         }
         mWritePendingBytes += inReqBytes;
         mWriteReqCount += inReqBytes > 0 ? 1 : -1;
         QCASSERT(mWritePendingBytes >= 0 && mWriteReqCount >= 0);
         CheckIfOverloaded();
     }
+    void SyncDone(
+        ssize_t inRetCode)
+    {
+        if (inRetCode >= 0) {
+            mCounters.mSyncCount++;
+        } else {
+            mCounters.mSyncErrorCount++;
+        }
+    }
     int GetFdCountPerFile() const
         { return mDiskQueueThreadCount; }
+    void GetCounters(
+        Counters& outCounters)
+        { outCounters = mCounters; }
 private:
     typedef DiskIo::IoBuffers IoBuffers;
     class WriteCancelWaiter : public QCDiskQueue::IoCompletion
@@ -443,7 +513,12 @@ private:
     const int             mBufferPoolLockMemoryFlag;
     const int             mDiskOverloadedPendingRequestCount;
     const int             mDiskClearOverloadedPendingRequestCount;
+    const int             mDiskOverloadedMinFreeBufferCount;
+    const int             mDiskClearOverloadedMinFreeBufferCount;
+    const int64_t         mDiskOverloadedPendingWriteByteCount;
+    const int64_t         mDiskClearOverloadedPendingWriteByteCount;
     const bool            mCrashOnErrorFlag;
+    const double          mBufferManagerMaxRatio;
     bool                  mOverloadedFlag;
     size_t                mMaxRequestSize;
     WriteCancelWaiter*    mWriteCancelWaiterPtr;
@@ -453,8 +528,10 @@ private:
     int                   mWriteReqCount;
     QCMutex               mMutex;
     BufferAllocator       mBufferAllocator;
+    BufferManager         mBufferManager;
     DiskIo*               mIoQueuesPtr[1];
     DiskQueue*            mDiskQueuesPtr[1];
+    Counters              mCounters;
 
     QCIoBufferPool& GetBufferPool()
         { return mBufferAllocator.GetBufferPool(); }
@@ -463,10 +540,20 @@ private:
     void CheckIfOverloaded()
     {
         const int theReqCount = mReadReqCount + mWriteReqCount;
-        SetOverloaded(
-            theReqCount > mDiskOverloadedPendingRequestCount ||
-            (mOverloadedFlag && // Hysteresis
-                theReqCount > mDiskClearOverloadedPendingRequestCount)
+        SetOverloaded(mOverloadedFlag ? // Hysteresis
+            mWritePendingBytes > mDiskClearOverloadedPendingWriteByteCount ||
+            theReqCount        > mDiskClearOverloadedPendingRequestCount   ||
+            (mWritePendingBytes > 0 &&
+                mBufferAllocator.GetBufferPool().GetFreeBufferCount() <
+                mDiskClearOverloadedMinFreeBufferCount
+            )
+        :
+            mWritePendingBytes > mDiskOverloadedPendingWriteByteCount ||
+            theReqCount        > mDiskOverloadedPendingRequestCount   ||
+            (mWritePendingBytes > 0 &&
+                mBufferAllocator.GetBufferPool().GetFreeBufferCount() <
+                mDiskOverloadedMinFreeBufferCount
+            )
         );
     }
     void SetOverloaded(
@@ -476,12 +563,12 @@ private:
             return;
         }
         mOverloadedFlag = inFlag;
-        KFS_LOG_VA_INFO("% disk overloaded state: "
+        KFS_LOG_VA_INFO("%s disk overloaded state: "
             "pending read: %d bytes: %.0f write: %d bytes: %.0f",
             mOverloadedFlag ? "Setting" : "Clearing",
-            double(mReadReqCount), double(mReadPendingBytes),
-            mWriteReqCount, mWritePendingBytes);
-        KFS::libkfsio::globals().netManager.ChangeDiskOverloadState(inFlag);
+            int(mReadReqCount), double(mReadPendingBytes),
+            int(mWriteReqCount), double(mWritePendingBytes));
+        KFS::libkfsio::globalNetManager().ChangeDiskOverloadState(inFlag);
     }
 };
 
@@ -549,18 +636,34 @@ DiskIo::GetFdCountPerFile()
     return (sDiskIoQueuesPtr ? sDiskIoQueuesPtr->GetFdCountPerFile() : -1);
 }
 
-    /* static */ void
+    /* static */ bool
 DiskIo::RunIoCompletion()
 {
-    if (sDiskIoQueuesPtr) {
-        sDiskIoQueuesPtr->RunCompletion();
-    }
+    return (sDiskIoQueuesPtr && sDiskIoQueuesPtr->RunCompletion());
 }
 
     /* static */ size_t
 DiskIo::GetMaxRequestSize()
 {
     return (sDiskIoQueuesPtr ? sDiskIoQueuesPtr->GetMaxRequestSize() : 0);
+}
+
+    /* static */ BufferManager&
+DiskIo::GetBufferManager()
+{
+    QCRTASSERT(sDiskIoQueuesPtr);
+    return (sDiskIoQueuesPtr->GetBufferManager());
+}
+
+    /* static */ void
+DiskIo::GetCounters(
+    Counters& outCounters)
+{
+    if (! sDiskIoQueuesPtr) {
+        outCounters.Clear();
+        return;
+    }
+    sDiskIoQueuesPtr->GetCounters(outCounters);
 }
 
     bool
@@ -605,7 +708,8 @@ DiskIo::File::Open(
                 QCDiskQueue::ToString(theStatus.GetError());
         }
         Reset();
-        DiskIoReportError(QCDiskQueue::ToString(theStatus.GetError()));
+        DiskIoReportError(QCUtils::SysError(theStatus.GetSysError()) + " " +
+            QCDiskQueue::ToString(theStatus.GetError()));
         return false;
     }
     mFileIdx = theStatus.GetFileIdx();
@@ -629,7 +733,8 @@ DiskIo::File::Close(
                 QCUtils::SysError(theStatus.GetSysError()) + " " +
                 QCDiskQueue::ToString(theStatus.GetError());
         }
-        DiskIoReportError(QCDiskQueue::ToString(theStatus.GetError()));
+        DiskIoReportError(QCUtils::SysError(theStatus.GetSysError()) + " " +
+            QCDiskQueue::ToString(theStatus.GetError()));
         // Remains open.
         return false;
     }
@@ -1008,10 +1113,13 @@ DiskIo::RunCompletion()
     QCASSERT(mCompletionRequestId == mRequestId && sDiskIoQueuesPtr);
     mRequestId = QCDiskQueue::kRequestIdNone;
     if (mReadLength > 0) {
-        sDiskIoQueuesPtr->ReadPending(-int64_t(mReadLength));
-    } else {
+        sDiskIoQueuesPtr->ReadPending(-int64_t(mReadLength), mIoRetCode);
+    } else if (! mIoBuffers.empty()) {
         sDiskIoQueuesPtr->WritePending(-int64_t(mIoBuffers.size() *
-            sDiskIoQueuesPtr->GetBufferAllocator().GetBufferSize()));
+            sDiskIoQueuesPtr->GetBufferAllocator().GetBufferSize()),
+            mIoRetCode);
+    } else {
+        sDiskIoQueuesPtr->SyncDone(mIoRetCode);
     }
     int theNumRead(mIoRetCode);
     QCRTASSERT(theNumRead == mIoRetCode);

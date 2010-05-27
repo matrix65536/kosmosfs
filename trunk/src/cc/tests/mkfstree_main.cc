@@ -112,12 +112,12 @@ main(int argc, char **argv)
         if ((count % 10000) == 0)
             cout << "Done with " << count << " non-crc files" << endl;
 
-        dirFd = gKfsClient->Mkdirs(kfsdirname);
+        dirFd = gKfsClient->Mkdirs(kfsdirname.c_str());
         if (dirFd < 0) {
             cout << "Mkdir failed: " << dirFd << endl;
             break;
         }
-        fd = gKfsClient->Create(kfspathname);
+        fd = gKfsClient->Create(kfspathname.c_str());
         if (fd < 0) {
             cout << "Create failed for path: " << kfspathname << " error: " << fd << endl;
             break;

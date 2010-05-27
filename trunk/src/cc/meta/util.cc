@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file util.cc
  * \brief miscellaneous metadata server code
@@ -173,7 +173,7 @@ KFS::IsMsgAvail(IOBuffer *iobuf,
  */
 void
 KFS::sendtime(ostream &os, const string &prefix, 
-	      struct timeval &t, 
+	      const struct timeval &t, 
 	      const string &suffix)
 {
 	os << prefix << " " << t.tv_sec << " " << t.tv_usec << suffix;

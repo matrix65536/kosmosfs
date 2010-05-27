@@ -126,7 +126,7 @@ main(int argc, char **argv)
 
     kfsdirname.assign(kfspathname, 0, slash);
     kfsfilename.assign(kfspathname, slash + 1, kfspathname.size());
-    dstKfsClient->Mkdirs(kfsdirname);
+    dstKfsClient->Mkdirs(kfsdirname.c_str());
 
     struct timeval startTime, endTime;
     double timeTaken;
@@ -164,13 +164,13 @@ doWrite(const string &filename, int numMBytes, size_t writeSizeBytes)
     for (bytesWritten = 0; bytesWritten < mByte; bytesWritten++) {
         dataBuf[bytesWritten] = 'a' + bytesWritten % 26;
     }
-    ifd = srcKfsClient->Open(filename, O_RDONLY);
+    ifd = srcKfsClient->Open(filename.c_str(), O_RDONLY);
     if (ifd < 0) {
         cout << "open failed: " << endl;
         exit(-1);
     }
 
-    ofd = dstKfsClient->Create(filename);
+    ofd = dstKfsClient->Create(filename.c_str());
     if (ofd < 0) {
         cout << "Create failed: " << endl;
         exit(-1);

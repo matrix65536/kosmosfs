@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/07
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -39,14 +38,36 @@
 
 #include <list>
 #include <string>
+#include <inttypes.h>
 
 namespace KFS
 {
 
 class MetaServerSMTimeoutImpl;
+class Properties;
 
-class MetaServerSM : public KfsCallbackObj {
+class MetaServerSM : public KfsCallbackObj, private ITimeout {
 public:
+    struct Counters
+    {
+        typedef int64_t Counter;
+
+        Counter mConnectCount;
+        Counter mHelloCount;
+        Counter mHelloErrorCount;
+        Counter mAllocCount;
+        Counter mAllocErrorCount;
+        
+        void Clear()
+        {
+            mConnectCount    = 0;
+            mHelloCount      = 0;
+            mHelloErrorCount = 0;
+            mAllocCount      = 0;
+            mAllocErrorCount = 0;
+        }
+    };
+
     MetaServerSM();
     ~MetaServerSM(); 
 
@@ -57,7 +78,7 @@ public:
     /// binary update or are running versions that the metaserver
     /// doesn't know about and shouldn't be inlcuded in the system.
     void SetMetaInfo(const ServerLocation &metaLoc, const char *clusterKey, int rackId,
-                     const std::string &md5sum);
+                     const std::string &md5sum, const Properties& prop);
 
     /// Init function for configuring the metaserver SM.
     /// @param[in] chunkServerPort  Port at which chunk-server is
@@ -66,7 +87,7 @@ public:
     /// is running - to be used instead of gethostname()
     /// listening for connections from KFS clients.
     /// @retval 0 if we could connect/send HELLO; -1 otherwise
-    void Init(int chunkServerPort, const std::string & chunkServerHostname);
+    void Init(int chunkServerPort, std::string chunkServerHostname);
 
     /// Send HELLO message.  This sends an op down to the event
     /// processor to get all the info.
@@ -81,7 +102,7 @@ public:
 
     /// If the connection to the server breaks, periodically, retry to
     /// connect; also dispatch ops.
-    void Timeout();
+    virtual void Timeout();
 
     /// Return the server name/port information
     ServerLocation GetLocation() const {
@@ -90,6 +111,28 @@ public:
 
     kfsSeq_t nextSeq() {
         return mCmdSeq++;
+    }
+
+    time_t GetLastRecvCmdTime() const {
+        return mLastRecvCmdTime;
+    }
+
+    bool IsConnected() const {
+        return (mNetConnection && mNetConnection->IsGood());
+    }
+
+    bool IsHandshakeDone() const {
+        return (mSentHello && ! mHelloOp);
+    }
+
+    bool IsUp() const {
+        return (IsConnected() && IsHandshakeDone());
+    }
+
+    time_t ConnectionUptime() const;
+
+    void GetCounters(Counters& counters) {
+        counters = mCounters;
     }
 
 private:
@@ -146,7 +189,12 @@ private:
     /// server is good; if the connection broke, reconnect and do the
     /// handshake again.  Also, we use the timeout to dispatch pending
     /// messages to the server.
-    MetaServerSMTimeoutImpl *mTimer;
+    int mInactivityTimeout;
+    int mMaxReadAhead;
+    time_t mLastRecvCmdTime;
+    time_t mLastConnectTime;
+    time_t mConnectedTime;
+    Counters mCounters;
 
     /// Connect to the meta server
     /// @retval 0 if connect was successful; -1 otherwise
@@ -155,7 +203,7 @@ private:
     /// Given a (possibly) complete op in a buffer, run it.
     bool HandleCmd(IOBuffer *iobuf, int cmdLen);
     /// Handle a reply to an RPC we previously sent.
-    void HandleReply(IOBuffer *iobuf, int msgLen);
+    bool HandleReply(IOBuffer *iobuf, int msgLen);
 
     /// Op has finished execution.  Send a response to the meta
     /// server.
@@ -171,22 +219,6 @@ private:
 
     /// We reconnected to the metaserver; so, resend all the pending ops.
     void ResubmitOps();
-};
-
-/// A Timeout interface object for checking connection status with the server
-class MetaServerSMTimeoutImpl : public ITimeout {
-public:
-    MetaServerSMTimeoutImpl(MetaServerSM *mgr) {
-        mMetaServerSM = mgr; 
-    };
-    /// On each timeout, check that the connection with the server is
-    /// good.  Also, dispatch any pending messages.
-    void Timeout() {
-        mMetaServerSM->Timeout();
-    };
-private:
-    /// Owning metaserver SM.
-    MetaServerSM        *mMetaServerSM;
 };
 
 extern MetaServerSM gMetaServerSM;

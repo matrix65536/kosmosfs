@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/08/31
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -44,7 +43,7 @@ extern "C" {
 using namespace KFS;
 
 string
-KFS::strip_dots(const string & path)
+KFS::strip_dots(string path)
 {
 	vector <string> component;
 	string result;
@@ -78,17 +77,18 @@ KFS::strip_dots(const string & path)
  * in either case, call strip_dots to strip out any "." and ".." components.
  */
 string
-KFS::build_path(const string & cwd, const string & input)
+KFS::build_path(string &cwd, const char *input)
 {
+	string tail(input);
 	if (input[0] == '/')
-		return strip_dots(input);
+		return strip_dots(tail);
 
 	const char *c = cwd.c_str();
 	bool is_root = (c[0] == '/' && c[1] == '\0');
 	string head(c);
 	if (!is_root)
 		head.append("/");
-	return strip_dots(head + input);
+	return strip_dots(head + tail);
 }
 
 void

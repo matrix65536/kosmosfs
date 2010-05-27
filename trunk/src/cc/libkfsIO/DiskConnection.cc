@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/23
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -28,6 +27,7 @@
 #include "DiskManager.h"
 #include "Counter.h"
 #include "Globals.h"
+#include "common/log.h"
 
 using std::deque;
 using std::string;

@@ -148,14 +148,9 @@ doRead(const string &filename, int numMBytes,
     int res, bytesRead = 0, nMBytes = 0, fd;
     off_t nread = 0;
 
-    dataBuf.reset(new char [mByte]);
+    dataBuf.reset(new char [readSizeBytes]);
 
-    if (readSizeBytes > mByte) {
-        cout << "Setting read size to: " << mByte << endl;
-        readSizeBytes = mByte;
-    }
-
-    fd = gKfsClient->Open(filename, O_RDONLY);
+    fd = gKfsClient->Open(filename.c_str(), O_RDONLY);
     if (fd < 0) {
         cout << "Open failed: " << endl;
         exit(-1);
@@ -176,15 +171,14 @@ doRead(const string &filename, int numMBytes,
         sleepTm.tv_sec = time_t(sleepSec);
         sleepTm.tv_nsec = long((sleepSec - (double)sleepTm.tv_sec) * 1e9);
     }
-    for (nMBytes = 0; nMBytes < numMBytes; nMBytes++) {
-        for (bytesRead = 0; bytesRead < mByte; bytesRead += readSizeBytes) {
-            res = gKfsClient->Read(fd, dataBuf.get(), readSizeBytes);
-            if (res != readSizeBytes)
-                return (bytesRead + nMBytes * 1024 * 1024);
-            nread += readSizeBytes;
-            if (doSleep) {
-                nanosleep(&sleepTm, 0);
-            }
+
+    while (nread < numMBytes * mByte) {
+        res = gKfsClient->Read(fd, dataBuf.get(), readSizeBytes);
+        if (res != readSizeBytes)
+            return (bytesRead + nMBytes * 1024 * 1024);
+        nread += readSizeBytes;
+        if (doSleep) {
+            nanosleep(&sleepTm, 0);
         }
     }
     cout << "read of " << nread / (1024 * 1024) << " (MB) is done" << endl;

@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.
@@ -40,6 +40,7 @@
 #include "request.h"
 #include "logger.h"
 #include "util.h"
+#include "LayoutManager.h"
 
 using namespace KFS;
 
@@ -97,6 +98,8 @@ Checkpoint::do_CP()
 		file << "time/" << ctime(&t);
 		file << "log/" << oplog.name() << '\n' << '\n';
 		status = write_leaves();
+                if (status == 0)
+                    status = gLayoutManager.WritePendingMakeStable(file);
 		file.close();
 		link_latest(cpname, LASTCP);
 	}

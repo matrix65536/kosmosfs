@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/14
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -24,22 +23,99 @@
 // 
 //----------------------------------------------------------------------------
 
-#include <sys/poll.h>
 #include <cerrno>
-#include <boost/scoped_array.hpp>
+#include <limits>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "NetManager.h"
 #include "TcpSocket.h"
-#include "Globals.h"
 
 #include "common/log.h"
-#include "kfsutils.h"
+#include "qcdio/qcfdpoll.h"
+#include "qcdio/qcutils.h"
+#include "qcdio/qcmutex.h"
+#include "qcdio/qcstutils.h"
 
-using std::mem_fun;
 using std::list;
-
+using std::min;
+using std::max;
+using std::numeric_limits;
 using namespace KFS;
 using namespace KFS::libkfsio;
+
+class NetManager::Waker
+{
+public:
+    Waker()
+        : mMutex(),
+          mWritten(0),
+          mSleepingFlag(false),
+          mWakeFlag(false)
+    {
+        const int res = pipe(mPipeFds);
+        if (res < 0) {
+            perror("Pipe: ");
+            mPipeFds[0] = -1;
+            mPipeFds[1] = -1;
+            abort();
+            return;
+        }
+        fcntl(mPipeFds[0], F_SETFL, O_NONBLOCK);
+        fcntl(mPipeFds[1], F_SETFL, O_NONBLOCK);
+    }
+    ~Waker()
+    {
+        for (int i = 0; i < 2; i++) {
+            if (mPipeFds[i] >= 0) {
+                close(mPipeFds[i]);
+            }
+        }
+    }
+    bool Sleep()
+    {
+        QCStMutexLocker lock(mMutex);
+        mSleepingFlag = ! mWakeFlag;
+        mWakeFlag = false;
+        return mSleepingFlag;
+    }
+    int Wake()
+    {
+        QCStMutexLocker lock(mMutex);
+        mSleepingFlag = false;
+        while (mWritten > 0) {
+            char buf[64];
+            const int res = read(mPipeFds[0], buf, sizeof(buf));
+            if (res > 0) {
+                mWritten -= min(mWritten, res);
+            } else {
+                break;
+            }
+        }
+        return (mWritten);
+    }
+    void Wakeup()
+    {
+        QCStMutexLocker lock(mMutex);
+        mWakeFlag = true;
+        if (mSleepingFlag && mWritten <= 0) {
+            mWritten++;
+            const char buf = 'k';
+            write(mPipeFds[1], &buf, sizeof(buf));
+        }
+    }
+    int GetFd() const { return mPipeFds[0]; }
+private:
+    QCMutex mMutex;
+    int     mWritten;
+    int     mPipeFds[2];
+    bool    mSleepingFlag;
+    bool    mWakeFlag;
+
+private:
+   Waker(const Waker&);
+   Waker& operator=(const Waker&); 
+};
 
 NetManager::NetManager(int timeoutMs)
     : mRemove(),
@@ -51,28 +127,44 @@ NetManager::NetManager(int timeoutMs)
       mNetworkOverloaded(false),
       mIsOverloaded(false),
       mRunFlag(true),
+      mShutdownFlag(false),
       mTimerRunningFlag(false),
       mIsForkedChild(false),
       mTimeoutMs(timeoutMs),
-      mNow(time(0)),
+      mStartTime(time(0)),
+      mNow(mStartTime),
       mMaxOutgoingBacklog(0),
       mNumBytesToSend(0),
-      mPoll(*(new FdPoll()))
+      mTimerOverrunCount(0),
+      mTimerOverrunSec(0),
+      mPoll(*(new QCFdPoll())),
+      mWaker(*(new Waker())),
+      mPollEventHook(0)
 {}
 
 NetManager::~NetManager()
 {
     NetManager::CleanUp();
     delete &mPoll;
+    delete &mWaker;
 }
 
 void
 NetManager::AddConnection(NetConnectionPtr &conn)
 {
+    if (mShutdownFlag) {
+        return;
+    }
     NetConnection::NetManagerEntry* const entry =
-        conn->GetNetMangerEntry(*this);
+        conn->GetNetManagerEntry();
     if (! entry) {
         return;
+    }
+    if (entry->mNetManager && entry->mNetManager != this) {
+        KFS_LOG_STREAM_FATAL <<
+            "attempt to add connection to different net manager" <<
+        KFS_LOG_EOM;
+        abort();
     }
     if (! entry->mAdded) {
         entry->mTimerWheelSlot = kTimerWheelSize;
@@ -81,6 +173,10 @@ NetManager::AddConnection(NetConnectionPtr &conn)
         mConnectionsCount++;
         assert(mConnectionsCount > 0);
         entry->mAdded = true;
+        entry->mNetManager = this;
+        if (mPollEventHook) {
+            mPollEventHook->Add(*this, *conn);
+        }
     }
     conn->Update();
 }
@@ -128,7 +224,7 @@ NetManager::UpdateTimer(NetConnection::NetManagerEntry& entry, int timeOut)
             // When the timer is running the effective wheel size "grows" by 1:
             // leave (move) entries with timeouts >= kTimerWheelSize in (to) the
             // current slot.
-            std::min((kTimerWheelSize - (mTimerRunningFlag ? 0 : 1)), timeOut)) >=
+            min((kTimerWheelSize - (mTimerRunningFlag ? 0 : 1)), timeOut)) >=
             kTimerWheelSize) {
         timerWheelSlot -= kTimerWheelSize;
     }
@@ -149,8 +245,7 @@ NetManager::UpdateTimer(NetConnection::NetManagerEntry& entry, int timeOut)
 inline static int CheckFatalSysError(int err, const char* msg)
 {
     if (err) {
-        std::string const sysMsg = KFSUtils::SysError(err);
-        KFS_LOG_VA_FATAL("%s: %d %s", msg ? msg : "", err, sysMsg.c_str());
+        KFS_LOG_STREAM_FATAL << QCUtils::SysError(err, msg) << KFS_LOG_EOM;
         abort();
     }
     return err;
@@ -159,7 +254,15 @@ inline static int CheckFatalSysError(int err, const char* msg)
 void
 NetManager::Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTimer)
 {
-    if ((! entry.mAdded) || (mIsForkedChild)) {
+    if (entry.mNetManager) {
+        entry.mNetManager->UpdateSelf(entry, fd, resetTimer);
+    }
+}
+
+void
+NetManager::UpdateSelf(NetConnection::NetManagerEntry& entry, int fd, bool resetTimer)
+{
+    if ((! entry.mAdded) || mIsForkedChild) {
         return;
     }
     assert(*entry.mListIt);
@@ -186,6 +289,11 @@ NetManager::Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTime
         }
         mRemove.splice(mRemove.end(),
             mTimerWheel[entry.mTimerWheelSlot], entry.mListIt);
+        // Do not reset entry->mNetManager, it is an error to add connection to
+        // a different net manager even after close.
+        if (mPollEventHook) {
+            mPollEventHook->Remove(*this, **entry.mListIt);
+        }
         return;
     }
     if (&conn == mCurConnection) {
@@ -205,7 +313,7 @@ NetManager::Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTime
     assert(entry.mWriteByteCount >= 0 &&
         entry.mWriteByteCount <= mNumBytesToSend);
     mNumBytesToSend -= entry.mWriteByteCount;
-    entry.mWriteByteCount = std::max(0, conn.GetNumBytesToWrite());
+    entry.mWriteByteCount = max(0, conn.GetNumBytesToWrite());
     mNumBytesToSend += entry.mWriteByteCount;
     // Update poll set.
     const bool in  = conn.IsReadReady() &&
@@ -214,8 +322,8 @@ NetManager::Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTime
     if (in != entry.mIn || out != entry.mOut) {
         assert(fd >= 0);
         const int op =
-            (in ? FdPoll::kOpTypeIn : 0) + (out ? FdPoll::kOpTypeOut : 0);
-        if (fd != entry.mFd && entry.mFd >= 0) {
+            (in ? QCFdPoll::kOpTypeIn : 0) + (out ? QCFdPoll::kOpTypeOut : 0);
+        if ((fd != entry.mFd || op == 0) && entry.mFd >= 0) {
             CheckFatalSysError(
                 mPoll.Remove(entry.mFd),
                 "failed to removed fd from poll set"
@@ -240,48 +348,62 @@ NetManager::Update(NetConnection::NetManagerEntry& entry, int fd, bool resetTime
 }
 
 void
+NetManager::Wakeup()
+{
+    mWaker.Wakeup();
+}
+
+void
 NetManager::MainLoop()
 {
     mNow = time(0);
     time_t lastTimerTime = mNow;
     CheckFatalSysError(
-        mPoll.Add(globals().netKicker.GetFd(), FdPoll::kOpTypeIn),
-        "failed to add net kicker's fd to poll set"
+        mPoll.Add(mWaker.GetFd(), QCFdPoll::kOpTypeIn),
+        "failed to add net waker's fd to the poll set"
     );
     const int timerOverrunWarningTime(mTimeoutMs / (1000/2));
     while (mRunFlag) {
         const bool wasOverloaded = mIsOverloaded;
         CheckIfOverloaded();
         if (mIsOverloaded != wasOverloaded) {
-            KFS_LOG_VA_INFO(
-                "%s (%0.f bytes to send; %d disk IO's) ",
-                mIsOverloaded ?
-                    "System is now in overloaded state " :
-                    "Clearing system overload state",
-                double(mNumBytesToSend),
-                globals().diskManager.NumDiskIOOutstanding());
-            for (int i = 0; i <= kTimerWheelSize; i++) {
-                for (List::iterator c = mTimerWheel[i].begin();
-                        c != mTimerWheel[i].end(); ) {
-                    assert(*c);
-                    NetConnection& conn = **c;
-                    ++c;
-                    conn.Update(false);
+            KFS_LOG_STREAM_INFO <<
+                (mIsOverloaded ?
+                    "System is now in overloaded state" :
+                    "Clearing system overload state") <<
+                " " << mNumBytesToSend << " bytes to send" <<
+            KFS_LOG_EOM;
+            // Turn on read only if returning from overloaded state.
+            // Turn off read in the event processing loop if overloaded, and
+            // read event is pending. 
+            // The "lazy" processing here is to reduce number of system calls.
+            if (! mIsOverloaded) {
+                for (int i = 0; i <= kTimerWheelSize; i++) {
+                    for (List::iterator c = mTimerWheel[i].begin();
+                            c != mTimerWheel[i].end(); ) {
+                        assert(*c);
+                        NetConnection& conn = **c;
+                        ++c;
+                        conn.Update(false);
+                    }
                 }
             }
         }
-        const int ret = mPoll.Poll(mConnectionsCount + 1, mTimeoutMs);
+        const int ret = mPoll.Poll(
+            mConnectionsCount + 1,
+            mWaker.Sleep() ? mTimeoutMs : 0
+        );
+        mWaker.Wake();
         if (ret < 0 && ret != -EINTR && ret != -EAGAIN) {
-            std::string const msg = KFSUtils::SysError(-ret);
-            KFS_LOG_VA_ERROR("poll errror %d %s",  -ret, msg.c_str());
+            KFS_LOG_STREAM_ERROR <<
+                QCUtils::SysError(-ret, "poll error") <<
+            KFS_LOG_EOM;
         }
-        globals().netKicker.Drain();
         const int64_t nowMs = ITimeout::NowMs();
         mNow = time_t(nowMs / 1000);
-        globals().diskManager.ReapCompletedIOs();
         // Unregister will set pointer to 0, but will never remove the list
         // node, so that the iterator always remains valid.
-        for (std::list<ITimeout *>::iterator it = mTimeoutHandlers.begin();
+        for (list<ITimeout *>::iterator it = mTimeoutHandlers.begin();
                 it != mTimeoutHandlers.end(); ) {
             if (*it) {
                 (*it)->TimerExpired(nowMs);
@@ -300,20 +422,24 @@ NetManager::MainLoop()
                 continue;
             }
             NetConnection& conn = *reinterpret_cast<NetConnection*>(ptr);
-            if (! conn.GetNetMangerEntry(*this)->mAdded) {
+            if (! conn.GetNetManagerEntry()->mAdded) {
                 // Skip stale event, the conection should be in mRemove list.
                 continue;
             }
             // Defer update for this connection.
             mCurConnection = &conn;
-            if ((op & FdPoll::kOpTypeIn) != 0 && conn.IsGood()) {
+            if (mPollEventHook) {
+                mPollEventHook->Event(*this, conn, op);
+            }
+            if ((op & (QCFdPoll::kOpTypeIn | QCFdPoll::kOpTypeHup)) != 0 &&
+                    conn.IsGood() && (! mIsOverloaded ||
+                    conn.GetNetManagerEntry()->mEnableReadIfOverloaded)) {
                 conn.HandleReadEvent();
             }
-            if ((op & FdPoll::kOpTypeOut) != 0 && conn.IsGood()) {
+            if ((op & QCFdPoll::kOpTypeOut) != 0 && conn.IsGood()) {
                 conn.HandleWriteEvent();
             }
-            if ((op & (FdPoll::kOpTypeError | FdPoll::kOpTypeHup)) != 0 &&
-                    conn.IsGood()) {
+            if ((op & QCFdPoll::kOpTypeError) != 0 && conn.IsGood()) {
                 conn.HandleErrorEvent();
             }
             // Try to write, if the last write was sucessfull.
@@ -324,9 +450,14 @@ NetManager::MainLoop()
         }
         mRemove.clear();
         mNow = time(0);
-        int slotCnt = std::min(int(kTimerWheelSize), int(mNow - lastTimerTime));
-        if (slotCnt > timerOverrunWarningTime) {
-            KFS_LOG_VA_DEBUG("Timer overrun %d seconds detected", slotCnt - 1);
+        int slotCnt = min(int(kTimerWheelSize), int(mNow - lastTimerTime));
+        if (lastTimerTime + timerOverrunWarningTime < mNow) {
+            KFS_LOG_STREAM_INFO <<
+                "timer overrun " << (mNow - lastTimerTime) <<
+                " seconds detected" <<
+            KFS_LOG_EOM;
+            mTimerOverrunCount++;
+            mTimerOverrunSec += mNow - lastTimerTime;
         }
         mTimerRunningFlag = true;
         while (slotCnt-- > 0) {
@@ -338,7 +469,7 @@ NetManager::MainLoop()
                 assert(conn.IsGood());
                 ++mTimerWheelBucketItr;
                 NetConnection::NetManagerEntry& entry =
-                    *conn.GetNetMangerEntry(*this);
+                    *conn.GetNetManagerEntry();
                 const int timeOut = conn.GetInactivityTimeout();
                 if (timeOut < 0) {
                     // No timeout, move it to the corresponding list.
@@ -362,7 +493,7 @@ NetManager::MainLoop()
         mTimerWheelBucketItr = mRemove.end();
     }
     CheckFatalSysError(
-        mPoll.Remove(globals().netKicker.GetFd()),
+        mPoll.Remove(mWaker.GetFd()),
         "failed to removed net kicker's fd from poll set"
     );
     CleanUp();
@@ -393,6 +524,7 @@ NetManager::ChangeDiskOverloadState(bool v)
 void
 NetManager::CleanUp()
 {
+    mShutdownFlag = true;
     mTimeoutHandlers.clear();
     for (int i = 0; i <= kTimerWheelSize; i++) {
         for (mTimerWheelBucketItr = mTimerWheel[i].begin();
@@ -403,11 +535,110 @@ NetManager::CleanUp()
                 if (conn->IsGood()) {
                     conn->HandleErrorEvent();
                 }
-                conn->Close();
             }
         }
         assert(mTimerWheel[i].empty());
         mRemove.clear();
     }
     mTimerWheelBucketItr = mRemove.end();
+}
+
+inline const NetManager*
+NetManager::GetNetManager(const NetConnection& conn)
+{
+    return conn.GetNetManagerEntry()->mNetManager;
+}
+
+inline time_t
+NetManager::Timer::Handler::Now() const
+{
+    return GetNetManager(*mConn)->Now();
+}
+
+NetManager::Timer::Handler::Handler(NetManager& netManager, KfsCallbackObj& obj, int tmSec)
+    : KfsCallbackObj(),
+      mObj(obj),
+      mStartTime(tmSec >= 0 ? netManager.Now() : 0),
+      mSock(numeric_limits<int>::max()), // Fake fd, for IsGood()
+      mConn(new NetConnection(&mSock, this, false, false))
+{
+    SET_HANDLER(this, &Handler::EventHandler);
+    mConn->SetMaxReadAhead(0); // Do not add this to poll.
+    mConn->SetInactivityTimeout(tmSec);
+    netManager.AddConnection(mConn);
+}
+
+void
+NetManager::Timer::Handler::SetTimeout(int tmSec)
+{
+    const int prevTm = mConn->GetInactivityTimeout();
+    mStartTime = Now();
+    if (prevTm != tmSec) {
+        mConn->SetInactivityTimeout(tmSec); // Reset timer.
+    } else {
+        mConn->Update(); // Reset timer.
+    }
+}
+
+time_t
+NetManager::Timer::Handler::GetRemainingTime() const
+{
+    const int tmSec = mConn->GetInactivityTimeout();
+    if (tmSec < 0) {
+        return tmSec;
+    }
+    const time_t next = mStartTime + tmSec;
+    const time_t now  = Now();
+    return (next > now ? next - now : 0);
+}
+
+int
+NetManager::Timer::Handler::EventHandler(int type, void* /* data */)
+{
+    switch (type) {
+        case EVENT_NET_ERROR: // Invoked from net manager cleanup code.
+            Cleanup();
+            // Fall through
+        case EVENT_INACTIVITY_TIMEOUT:
+            mStartTime = Now();
+            return mObj.HandleEvent(EVENT_INACTIVITY_TIMEOUT, 0);
+        default:
+            assert(! "unexpected event type");
+    }
+    return 0;
+}
+
+void
+NetManager::Timer::Handler::Cleanup()
+{
+    mConn->Close();
+    // Reset fd to prevent calling close().
+    mSock = TcpSocket();
+}
+
+void
+NetManager::Timer::Handler::ResetTimeout()
+{
+    if (mConn->GetInactivityTimeout() >= 0) {
+        mStartTime = Now();
+        mConn->Update();
+    }
+}
+
+void
+NetManager::Timer::Handler::ScheduleTimeoutNoLaterThanIn(int tmSec)
+{
+    if (tmSec < 0) {
+        return;
+    }
+    const int    curTimeout = mConn->GetInactivityTimeout();
+    const time_t now        = Now();
+    if (curTimeout < 0 || now + tmSec < mStartTime + curTimeout) {
+        mStartTime = now;
+        if (curTimeout != tmSec) {
+            mConn->SetInactivityTimeout(tmSec);
+        } else {
+            mConn->Update();
+        }
+    }
 }

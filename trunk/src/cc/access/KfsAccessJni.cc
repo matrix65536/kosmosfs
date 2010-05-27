@@ -152,6 +152,9 @@ extern "C" {
     jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_write(
         JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jobject buf, jint begin, jint end);
 
+    jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_atomicRecordAppend(
+        JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jobject buf, jint begin, jint end);
+        
     jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_sync(
         JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd);
 
@@ -715,5 +718,27 @@ jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_write(
     addr = (void *)(uintptr_t(addr) + begin);
         
     ssize_t sz = clnt->Write((int) jfd, (const char *) addr, (size_t) (end - begin));
+    return (jint)sz;
+}
+
+jint Java_org_kosmix_kosmosfs_access_KfsOutputChannel_atomicRecordAppend(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jint jfd, jobject buf, jint begin, jint end) 
+{
+    KfsClient *clnt = (KfsClient *) jptr;
+
+    if(!buf)
+        return 0;
+
+    void * addr = jenv->GetDirectBufferAddress(buf);
+    jlong cap = jenv->GetDirectBufferCapacity(buf);
+
+    if(!addr || cap < 0)
+        return 0;
+    if(begin < 0 || end > cap || begin > end)
+        return 0;
+
+    addr = (void *)(uintptr_t(addr) + begin);
+        
+    ssize_t sz = clnt->AtomicRecordAppend((int) jfd, (const char *) addr, (size_t) (end - begin));
     return (jint)sz;
 }

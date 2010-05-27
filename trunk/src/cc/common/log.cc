@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2005/03/01
 //
@@ -23,41 +23,56 @@
 //----------------------------------------------------------------------------
 
 #include "log.h"
-#include <stdlib.h>
-#include <log4cpp/RollingFileAppender.hh>
-#include <log4cpp/OstreamAppender.hh>
-#include <log4cpp/PatternLayout.hh>
-#include "DailyRollingFileAppender.h"
+#include <stdio.h>
+#include <limits>
 
-using namespace KFS;
-
-log4cpp::Category* KFS::MsgLogger::logger = NULL;
-
-void
-MsgLogger::Init(const char *filename, log4cpp::Priority::Value priority)
+namespace KFS
 {
-    log4cpp::Appender* appender;
-    log4cpp::PatternLayout* layout = new log4cpp::PatternLayout();
-    layout->setConversionPattern("%d{%m-%d-%Y %H:%M:%S.%l} %p - %m %n");
 
-    if (filename != NULL) {
-        // set the max. log file size to be 100M before it rolls over
-        // to the next; save the last N log files. 
-        // appender = new log4cpp::RollingFileAppender("default", std::string(filename),
-        // 100 * 1024 * 1024, 100);
-        appender = new log4cpp::DailyRollingFileAppender("default", std::string(filename));
-    }
-    else
-        appender = new log4cpp::OstreamAppender("default", &std::cerr);
+MsgLogger* KFS::MsgLogger::logger = 0;
 
-    appender->setLayout(layout);
-
-    logger = &(log4cpp::Category::getInstance(std::string("kfs")));
-    logger->addAppender(appender);
-    // logger->setAdditivity(false);
-    logger->setPriority(priority);
+MsgLogger::MsgLogger(
+    const char*         filename,
+    MsgLogger::LogLevel logLevel)
+    : BufferedLogWriter(filename ? -1 : fileno(stderr), filename)
+{
+    BufferedLogWriter::SetLogLevel(logLevel);
+    BufferedLogWriter::SetMaxLogWaitTime(std::numeric_limits<int>::max());
 }
 
-void MsgLogger::SetLevel(log4cpp::Priority::Value priority) {
-    logger->setPriority(priority);
+MsgLogger::~MsgLogger()
+{
+    if (this == logger) {
+        logger = 0;
+    }
+}
+
+void
+MsgLogger::Init(
+    const char*         filename,
+    MsgLogger::LogLevel logLevel)
+{
+    if (! logger) {
+        static MsgLogger sLogger(filename, logLevel);
+        logger = &sLogger;
+    }
+}
+
+void
+MsgLogger::Init(
+    const Properties& props,
+    const char*       propPrefix)
+{
+    Init(0);
+    logger->SetParameters(props, propPrefix);
+}
+
+void
+MsgLogger::Stop()
+{
+    if (logger) {
+        logger->BufferedLogWriter::Stop();
+    }
+}
+
 }

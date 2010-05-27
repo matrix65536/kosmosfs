@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file request.h
  * \brief protocol requests to KFS metadata server
@@ -43,6 +43,7 @@
 #include <vector>
 
 #include "libkfsIO/KfsCallbackObj.h"
+#include "common/properties.h"
 
 using std::ofstream;
 using std::vector;
@@ -71,12 +72,15 @@ enum MetaOp {
 	META_RENAME,
 	META_SETMTIME, //!< Set the mtime on a specific file to support cp -p
 	META_CHANGE_FILE_REPLICATION, //! < Client is asking for a change in file's replication factor
+	META_COALESCE_BLOCKS, //!< Client is asking for blocks from one file to be coalesced with another
 	//!< Admin is notifying us to retire a chunkserver
 	META_RETIRE_CHUNKSERVER,
 	//!< Admin is notifying us to toggle rebalancing
 	META_TOGGLE_REBALANCING,
 	//!< Admin is notifying us to execute a rebalance plan
 	META_EXECUTE_REBALANCEPLAN,
+	//!< Read a config and update some of the settings
+	META_READ_CONFIG,
 	META_TOGGLE_WORM, //!< Toggle metaserver's WORM mode
 	//!< Metadata server <-> Chunk server ops
 	META_HELLO,  //!< Hello RPC sent by chunkserver on startup
@@ -86,6 +90,9 @@ enum MetaOp {
 	META_CHUNK_DELETE,  //!< Delete chunk RPC from meta->chunk
 	META_CHUNK_TRUNCATE, //!< Truncate chunk RPC from meta->chunk
 	META_CHUNK_STALENOTIFY, //!< Stale chunk notification RPC from meta->chunk
+        META_BEGIN_MAKE_CHUNK_STABLE,
+	META_CHUNK_MAKE_STABLE, //!< Notify a chunkserver to make a chunk stable
+	META_CHUNK_COALESCE_BLOCK, //!< Notify a chunkserver to coalesce a chunk from file to another
 	META_CHUNK_VERSCHANGE, //!< Notify chunkserver of version # change from meta->chunk
 	META_CHUNK_REPLICATE, //!< Ask chunkserver to replicate a chunk
 	META_CHUNK_SIZE, //!< Ask chunkserver for the size of a chunk
@@ -109,9 +116,18 @@ enum MetaOp {
 	META_RECOMPUTE_DIRSIZE, //! < Do a top-down size update
 	META_DUMP_CHUNKTOSERVERMAP, //! < Dump out the chunk -> location map
 	META_DUMP_CHUNKREPLICATIONCANDIDATES, //! < Dump out the list of chunks being re-replicated
+	META_FSCK, //!< Check all blocks and report files that have missing blocks
 	META_CHECK_LEASES, //! < Check all the leases and clear out expired ones
 	META_OPEN_FILES, //!< Print out open files---for which there is a valid read/write lease
-	META_UPSERVERS //!< Print out live chunk servers
+	META_UPSERVERS, //!< Print out live chunk servers
+        META_LOG_MAKE_CHUNK_STABLE, //!< Emit log record with chunk length and checksum
+	META_LOG_MAKE_CHUNK_STABLE_DONE, //!< Emit log record with successful completion of make chunk stable.
+	META_SET_CHUNK_SERVERS_PROPERTIES,
+        META_CHUNK_SERVER_RESTART,
+        META_CHUNK_SET_PROPERTIES,
+        META_GET_CHUNK_SERVERS_COUNTERS,
+
+        META_NUM_OPS_COUNT // must be the last one
 };
 
 /*!
@@ -120,16 +136,19 @@ enum MetaOp {
 struct MetaRequest {
 	const MetaOp op; //!< type of request
 	int status;	//!< returned status
+	int clientProtoVers; //!< protocol version # sent by client
+        std::string statusMsg;
 	seq_t opSeqno;	//!< command sequence # sent by the client
 	seq_t seqno;	//!< sequence no. in log
 	const bool mutation; //!< mutates metatree
 	bool suspended;  //!< is this request suspended somewhere
 	KfsCallbackObj *clnt; //!< a handle to the client that generated this request.
-	MetaRequest(MetaOp o, seq_t ops, bool mu):
-		op(o), status(0), opSeqno(ops), seqno(0), mutation(mu),
+	MetaRequest(MetaOp o, seq_t ops, int pv, bool mu):
+		op(o), status(0), clientProtoVers(pv), statusMsg(), opSeqno(ops), seqno(0), mutation(mu),
 		suspended(false), clnt(NULL) { }
 	virtual ~MetaRequest() { }
 
+        virtual void handle();
 	//!< when an op finishes execution, we send a response back to
 	//!< the client.  This function should generate the appropriate
 	//!< response to be sent back as per the KFS protocol.
@@ -138,8 +157,11 @@ struct MetaRequest {
 		(void) os; // XXX avoid spurious compiler warnings
 	};
 	virtual int log(ofstream &file) const = 0; //!< write request to log
-	virtual string Show() { return ""; }
+	virtual string Show() const { return ""; }
 };
+
+extern void process_request(MetaRequest *r);
+extern void submit_request(MetaRequest *r);
 
 /*!
  * \brief look up a file name
@@ -147,12 +169,13 @@ struct MetaRequest {
 struct MetaLookup: public MetaRequest {
 	fid_t dir;	//!< parent directory fid
 	string name;	//!< name to look up
-	MetaFattr result; //!< result of lookup
-	MetaLookup(seq_t s, fid_t d, string n):
-		MetaRequest(META_LOOKUP, s, false), dir(d), name(n) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	std::string result; //!< reply
+	MetaLookup(seq_t s, int  pv, fid_t d, string n):
+		MetaRequest(META_LOOKUP, s, pv, false), dir(d), name(n) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -168,12 +191,13 @@ struct MetaLookup: public MetaRequest {
 struct MetaLookupPath: public MetaRequest {
 	fid_t root;	//!< fid of starting directory
 	string path;	//!< path to look up
-	MetaFattr result; //!< result of lookup;
-	MetaLookupPath(seq_t s, fid_t r, string p):
-		MetaRequest(META_LOOKUP_PATH, s, false), root(r), path(p) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	std::string result; //!< reply
+	MetaLookupPath(seq_t s, int pv, fid_t r, string p):
+		MetaRequest(META_LOOKUP_PATH, s, pv, false), root(r), path(p) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -192,12 +216,13 @@ struct MetaCreate: public MetaRequest {
 	fid_t fid;	//!< file ID of new file
 	int16_t numReplicas; //!< desired degree of replication
 	bool exclusive;  //!< model the O_EXCL flag
-	MetaCreate(seq_t s, fid_t d, string n, int16_t r, bool e):
-		MetaRequest(META_CREATE, s, true), dir(d),
+	MetaCreate(seq_t s, int pv, fid_t d, string n, int16_t r, bool e):
+		MetaRequest(META_CREATE, s, pv, true), dir(d),
 		name(n), numReplicas(r), exclusive(e) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -215,11 +240,12 @@ struct MetaMkdir: public MetaRequest {
 	fid_t dir;	//!< parent directory fid
 	string name;	//!< name to create
 	fid_t fid;	//!< file ID of new directory
-	MetaMkdir(seq_t s, fid_t d, string n):
-		MetaRequest(META_MKDIR, s, true), dir(d), name(n) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaMkdir(seq_t s, int pv, fid_t d, string n):
+		MetaRequest(META_MKDIR, s, pv, true), dir(d), name(n) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -237,11 +263,12 @@ struct MetaRemove: public MetaRequest {
 	string name;	//!< name to remove
 	string pathname; //!< full pathname to remove
 	off_t filesize;	//!< size of file that was freed (debugging info)
-	MetaRemove(seq_t s, fid_t d, string n):
-		MetaRequest(META_REMOVE, s, true), dir(d), name(n), filesize(0) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaRemove(seq_t s, int pv, fid_t d, string n):
+		MetaRequest(META_REMOVE, s, pv, true), dir(d), name(n), filesize(0) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -258,11 +285,12 @@ struct MetaRmdir: public MetaRequest {
 	fid_t dir;	//!< parent directory fid
 	string name;	//!< name to remove
 	string pathname; //!< full pathname to remove
-	MetaRmdir(seq_t s, fid_t d, string n):
-		MetaRequest(META_RMDIR, s, true), dir(d), name(n) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaRmdir(seq_t s, int pv, fid_t d, string n):
+		MetaRequest(META_RMDIR, s, pv, true), dir(d), name(n) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -278,11 +306,12 @@ struct MetaRmdir: public MetaRequest {
 struct MetaReaddir: public MetaRequest {
 	fid_t dir;	//!< directory to read
 	vector <MetaDentry *> v; //!< vector of results
-	MetaReaddir(seq_t s, fid_t d):
-		MetaRequest(META_READDIR, s, false), dir(d) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaReaddir(seq_t s, int pv, fid_t d):
+		MetaRequest(META_READDIR, s, pv, false), dir(d) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -298,11 +327,12 @@ struct MetaReaddirPlus: public MetaRequest {
 	fid_t dir;	//!< directory to read
 	ostringstream v; //!< results built out into a string
 	int numEntries; //!< # of entries in the directory
-	MetaReaddirPlus(seq_t s, fid_t d):
-		MetaRequest(META_READDIRPLUS, s, false), dir(d) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaReaddirPlus(seq_t s, int pv, fid_t d):
+		MetaRequest(META_READDIRPLUS, s, pv, false), dir(d) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -321,11 +351,13 @@ struct MetaGetalloc: public MetaRequest {
 	seq_t chunkVersion; //!< version # assigned to this chunk
 	vector<ServerLocation> locations; //!< where the copies of the chunks are
 	std::string pathname; //!< pathname of the file (useful to print in debug msgs)
-	MetaGetalloc(seq_t s, fid_t f, chunkOff_t o):
-		MetaRequest(META_GETALLOC, s, false), fid(f), offset(o) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaGetalloc(seq_t s, int pv, fid_t f, chunkOff_t o, std::string n):
+		MetaRequest(META_GETALLOC, s, pv, false), fid(f), offset(o), pathname(n)
+	{}
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -363,11 +395,12 @@ struct ChunkLayoutInfo {
 struct MetaGetlayout: public MetaRequest {
 	fid_t fid;	//!< file for layout info is needed
 	vector <ChunkLayoutInfo> v; //!< vector of results
-	MetaGetlayout(seq_t s, fid_t f):
-		MetaRequest(META_GETLAYOUT, s, false), fid(f) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaGetlayout(seq_t s, int pv, fid_t f):
+		MetaRequest(META_GETLAYOUT, s, pv, false), fid(f) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -392,25 +425,46 @@ struct MetaAllocate: public MetaRequest {
 	std::string clientHost; //!< the host from which request was received
 	int16_t  numReplicas;	//!< inherited from file's fattr
 	bool layoutDone;	//!< Has layout of chunk been done
+	//!< when set, the allocation request is asking the metaserver to append
+	//!< a chunk to the file and let the client know the offset at which it was
+	//!< appended.
+	bool appendChunk;	
+	//!< Write append only: the space reservation size that will follow the
+        //!< chunk allocation.
+        int spaceReservationSize;
+	//!< Suggested max # of concurrent appenders per chunk
+	int maxAppendersPerChunk;
 	//!< Server(s) on which this chunk has been placed
 	vector <ChunkServerPtr> servers;
 	//!< For replication, the master that runs the transaction
 	//!< for completing the write.
 	ChunkServerPtr master;
 	uint32_t numServerReplies;
-	MetaAllocate(seq_t s, fid_t f, chunkOff_t o):
-		MetaRequest(META_ALLOCATE, s, true), req(NULL), fid(f),
-		offset(o), layoutDone(false), numServerReplies(0) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
-	{
-		ostringstream os;
-
-		os << "allocate: path = " << pathname << " fid = " << fid;
-		os << " offset = " << offset;
-		return os.str();
-	}
+        bool logFlag;
+        MetaAllocate* next;
+	MetaAllocate(seq_t s, int pv, fid_t f, chunkOff_t o):
+		MetaRequest(META_ALLOCATE, s, pv, true),
+		req(NULL),
+		fid(f),
+		offset(o),
+		chunkId(-1),
+		pathname(),
+		clientHost(),
+		numReplicas(0),
+		layoutDone(false),
+		appendChunk(false),
+		spaceReservationSize(1 << 20),
+		maxAppendersPerChunk(64),
+		master(),
+		numServerReplies(0),
+                logFlag(true),
+                next(0)
+	{}
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const;
+        void LayoutDone();
 };
 
 /*!
@@ -420,16 +474,26 @@ struct MetaTruncate: public MetaRequest {
 	fid_t fid;	//!< file for which space has to be allocated
 	chunkOff_t offset; //!< offset to truncate the file to
 	string pathname; //!< full pathname for file being truncated
-	MetaTruncate(seq_t s, fid_t f, chunkOff_t o):
-		MetaRequest(META_TRUNCATE, s, true), fid(f), offset(o) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	//!< set if the blks from the beginning of the file to the offset have
+	//!< to be deleted.
+	bool pruneBlksFromHead; 
+	MetaTruncate(seq_t s, int pv, fid_t f, chunkOff_t o):
+		MetaRequest(META_TRUNCATE, s, pv, true), fid(f), offset(o), 
+		pruneBlksFromHead(false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
-		os << "truncate: path = " << pathname << " fid = " << fid;
+		if (pruneBlksFromHead)
+			os << "prune from head: ";
+		else
+			os << "truncate: ";
+		os << "path = " << pathname << " fid = " << fid;
 		os << " offset = " << offset;
+
 		return os.str();
 	}
 };
@@ -443,12 +507,13 @@ struct MetaRename: public MetaRequest {
 	string newname;	//!< new file name
 	string oldpath; //!< fully-qualified old pathname
 	bool overwrite; //!< overwrite newname if it exists
-	MetaRename(seq_t s, fid_t d, const char *o, const char *n, bool c):
-		MetaRequest(META_RENAME, s, true), dir(d),
+	MetaRename(seq_t s, int pv, fid_t d, const char *o, const char *n, bool c):
+		MetaRequest(META_RENAME, s, pv, true), dir(d),
 			oldname(o), newname(n), overwrite(c) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -466,11 +531,12 @@ struct MetaSetMtime: public MetaRequest {
 	fid_t fid;		//!< stash the fid for logging
 	string pathname;	//!< absolute path for which we want to set the mtime
 	struct timeval mtime; 	//!< the mtime to set
-	MetaSetMtime(seq_t s, string p, struct timeval &m):
-		MetaRequest(META_SETMTIME, s, true), pathname(p), mtime(m) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaSetMtime(seq_t s, int pv, string p, struct timeval &m):
+		MetaRequest(META_SETMTIME, s, pv, true), pathname(p), mtime(m) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -486,16 +552,47 @@ struct MetaSetMtime: public MetaRequest {
 struct MetaChangeFileReplication: public MetaRequest {
 	fid_t fid;	//!< fid whose replication has to be changed
 	int16_t numReplicas; //!< desired degree of replication
-	MetaChangeFileReplication(seq_t s, fid_t f, int16_t n):
-		MetaRequest(META_CHANGE_FILE_REPLICATION, s, true), fid(f), numReplicas(n) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaChangeFileReplication(seq_t s, int pv, fid_t f, int16_t n):
+		MetaRequest(META_CHANGE_FILE_REPLICATION, s, pv, true), fid(f), numReplicas(n) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
 		os << "change-file-replication: fid = " << fid;
-		os << "new # of replicas: " << numReplicas << ' ';
+		os << " new # of replicas: " << numReplicas << ' ';
+		return os.str();
+	}
+};
+
+/*!
+ * \brief coalesce blocks of one file with another by appending the blocks from
+ * src->dest.  After the coalesce is done, src will be of size 0.
+ */
+struct MetaCoalesceBlocks: public MetaRequest {
+	string srcPath; //!< fully-qualified pathname
+	string dstPath; //!< fully-qualified pathname
+	fid_t  srcFid;
+	fid_t  dstFid;
+	//!< output: the offset in dst at which the first
+	//!< block of src was moved to.
+	off_t  dstStartOffset;
+	vector<chunkId_t> srcChunks;
+	MetaCoalesceBlocks(seq_t s, int pv, const char *o, const char *d):
+		MetaRequest(META_COALESCE_BLOCKS, s, pv, true), 
+			srcPath(o), dstPath(d),
+                        srcFid(-1), dstFid(-1), dstStartOffset(-1), srcChunks() {}
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
+	{
+		ostringstream os;
+
+		os << "coalesce blocks: src = " << srcPath;
+		os << " dst = " << dstPath;
 		return os.str();
 	}
 };
@@ -515,12 +612,13 @@ struct MetaChangeFileReplication: public MetaRequest {
 struct MetaRetireChunkserver : public MetaRequest {
 	ServerLocation location; //<! Location of this server
 	int nSecsDown; //<! set to -1, we retire; otherwise, # of secs of down time
-	MetaRetireChunkserver(seq_t s, const ServerLocation &l, int d) :
-		MetaRequest(META_RETIRE_CHUNKSERVER, s, false), location(l),
+	MetaRetireChunkserver(seq_t s, int pv, const ServerLocation &l, int d) :
+		MetaRequest(META_RETIRE_CHUNKSERVER, s, pv, false), location(l),
 		nSecsDown(d) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	string Show() const
 	{
 		if (nSecsDown > 0)
 			return "Hibernating server: " + location.ToString();
@@ -535,11 +633,12 @@ struct MetaRetireChunkserver : public MetaRequest {
 
 struct MetaToggleRebalancing : public MetaRequest {
 	bool value; // !< Enable/disable rebalancing
-	MetaToggleRebalancing(seq_t s, bool v) :
-		MetaRequest(META_TOGGLE_REBALANCING, s, false), value(v) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaToggleRebalancing(seq_t s, int pv, bool v) :
+		MetaRequest(META_TOGGLE_REBALANCING, s, pv, false), value(v) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		if (value)
 			return "Toggle rebalancing: Enable";
@@ -554,16 +653,33 @@ struct MetaToggleRebalancing : public MetaRequest {
 
 struct MetaExecuteRebalancePlan : public MetaRequest {
 	std::string planPathname; //<! full path to the file with the plan
-	MetaExecuteRebalancePlan(seq_t s, const std::string &p) :
-		MetaRequest(META_EXECUTE_REBALANCEPLAN, s, false), planPathname(p) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaExecuteRebalancePlan(seq_t s, int pv, const std::string &p) :
+		MetaRequest(META_EXECUTE_REBALANCEPLAN, s, pv, false), planPathname(p) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "Execute rebalance plan : " + planPathname;
 	}
 };
 
+/*!
+ * \brief Read a config file and update params (whatever can be in a running
+ * system).
+*/
+struct MetaReadConfig : public MetaRequest {
+	std::string configFn; //<! full path to the file with the config
+	MetaReadConfig(seq_t s, int pv, const std::string &p) :
+		MetaRequest(META_READ_CONFIG, s, pv, false), configFn(p) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show()
+	{
+		return "Execute read config : " + configFn;
+	}
+};
 
 /*!
  * \brief change the number which is used to increment
@@ -578,10 +694,11 @@ struct MetaChangeChunkVersionInc : public MetaRequest {
 	//!< processing can resume.
 	MetaRequest *req;
 	MetaChangeChunkVersionInc(seq_t n, MetaRequest *r):
-		MetaRequest(META_CHANGE_CHUNKVERSIONINC, 0, true),
+		MetaRequest(META_CHANGE_CHUNKVERSIONINC, 0, 0, true),
 		cvi(n), req(r) { }
-	int log(ofstream &file) const;
-	string Show()
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -591,9 +708,9 @@ struct MetaChangeChunkVersionInc : public MetaRequest {
 };
 
 struct ChunkInfo {
-	fid_t fileId;
+	fid_t     allocFileId; // file id when chunk was allocated
 	chunkId_t chunkId;
-	seq_t chunkVersion;
+	seq_t     chunkVersion;
 };
 
 /*!
@@ -602,17 +719,25 @@ struct ChunkInfo {
 struct MetaHello: public MetaRequest {
 	ChunkServerPtr server; //!< The chunkserver that sent the hello message
 	ServerLocation location; //<! Location of this server
+	std::string peerName;
 	uint64_t totalSpace; //!< How much storage space does the
 			//!< server have (bytes)
 	uint64_t usedSpace; //!< How much storage space is used up (in bytes)
+        int64_t uptime; //!< Chunk server uptime.
 	int rackId; //!< the rack on which the server is located
 	int numChunks; //!< # of chunks hosted on this server
+        int numNotStableAppendChunks; //!< # of not stable append chunks hosted on this server
+	int numNotStableChunks; //!< # of not stable chunks hosted on this server
 	int contentLength; //!< Length of the message body
+        int64_t numAppendsWithWid;
 	vector<ChunkInfo> chunks; //!< Chunks  hosted on this server
-	MetaHello(seq_t s): MetaRequest(META_HELLO, s, false) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	vector<ChunkInfo> notStableChunks;
+	vector<ChunkInfo> notStableAppendChunks;
+	MetaHello(seq_t s): MetaRequest(META_HELLO, s, 0, false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "Chunkserver Hello";
 	}
@@ -624,9 +749,10 @@ struct MetaHello: public MetaRequest {
 struct MetaBye: public MetaRequest {
 	ChunkServerPtr server; //!< The chunkserver that went down
 	MetaBye(seq_t s, ChunkServerPtr c):
-		MetaRequest(META_BYE, s, false), server(c) { }
-	int log(ofstream &file) const;
-	string Show()
+		MetaRequest(META_BYE, s, 0, false), server(c) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual string Show() const
 	{
 		return "Chunkserver Bye";
 	}
@@ -638,16 +764,16 @@ struct MetaBye: public MetaRequest {
  * request.
  */
 struct MetaChunkRequest: public MetaRequest {
-	MetaRequest *req; //!< The request that triggered this RPC
-	ChunkServer *server; //!< The chunkserver to send this RPC to
-
-	MetaChunkRequest(MetaOp o, seq_t s, bool mu,
-			 MetaRequest *r, ChunkServer *c):
-		MetaRequest(o, s, mu), req(r), server(c) { }
-
+	MetaChunkRequest(MetaOp o, seq_t s, bool mu, ChunkServer *c):
+		MetaRequest(o, s, 0, mu), server(c) {}
 	//!< generate a request message (in string format) as per the
 	//!< KFS protocol.
+	virtual int log(ofstream &file) const { return 0; }
 	virtual void request(ostream &os) = 0;
+        virtual void handleReply(const Properties& prop) {}
+        virtual void resume() = 0;
+private:
+	const ChunkServer * const server; // The chunkserver to send this RPC to debug only
 };
 
 /*!
@@ -655,13 +781,13 @@ struct MetaChunkRequest: public MetaRequest {
  */
 struct MetaChunkAllocate: public MetaChunkRequest {
 	int64_t leaseId;
+	MetaAllocate * const req;
 	MetaChunkAllocate(seq_t n, MetaAllocate *r, ChunkServer *s, int64_t l):
-		MetaChunkRequest(META_CHUNK_ALLOCATE, n, false, r, s),
-		leaseId(l) { }
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	int log(ofstream &file) const;
-	string Show()
+		MetaChunkRequest(META_CHUNK_ALLOCATE, n, false, s),
+		leaseId(l), req(r) { }
+	virtual void request(ostream &os);
+        virtual void resume();
+	virtual string Show() const
 	{
 		return  "meta->chunk allocate: ";
 	}
@@ -675,12 +801,14 @@ struct MetaChunkVersChange: public MetaChunkRequest {
 	chunkId_t chunkId; //!< The chunk id to free
 	seq_t chunkVersion;	//!< version # assigned to this chunk
 	MetaChunkVersChange(seq_t n, ChunkServer *s, fid_t f, chunkId_t c, seq_t v):
-		MetaChunkRequest(META_CHUNK_VERSCHANGE, n, false, NULL, s),
+		MetaChunkRequest(META_CHUNK_VERSCHANGE, n, false, s),
 		fid(f), chunkId(c), chunkVersion(v) { }
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	int log(ofstream &file) const;
-	string Show()
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		delete this;
+	}           
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -698,11 +826,13 @@ struct MetaChunkVersChange: public MetaChunkRequest {
 struct MetaChunkDelete: public MetaChunkRequest {
 	chunkId_t chunkId; //!< The chunk id to free
 	MetaChunkDelete(seq_t n, ChunkServer *s, chunkId_t c):
-		MetaChunkRequest(META_CHUNK_DELETE, n, false, NULL, s), chunkId(c) { }
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	int log(ofstream &file) const;
-	string Show()
+		MetaChunkRequest(META_CHUNK_DELETE, n, false, s), chunkId(c) { }
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		delete this;
+	}           
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -719,12 +849,14 @@ struct MetaChunkTruncate: public MetaChunkRequest {
 	chunkId_t chunkId; //!< The id of chunk to be truncated
 	size_t chunkSize; //!< The size to which chunk should be truncated
 	MetaChunkTruncate(seq_t n, ChunkServer *s, chunkId_t c, size_t sz):
-		MetaChunkRequest(META_CHUNK_TRUNCATE, n, false, NULL, s),
+		MetaChunkRequest(META_CHUNK_TRUNCATE, n, false, s),
 		chunkId(c), chunkSize(sz) { }
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	int log(ofstream &file) const;
-	string Show()
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		delete this;
+	}           
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -751,12 +883,20 @@ struct MetaChunkReplicate: public MetaChunkRequest {
 	MetaChunkReplicate(seq_t n, ChunkServer *s,
 			fid_t f, chunkId_t c, seq_t v,
 			const ServerLocation &l):
-		MetaChunkRequest(META_CHUNK_REPLICATE, n, false, NULL, s),
+		MetaChunkRequest(META_CHUNK_REPLICATE, n, false, s),
 		fid(f), chunkId(c), chunkVersion(v), srcLocation(l) { }
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	int log(ofstream &file) const;
-	string Show()
+	virtual void handle();
+	virtual void request(ostream &os);
+	virtual void handleReply(const Properties& prop)
+	{
+		fid          = (fid_t)prop.getValue("File-handle",   (long long) 0);
+		chunkVersion = (seq_t)prop.getValue("Chunk-version", (long long) 0);
+	}
+        virtual void resume()
+	{
+		submit_request(this);
+	}
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -785,12 +925,20 @@ struct MetaChunkSize: public MetaChunkRequest {
 	std::string pathname; 
 	MetaChunkSize(seq_t n, ChunkServer *s, fid_t f, chunkId_t c, 
 			const std::string &p) :
-		MetaChunkRequest(META_CHUNK_SIZE, n, true, NULL, s),
+		MetaChunkRequest(META_CHUNK_SIZE, n, true, s),
 		fid(f), chunkId(c), chunkSize(-1), filesize(-1), pathname(p) { }
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	int log(ofstream &file) const;
-	string Show()
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void request(ostream &os);
+	virtual void handleReply(const Properties& prop)
+	{
+		chunkSize = prop.getValue("Size", (off_t) -1);
+	}
+        virtual void resume()
+	{
+		submit_request(this);
+	}
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -808,11 +956,13 @@ struct MetaChunkSize: public MetaChunkRequest {
  */
 struct MetaChunkHeartbeat: public MetaChunkRequest {
 	MetaChunkHeartbeat(seq_t n, ChunkServer *s):
-		MetaChunkRequest(META_CHUNK_HEARTBEAT, n, false, NULL, s) { }
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	int log(ofstream &file) const;
-	string Show()
+		MetaChunkRequest(META_CHUNK_HEARTBEAT, n, false, s) { }
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		delete this;
+	}           
+	virtual string Show() const
 	{
 		return "meta->chunk heartbeat";
 	}
@@ -825,16 +975,152 @@ struct MetaChunkHeartbeat: public MetaChunkRequest {
  */
 struct MetaChunkStaleNotify: public MetaChunkRequest {
 	MetaChunkStaleNotify(seq_t n, ChunkServer *s):
-		MetaChunkRequest(META_CHUNK_STALENOTIFY, n, false, NULL, s) { }
+		MetaChunkRequest(META_CHUNK_STALENOTIFY, n, false, s) { }
 	vector<chunkId_t> staleChunkIds; //!< chunk ids that are stale
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	int log(ofstream &file) const;
-	string Show()
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		delete this;
+	}           
+	virtual string Show() const
 	{
 		return "meta->chunk stale notify";
 	}
 };
+
+struct MetaBeginMakeChunkStable : public MetaChunkRequest {
+	const fid_t          fid;           // input
+	const chunkId_t      chunkId;       // input
+	const seq_t          chunkVersion;  // input
+        const ServerLocation serverLoc;     // processing this cmd
+	int64_t              chunkSize;     // output
+	uint32_t             chunkChecksum; // output
+	MetaBeginMakeChunkStable(seq_t n, ChunkServer *s,
+			const ServerLocation& l, fid_t f, chunkId_t c, seq_t v) :
+		MetaChunkRequest(META_BEGIN_MAKE_CHUNK_STABLE, n, false, s),
+		fid(f), chunkId(c), chunkVersion(v), serverLoc(l),
+                chunkSize(-1), chunkChecksum(0)
+		{}
+        virtual void handle();
+	virtual void request(ostream &os);
+	virtual void handleReply(const Properties& prop)
+	{
+		chunkSize     =           prop.getValue("Chunk-size",     (int64_t) -1);
+		chunkChecksum = (uint32_t)prop.getValue("Chunk-checksum", (uint64_t)0);
+        }
+        virtual void resume()
+	{
+		submit_request(this);
+	}
+	virtual string Show() const {
+		ostringstream os;
+		os << "begin-make-chunk-stable:"
+                " server: "        << serverLoc.ToString() <<
+		" seq: "           << opSeqno <<
+                " status: "        << status <<
+                    (statusMsg.empty() ? "" : " ") << statusMsg <<
+		" fileid: "        << fid <<
+		" chunkid: "       << chunkId <<
+		" chunkvers: "     << chunkVersion <<
+                " chunkSize: "     << chunkSize <<
+                " chunkChecksum: " << chunkChecksum;
+		return os.str();
+	}
+};
+
+struct MetaLogMakeChunkStable : public MetaRequest, public  KfsCallbackObj {
+	const fid_t     fid;              // input
+	const chunkId_t chunkId;          // input
+	const seq_t     chunkVersion;     // input
+	const int64_t   chunkSize;        // input
+	const uint32_t  chunkChecksum;    // input
+	const bool      hasChunkChecksum; // input
+	MetaLogMakeChunkStable(fid_t fileId, chunkId_t id, seq_t version,
+		int64_t size, bool hasChecksum, uint32_t checksum, seq_t seqNum,
+		bool logDoneTypeFlag = false)
+		: MetaRequest(logDoneTypeFlag ?
+		  	META_LOG_MAKE_CHUNK_STABLE_DONE :
+		  	META_LOG_MAKE_CHUNK_STABLE, seqNum, 0, true),
+		  KfsCallbackObj(),
+		  fid(fileId),
+		  chunkId(id),
+		  chunkVersion(version),
+		  chunkSize(size),
+		  chunkChecksum(checksum),
+		  hasChunkChecksum(hasChecksum)
+	{
+		SET_HANDLER(this, &MetaLogMakeChunkStable::logDone);
+		clnt = this;
+	}
+	virtual void handle() { status = 0; }
+	virtual string Show() const {
+		ostringstream os;
+		os << (op == META_LOG_MAKE_CHUNK_STABLE ?
+			"log-make-chunk-stable:" :
+			"log-make-chunk-stable-done:") <<
+		" fleid: "         << fid <<
+		" chunkid: "       << chunkId <<
+		" chunkvers: "     << chunkVersion <<
+		" chunkSize: "     << chunkSize <<
+                " chunkChecksum: " << (hasChunkChecksum ?
+			int64_t(chunkChecksum) : int64_t(-1));
+		return os.str();
+	}
+	virtual int log(ofstream &file) const;
+	int logDone(int code, void *data);
+};
+
+struct MetaLogMakeChunkStableDone : public MetaLogMakeChunkStable {
+	MetaLogMakeChunkStableDone(fid_t fileId, chunkId_t id, seq_t version,
+		int64_t size, bool hasChecksum, uint32_t checksum, seq_t seqNum)
+		: MetaLogMakeChunkStable(fileId, id, version, size, hasChecksum,
+			checksum, seqNum, true)
+		{}
+};
+
+/*!
+ * \brief Notification message from meta->chunk asking the server to make a
+ * chunk.  This tells the chunk server that the writes to a chunk are done and
+ * that the chunkserver should flush any dirty data.  
+ */
+struct MetaChunkMakeStable: public MetaChunkRequest {
+	MetaChunkMakeStable(
+		seq_t          inSeqNo,
+		ChunkServerPtr inServer,
+		fid_t          inFileId,
+		chunkId_t      inChunkId,
+		seq_t          inChunkVersion,
+		off_t          inChunkSize,
+		bool           inHasChunkChecksum,
+		uint32_t       inChunkChecksum,
+		bool           inAddPending)
+		: MetaChunkRequest(META_CHUNK_MAKE_STABLE, inSeqNo, false, inServer.get()),
+		  fid(inFileId),
+		  chunkId(inChunkId),
+		  chunkVersion(inChunkVersion),
+                  chunkSize(inChunkSize),
+		  hasChunkChecksum(inHasChunkChecksum),
+		  addPending(inAddPending),
+		  chunkChecksum(inChunkChecksum),
+                  server(inServer)
+                {}
+	const fid_t          fid;          //!< input: we tell the chunkserver what it is
+	const chunkId_t      chunkId;      //!< The chunk id to make stable
+	const seq_t          chunkVersion; //!< The version tha the chunk should be in
+        const off_t          chunkSize;
+        const bool           hasChunkChecksum:1;
+	const bool           addPending:1;
+        const uint32_t       chunkChecksum;
+	const ChunkServerPtr server;        //!< The chunkserver that sent us this message
+        virtual void handle();
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		submit_request(this);
+	}
+	virtual string Show() const;
+};
+
 
 /*!
  * For scheduled downtime, we evacaute all the chunks on a server; when
@@ -842,13 +1128,54 @@ struct MetaChunkStaleNotify: public MetaChunkRequest {
  */
 struct MetaChunkRetire: public MetaChunkRequest {
 	MetaChunkRetire(seq_t n, ChunkServer *s):
-		MetaChunkRequest(META_CHUNK_RETIRE, n, false, NULL, s) { }
-	int log(ofstream &file) const;
-	//!< generate the request string that should be sent out
-	void request(ostream &os);
-	string Show()
+		MetaChunkRequest(META_CHUNK_RETIRE, n, false, s) { }
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		delete this;
+	}           
+	virtual string Show() const
 	{
 		return "chunkserver retire";
+	}
+};
+
+struct MetaChunkSetProperties: public MetaChunkRequest {
+	const string serverProps;
+	MetaChunkSetProperties(
+			seq_t n, ChunkServer *s, const Properties& props)
+		: MetaChunkRequest(META_CHUNK_SET_PROPERTIES, n, false, s),
+		  serverProps(Properties2Str(props))
+	{}
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		delete this;
+	}           
+	virtual string Show() const
+	{
+		return "chunkserver set properties";
+	}
+	static string Properties2Str(const Properties& props)
+	{
+		string ret;
+		props.getList(ret, "");
+		return ret;
+	}
+};
+
+struct MetaChunkServerRestart : public MetaChunkRequest {
+	MetaChunkServerRestart(seq_t n, ChunkServer *s)
+		: MetaChunkRequest(META_CHUNK_SERVER_RESTART, n, false, s)
+		{}
+	virtual void request(ostream &os);
+        virtual void resume()
+	{
+		delete this;
+	}           
+	virtual string Show() const
+	{
+		return "chunkserver restart";
 	}
 };
 
@@ -863,11 +1190,12 @@ struct MetaPing: public MetaRequest {
 	string servers; //!< result that contains info about chunk servers
 	string retiringServers; //!< info about servers that are being retired
 	string downServers; //!< info about servers that have gone down
-	MetaPing(seq_t s):
-		MetaRequest(META_PING, s, false) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaPing(seq_t s, int pv):
+		MetaRequest(META_PING, s, pv, false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "ping";
 	}
@@ -879,11 +1207,12 @@ struct MetaPing: public MetaRequest {
  */
 struct MetaUpServers: public MetaRequest {
 	ostringstream stringStream;
-	MetaUpServers(seq_t s):
-		MetaRequest(META_UPSERVERS, s, false) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaUpServers(seq_t s, int pv):
+		MetaRequest(META_UPSERVERS, s, pv, false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "upservers";
 	}
@@ -895,11 +1224,12 @@ struct MetaUpServers: public MetaRequest {
  */
 struct MetaToggleWORM: public MetaRequest {
 	bool value; // !< Enable/disable WORM
-	MetaToggleWORM(seq_t s, bool v):
-		MetaRequest(META_TOGGLE_WORM, s, false), value(v) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaToggleWORM(seq_t s, int pv, bool v):
+		MetaRequest(META_TOGGLE_WORM, s, pv, false), value(v) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		if (value)
 			return "Toggle WORM: Enabled";
@@ -914,11 +1244,12 @@ struct MetaToggleWORM: public MetaRequest {
  */
 struct MetaStats: public MetaRequest {
 	string stats; //!< result
-	MetaStats(seq_t s):
-		MetaRequest(META_STATS, s, false) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaStats(seq_t s, int pv):
+		MetaRequest(META_STATS, s, pv, false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "stats";
 	}
@@ -928,11 +1259,12 @@ struct MetaStats: public MetaRequest {
  * \brief For debugging purposes, recompute the size of the dir tree
  */
 struct MetaRecomputeDirsize: public MetaRequest {
-	MetaRecomputeDirsize(seq_t s):
-		MetaRequest(META_RECOMPUTE_DIRSIZE, s, false) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaRecomputeDirsize(seq_t s, int pv):
+		MetaRequest(META_RECOMPUTE_DIRSIZE, s, pv, false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "recompute dir size";
 	}
@@ -944,11 +1276,12 @@ struct MetaRecomputeDirsize: public MetaRequest {
  */
 struct MetaDumpChunkToServerMap: public MetaRequest {
 	string chunkmapFile; //!< file to which the chunk map was written to
-	MetaDumpChunkToServerMap(seq_t s):
-		MetaRequest(META_DUMP_CHUNKTOSERVERMAP, s, false) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaDumpChunkToServerMap(seq_t s, int pv):
+		MetaRequest(META_DUMP_CHUNKTOSERVERMAP, s, pv, false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "dump chunk2server map";
 	}
@@ -958,11 +1291,12 @@ struct MetaDumpChunkToServerMap: public MetaRequest {
  * \brief For debugging purposes, check the status of all the leases
  */
 struct MetaCheckLeases: public MetaRequest {
-	MetaCheckLeases(seq_t s):
-		MetaRequest(META_CHECK_LEASES, s, false) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaCheckLeases(seq_t s, int pv):
+		MetaRequest(META_CHECK_LEASES, s, pv, false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "checking all leases";
 	}
@@ -973,15 +1307,34 @@ struct MetaCheckLeases: public MetaRequest {
  * being re-replicated.
  */
 struct MetaDumpChunkReplicationCandidates: public MetaRequest {
-	MetaDumpChunkReplicationCandidates(seq_t s):
-		MetaRequest(META_DUMP_CHUNKREPLICATIONCANDIDATES, s, false) { }
+	MetaDumpChunkReplicationCandidates(seq_t s, int pv):
+		MetaRequest(META_DUMP_CHUNKREPLICATIONCANDIDATES, s, pv, false) { }
 	// list of blocks that are being re-replicated
 	std::string blocks;
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "dump chunk replication candidates";
+	}
+};
+
+/*!
+ * \brief Check the replication level of all blocks in the system.  Return back
+ * a list of files that have blocks missing.
+*/
+struct MetaFsck: public MetaRequest {
+	MetaFsck(seq_t s, int pv):
+		MetaRequest(META_FSCK, s, pv, false) { }
+	// a status message about what is missing/endangered
+	std::string fsckStatus;
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
+	{
+		return "fsck";
 	}
 };
 
@@ -993,13 +1346,46 @@ struct MetaDumpChunkReplicationCandidates: public MetaRequest {
 struct MetaOpenFiles: public MetaRequest {
 	string openForRead; //!< result
 	string openForWrite; //!< result
-	MetaOpenFiles(seq_t s):
-		MetaRequest(META_OPEN_FILES, s, false) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaOpenFiles(seq_t s, int pv):
+		MetaRequest(META_OPEN_FILES, s, pv, false) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		return "open files";
+	}
+};
+
+struct MetaSetChunkServersProperties : public MetaRequest {
+	Properties properties; // input
+	MetaSetChunkServersProperties(seq_t s, int pv)
+		: MetaRequest(META_SET_CHUNK_SERVERS_PROPERTIES, s, pv, false),
+		  properties()
+		{}
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
+	{
+		std::string ret("set chunk servers properties ");
+		properties.getList(ret, "", ";");
+		return ret;
+	}
+};
+
+struct MetaGetChunkServersCounters : public MetaRequest {
+	std::string resp; 
+	MetaGetChunkServersCounters(seq_t s, int pv)
+		: MetaRequest(META_GET_CHUNK_SERVERS_COUNTERS, s, pv, false),
+		  resp()
+		{}
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
+	{
+		return std::string("get chunk servers counters ");
 	}
 };
 
@@ -1009,17 +1395,19 @@ struct MetaOpenFiles: public MetaRequest {
 struct MetaChunkCorrupt: public MetaRequest {
 	fid_t fid; //!< input
 	chunkId_t chunkId; //!< input
+	int isChunkLost; //! < input
 	ChunkServerPtr server; //!< The chunkserver that sent us this message
 	MetaChunkCorrupt(seq_t s, fid_t f, chunkId_t c):
-		MetaRequest(META_CHUNK_CORRUPT, s, false),
-		fid(f), chunkId(c) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+		MetaRequest(META_CHUNK_CORRUPT, s, 0, false),
+		fid(f), chunkId(c), isChunkLost(0) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
-		os << "corrupt chunk: fid = " << fid << " chunkid = " << chunkId;
+		os << (isChunkLost ? "lost" : "corrupt") << " chunk: fid = " << fid << " chunkid = " << chunkId;
 		return os.str();
 	}
 };
@@ -1032,12 +1420,13 @@ struct MetaLeaseAcquire: public MetaRequest {
 	std::string pathname;   //!< full pathname of the file that owns chunk
 	chunkId_t chunkId; //!< input
 	int64_t leaseId; //!< result
-	MetaLeaseAcquire(seq_t s, chunkId_t c):
-		MetaRequest(META_LEASE_ACQUIRE, s, false),
-		leaseType(READ_LEASE), chunkId(c), leaseId(-1) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaLeaseAcquire(seq_t s, int pv, chunkId_t c, std::string n):
+		MetaRequest(META_LEASE_ACQUIRE, s, pv, false),
+		leaseType(READ_LEASE), pathname(n), chunkId(c), leaseId(-1) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -1060,12 +1449,13 @@ struct MetaLeaseRenew: public MetaRequest {
 	std::string pathname;   //!< full pathname of the file that owns chunk
 	chunkId_t chunkId; //!< input
 	int64_t leaseId; //!< input
-	MetaLeaseRenew(seq_t s, LeaseType t, chunkId_t c, int64_t l):
-		MetaRequest(META_LEASE_RENEW, s, false),
-		leaseType(t), chunkId(c), leaseId(l) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	MetaLeaseRenew(seq_t s, int pv, LeaseType t, chunkId_t c, int64_t l, std::string n):
+		MetaRequest(META_LEASE_RENEW, s, pv, false),
+		leaseType(t), pathname(n), chunkId(c), leaseId(l) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -1084,15 +1474,21 @@ struct MetaLeaseRenew: public MetaRequest {
  * \brief Op for relinquishing a lease on a chunk of a file.
  */
 struct MetaLeaseRelinquish: public MetaRequest {
-	LeaseType leaseType; //!< input
-	chunkId_t chunkId; //!< input
-	int64_t leaseId; //!< input
-	MetaLeaseRelinquish(seq_t s, LeaseType t, chunkId_t c, int64_t l):
-		MetaRequest(META_LEASE_RELINQUISH, s, false),
-		leaseType(t), chunkId(c), leaseId(l) { }
-	int log(ofstream &file) const;
-	void response(ostream &os);
-	string Show()
+	const LeaseType leaseType; //!< input
+	const chunkId_t chunkId; //!< input
+	const int64_t leaseId; //!< input
+        const off_t chunkSize;
+        const bool hasChunkChecksum;
+        const uint32_t chunkChecksum;
+	MetaLeaseRelinquish(seq_t s, int pv, LeaseType t, chunkId_t c, int64_t l,
+            off_t size, bool hasCs, uint32_t checksum):
+		MetaRequest(META_LEASE_RELINQUISH, s, pv, false),
+		leaseType(t), chunkId(c), leaseId(l), chunkSize(size),
+                hasChunkChecksum(hasCs), chunkChecksum(checksum) { }
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual void response(ostream &os);
+	virtual string Show() const
 	{
 		ostringstream os;
 
@@ -1102,7 +1498,11 @@ struct MetaLeaseRelinquish: public MetaRequest {
 		else
 			os << "write lease ";
 
-		os << " chunkId = " << chunkId << " leaseId = " << leaseId;
+		os << " chunkId: " << chunkId << " leaseId: " << leaseId <<
+                    " chunkSize: " << chunkSize;
+                if (hasChunkChecksum) {
+                    os << " checksum: " << chunkChecksum;
+                }
 		return os.str();
 	}
 };
@@ -1113,10 +1513,11 @@ struct MetaLeaseRelinquish: public MetaRequest {
  */
 struct MetaLeaseCleanup: public MetaRequest {
 	MetaLeaseCleanup(seq_t s, KfsCallbackObj *c):
-		MetaRequest(META_LEASE_CLEANUP, s, false) { clnt = c; }
+		MetaRequest(META_LEASE_CLEANUP, s, 0, false) { clnt = c; }
 
-	int log(ofstream &file) const;
-	string Show()
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual string Show() const
 	{
 		return "lease cleanup";
 	}
@@ -1129,10 +1530,11 @@ struct MetaLeaseCleanup: public MetaRequest {
  */
 struct MetaChunkReplicationCheck : public MetaRequest {
 	MetaChunkReplicationCheck(seq_t s, KfsCallbackObj *c):
-		MetaRequest(META_CHUNK_REPLICATION_CHECK, s, false) { clnt = c; }
+		MetaRequest(META_CHUNK_REPLICATION_CHECK, s, 0, false) { clnt = c; }
 
-	int log(ofstream &file) const;
-	string Show()
+        virtual void handle();
+	virtual int log(ofstream &file) const;
+	virtual string Show() const
 	{
 		return "chunk replication check";
 	}
@@ -1141,8 +1543,6 @@ struct MetaChunkReplicationCheck : public MetaRequest {
 extern int ParseCommand(std::istream& is, MetaRequest **res);
 
 extern void initialize_request_handlers();
-extern void process_request(MetaRequest *r);
-extern void submit_request(MetaRequest *r);
 extern void printleaves();
 
 extern void ChangeIncarnationNumber(MetaRequest *r);

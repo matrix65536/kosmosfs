@@ -360,6 +360,8 @@ def ping(metaserver):
                 wormMode = line.split(':')[1].strip()
                 if int(wormMode) == 1:
                     systemInfo.wormMode = "Enabled"
+                else:
+                    systemInfo.wormMode = "Disabled"
             except:
                 pass
             

@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file kfstree.h
  * \brief Search tree for the KFS metadata server.
@@ -32,8 +32,11 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <set>
+#include <tr1/unordered_map>
 #include "base.h"
 #include "meta.h"
+#include "libkfsIO/Globals.h"
 
 using std::string;
 using std::vector;
@@ -174,6 +177,22 @@ public:
 	}
 };
 
+struct PathToFidCacheEntry {
+	PathToFidCacheEntry() : fid(-1), fa(NULL), lastAccessTime(0) { }
+	fid_t fid;
+	MetaFattr *fa;
+	time_t lastAccessTime;
+};
+
+typedef std::tr1::unordered_map <std::string, PathToFidCacheEntry> PathToFidCacheMap;
+typedef std::tr1::unordered_map <std::string, PathToFidCacheEntry>::iterator PathToFidCacheMapIter;
+extern Counter *gPathToFidCacheHit, *gPathToFidCacheMiss;
+
+//! If a cache entry hasn't been accessed in 600 secs, remove it from cache
+const int FID_CACHE_ENTRY_EXPIRE_INTERVAL = 600;
+//! Once in 10 mins cleanup the cache
+const int FID_CACHE_CLEANUP_INTERVAL = 600;
+
 /*!
  * \brief the KFS search tree.
  *
@@ -191,6 +210,12 @@ class Tree {
 		pathlink(): n(0), pos(-1) { }
 	};
 	bool allowFidToPathConversion;	//!< fid->path translation is enabled?
+	bool mIsPathToFidCacheEnabled; //!< should we enable path->fid cache?
+	//!< optimize for lookupPath by caching fid's of recently looked up
+	//entries. 
+	PathToFidCacheMap mPathToFidCache; 
+	time_t mLastPathToFidCacheCleanupTime;
+
 	Node *findLeaf(const Key &k) const;
 	void unlink(fid_t dir, const string fname, MetaFattr *fa, bool save_fa);
 	int link(fid_t dir, const string fname, FileType type, fid_t myID, 
@@ -199,10 +224,11 @@ class Tree {
 	bool emptydir(fid_t dir);
 	bool is_descendant(fid_t src, fid_t dst);
 	void shift_path(vector <pathlink> &path);
-	off_t recomputeDirSize(fid_t dir);
+	void recomputeDirSize(fid_t dir, off_t &dirsz);
 	int changeFileReplication(MetaFattr *fa, int16_t numReplicas);
 	int changeDirReplication(MetaFattr *dirattr, int16_t numReplicas);
-	void listPaths(std::ofstream &ofs, std::string parent, fid_t dir);
+	int listPaths(std::ostream &ofs, std::string parent, fid_t dir, std::set<fid_t> specificIds);
+
 public:
 	Tree()
 	{
@@ -212,11 +238,18 @@ public:
 		first = root;
 		hgt = 1;
 		allowFidToPathConversion = true;
+		mLastPathToFidCacheCleanupTime = 0;
+		mIsPathToFidCacheEnabled = false;
 	}
 	int new_tree()			//!< create a directory namespace
 	{
 		fid_t dummy = 0;
 		return mkdir(KFS::ROOTFID, "/", &dummy);
+	}
+	void enablePathToFidCache()
+	{
+		mIsPathToFidCacheEnabled = true;
+
 	}
 	int insert(Meta *m);			//!< add data item
 	int del(Meta *m);			//!< remove data item
@@ -233,7 +266,10 @@ public:
 	void disableFidToPathname() { allowFidToPathConversion = false; }
 	void enableFidToPathname() { allowFidToPathConversion = true; }
 	std::string getPathname(fid_t fid);	//!< return full pathname for a given file id
-	void listPaths(std::ofstream &ofs);	//!< list out the paths in the tree
+	int listPaths(std::ostream &ofs);	//!< list out the paths in the tree
+	//!< list out the paths in the tree for specific fid's
+	int listPaths(std::ostream &ofs, std::set<fid_t> specificIds);	
+	void cleanupPathToFidCache();
 	void recomputeDirSize();		//!< re-compute the size of each dir. in tree
 
 	int create(fid_t dir, const string &fname, fid_t *newFid, 
@@ -272,13 +308,16 @@ public:
 	/*
 	 * \brief Allocate a unique chunk identifier
 	 * \param[in] file	The id of the file for which need to allocate space
-	 * \param[in] offset	The offset in the file at which space should be allocated
+	 * \param[in/out] offset	The offset in the file at which space should be allocated
+	 *		if the offset isn't specified, then the allocation
+	 *		request is a "chunk append" to the file.  The file offset at
+	 *		which the chunk is allocated is returned back.
 	 * \param[out] chunkId  The chunkId that is allocated
 	 * \param[out] numReplicas The # of replicas to be created for the chunk.  This
 	 *  parameter is inhreited from the file's attributes.
 	 * \retval 0 on success; -errno on failure
 	 */
-	int allocateChunkId(fid_t file, chunkOff_t offset, chunkId_t *chunkId,
+	int allocateChunkId(fid_t file, chunkOff_t &offset, chunkId_t *chunkId,
 				seq_t *version, int16_t *numReplicas);
 
 	/*
@@ -287,11 +326,29 @@ public:
 	 * \param[in] file	The id of the file for which need to allocate space
 	 * \param[in] offset	The offset in the file at which space should be allocated
 	 * \param[in] chunkId   The chunkId that is assigned to file/offset
+	 * \param[io] appendOffset If not null and chunk at the specified offset exists,
+         * then allocate chunk after eof, and return the newly assigned chunk offset.
 	 * \retval 0 on success; -errno on failure
 	 */
 	int assignChunkId(fid_t file, chunkOff_t offset, 
-			  chunkId_t chunkId, seq_t version);
-	
+			  chunkId_t chunkId, seq_t version, chunkOff_t *appendOffset = 0);
+
+	/*
+	 * \brief Coalesce blocks of one file with another. Move all the chunks from src to dest.
+	 * \param[in] srcPath    The full pathname for the source for the blocks
+	 * \param[in] dstPath    The full pathname for the source for the blocks
+	 * \param[out] srcFid	 The source fileid (used when making the change permanent).
+	 * \param[out] dstFid	 The dest fileid (used when making blk change permanent).
+	 * \param[out] srcChunks  The id's of the chunks from source
+	 * \param[out] dstStartOffset  The initial dest length
+	 */
+	int coalesceBlocks(const std::string &srcPath, const std::string &dstPath, 
+				fid_t &srcFid, vector<chunkId_t> &srcChunks, fid_t &dstFid,
+				chunkOff_t &dstStartOffset);
+	int coalesceBlocks(MetaFattr* srcFa, MetaFattr* dstFa, 
+    				fid_t &srcFid, vector<chunkId_t> &srcChunks, fid_t &dstFid,
+				chunkOff_t &dstStartOffset);
+
 	/*
 	 * \brief Truncate a file to the specified file offset.  Due
 	 * to truncation, chunks past the desired offset will be
@@ -308,6 +365,16 @@ public:
 	 * is needed
 	 */
 	int truncate(fid_t file, chunkOff_t offset, chunkOff_t *allocOffset);
+
+	/*
+	 * \brief Is like truncate, but in the opposite direction: delete blks
+	 * from the head of the file to the specified offset.
+	 * \param[in] file	The id of the file being truncated
+	 * \param[in] offset	The offset before which chunks in the file should
+	 * 			be deleted.
+	 * \retval 0 on success; -errno on failure
+	 */
+	int pruneFromHead(fid_t file, chunkOff_t offset);
 };
 
 /*!

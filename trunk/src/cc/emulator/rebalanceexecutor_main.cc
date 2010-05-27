@@ -3,7 +3,6 @@
 //
 // Created 2008/08/27
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -86,7 +85,7 @@ main(int argc, char **argv)
 
     gLayoutEmulator.LoadRebalancePlan(rebalancePlanFn);
     
-    MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
 
     gLayoutEmulator.PrintChunkserverBlockCount();
 

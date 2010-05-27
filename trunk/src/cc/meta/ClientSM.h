@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/02
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -35,6 +34,7 @@
 
 namespace KFS
 {
+    class Properties;
 
     class ClientSM : public KfsCallbackObj {
     public:
@@ -53,6 +53,7 @@ namespace KFS
         //
         int HandleRequest(int code, void *data);
         int HandleTerminate(int code, void *data);
+        static void SetParameters(const Properties& prop);
 
     private:
         /// A handle to a network connection
@@ -66,6 +67,12 @@ namespace KFS
 	/// next one.
 	std::list<MetaRequest *> mPending;
 
+	/// queue length
+	int		mPendingLength;
+        int             mRecursionCnt;
+	/// used to print message about old protocol version once
+	int		mClientProtoVers;
+
         /// Given a (possibly) complete op in a buffer, run it.
         void		HandleClientCmd(IOBuffer *iobuf, int cmdLen);
 
@@ -75,8 +82,10 @@ namespace KFS
 	/// submit an op for execution to the request processor
 	void		SubmitOp();
 
-	/// log out client ip addr. for debugging purposes
-	std::string	mClientIP;
+        static int sMaxPendingLength;
+	static int sMaxReadAhead;
+	static int sInactivityTimeout;
+        static int sMaxWriteBehind;
     };
 
 }

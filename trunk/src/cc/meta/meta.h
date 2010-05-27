@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file meta.h
  * \brief Base class and derived classes for KFS metadata objects.
@@ -142,10 +142,16 @@ public:
 	//!< size of file: is only a hint; if we don't have the size, the client will
 	//!< compute the size whenever needed.  
 	off_t filesize;		
+	//!< offset in the file at which the last chunk was allocated.  For
+	//!< record appends, the client will issue an allocation request asking
+	//!< to append a chunk to the file.  The metaserver picks the file offset
+	//!< for the chunk based on what has been allocated so far.
+	off_t nextChunkOffset;
 
 	MetaFattr(FileType t, fid_t id, int16_t n):
 		Meta(KFS_FATTR, id), type(t), 
-		numReplicas(n), chunkcount(0), filesize(-1)
+		numReplicas(n), chunkcount(0), filesize(-1),
+		nextChunkOffset(0)
 	{
 		int UNUSED_ATTR s = gettimeofday(&crtime, NULL);
 		assert(s == 0);
@@ -157,8 +163,8 @@ public:
 	MetaFattr(FileType t, fid_t id, struct timeval mt,
 		struct timeval ct, struct timeval crt,
 		long long c, int16_t n): Meta(KFS_FATTR, id),
-				 type(t), numReplicas(n), mtime(mt), ctime(ct),
-				 crtime(crt), chunkcount(c), filesize(-1) 
+		type(t), numReplicas(n), mtime(mt), ctime(ct),
+		crtime(crt), chunkcount(c), filesize(-1), nextChunkOffset(0)
 	{ 
 		if (type == KFS_DIR)
 			filesize = 0;

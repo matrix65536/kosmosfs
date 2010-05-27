@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/16
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -27,11 +26,6 @@
 #ifndef _CHUNKSERVER_H
 #define _CHUNKSERVER_H
 
-#include "libkfsIO/Acceptor.h"
-#include "libkfsIO/DiskManager.h"
-#include "libkfsIO/EventManager.h"
-#include "libkfsIO/NetManager.h"
-#include "libkfsIO/Globals.h"
 #include "libkfsIO/TelemetryClient.h"
 
 #include "ChunkManager.h"

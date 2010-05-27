@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/06/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -43,7 +42,6 @@ extern "C" {
 #include "common/log.h"
 
 #include "MonUtils.h"
-#include "KfsToolsCommon.h"
 
 using std::string;
 using std::cout;
@@ -82,8 +80,7 @@ int main(int argc, char **argv)
 {
     char optchar;
     bool help = false;
-    string metaServerHost = "";
-    string chunkServerHost = "";
+    const char *metaserver = NULL, *chunkserver = NULL;
     int metaport = -1, chunkport = -1, sleepTime = -1;
     bool verboseLogging = false;
 
@@ -92,10 +89,10 @@ int main(int argc, char **argv)
     while ((optchar = getopt(argc, argv, "hm:p:c:d:s:v")) != -1) {
         switch (optchar) {
             case 'm': 
-                KFS::tools::parseServer(optarg, metaServerHost, metaport);
+                metaserver = optarg;
                 break;
             case 'c':
-		KFS::tools::parseServer(optarg, chunkServerHost, chunkport);
+                chunkserver = optarg;
                 break;
             case 'p':
                 metaport = atoi(optarg);
@@ -119,7 +116,7 @@ int main(int argc, char **argv)
         }
     }
 
-    help = help || (metaServerHost == "") || (chunkServerHost == "");
+    help = help || !metaserver || !chunkserver;
 
     if (help) {
         cout << "Usage: " << argv[0] << " [-m <metaserver> -p <port>] [-c <chunkserver> -d <port>] "
@@ -128,13 +125,13 @@ int main(int argc, char **argv)
     }
 
     if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelDEBUG);
     } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelINFO);
     } 
 
-    ServerLocation metaLoc(metaServerHost, metaport);
-    ServerLocation chunkLoc(chunkServerHost, chunkport);
+    ServerLocation metaLoc(metaserver, metaport);
+    ServerLocation chunkLoc(chunkserver, chunkport);
 
     RetireChunkserver(metaLoc, chunkLoc, sleepTime);
     exit(0);

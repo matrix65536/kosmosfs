@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2007/01/17
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.
@@ -88,6 +87,8 @@ public:
     int HandleReplicationDone(int code, void *data);
     // Cleanup...
     void Terminate();
+    static size_t GetNumReplications();
+    static void CancelAll();
 
 private:
 
@@ -99,8 +100,6 @@ private:
     size_t mChunkSize;
     // The op that triggered this replication operation.
     ReplicateChunkOp *mOwner;
-    // Are we done yet?
-    bool mDone;
     // What is the offset we are currently reading at
     off_t mOffset;
 
@@ -110,6 +109,9 @@ private:
     GetChunkMetadataOp mChunkMetadataOp;
     ReadOp mReadOp;
     WriteOp mWriteOp;
+    // Are we done yet?
+    bool mDone;
+    bool mCancelFlag;
 
     // Send out a read request to the peer
     void Read();

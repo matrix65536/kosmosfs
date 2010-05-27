@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/11/03
-// Author: Mike Ovsiannikov
 //
 // Copyright 2008,2009 Quantcast Corp.
 //
@@ -122,10 +121,10 @@ public:
         NodeT** inListPtr,
         NodeT&  inNode)
     {
-        // Insert removes the node from the list.
+        // Insert removes the node from the list before inserting.
         NodeT*& theHeadPtr = inListPtr[ListT];
-        if (theHeadPtr) {
-            ListOp::Insert(inNode, GetPrev(*theHeadPtr));
+        if (theHeadPtr && &inNode != theHeadPtr) {
+            ListOp::Insert(inNode, ListOp::GetPrev(*theHeadPtr));
         }
         theHeadPtr = &inNode;
     }

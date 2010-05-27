@@ -4,7 +4,6 @@
 // \brief Common declarations for KFS (meta/chunk/client-lib)
 //
 // Created 2006/10/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -33,6 +32,7 @@ extern "C" {
 #include <stdint.h>
 }
 #include <cerrno>
+#include <cstddef>
 #include <cassert>
 
 #if defined (__APPLE__)
@@ -43,14 +43,16 @@ extern "C" {
 
 namespace KFS {
 
-typedef int64_t	kfsOff_t;
-
 typedef long long seq_t;        //!< request sequence no. for logging
 typedef long long seqid_t;      //!< sequence number id's for file/chunks
 typedef seqid_t fid_t;          //!< file ID
 typedef seqid_t chunkId_t;      //!< chunk ID
 typedef long long chunkOff_t;   //!< chunk offset
 const fid_t ROOTFID = 2;        //!< special fid for "/
+
+//!< Every time we change the protocol, rev. this one. We can use this value to
+//!< detect clients running old binaries.
+const int KFS_CLIENT_PROTO_VERS = 101; 
 
 //!< Declarations as used in the Chunkserver/client-library
 typedef int64_t kfsFileId_t;
@@ -61,6 +63,10 @@ const size_t CHUNKSIZE = 64u << 20; //!< (64MB)
 const int MAX_RPC_HEADER_LEN = 16u << 10; //!< Max length of header in RPC req/response
 const short int NUM_REPLICAS_PER_FILE = 3; //!< default degree of replication
 const short int MAX_REPLICAS_PER_FILE = 64; //!< max. replicas per chunk of file
+
+//!< If there are over 2000 rpcs pending from a single client, that client alone
+//can monopolize the server; shed load.
+const uint32_t MAX_PENDING_RPC_PER_CLIENT = 2000;
 
 //!< Default lease interval of 5 mins
 const int LEASE_INTERVAL_SECS = 300;

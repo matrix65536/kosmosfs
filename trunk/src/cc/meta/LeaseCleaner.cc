@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/10/16
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -38,12 +37,12 @@ LeaseCleaner::LeaseCleaner() :
 	SET_HANDLER(this, &LeaseCleaner::HandleEvent);
 	/// setup a periodic event to do the cleanup
 	mTimer = new LeaseCleanerTimeoutImpl(this);
-	globals().netManager.RegisterTimeoutHandler(mTimer);
+	globalNetManager().RegisterTimeoutHandler(mTimer);
 }
 
 LeaseCleaner::~LeaseCleaner()
 {
-	globals().netManager.UnRegisterTimeoutHandler(mTimer);
+	globalNetManager().UnRegisterTimeoutHandler(mTimer);
 	delete mTimer;
 }
 

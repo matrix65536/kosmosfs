@@ -1,5 +1,5 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/08/15
 //
@@ -160,9 +160,9 @@ bool doFileOps(char *testDataFile,
 
     gKfsClient->Close(fd);
 
-    KfsFileStat result;
+    struct stat result;
     gKfsClient->Stat(fileName, result);
-    assert(result.size == 100000);
+    assert(result.st_size == 100000);
     
     delete [] kfsBuf;
     delete [] dataBuf;

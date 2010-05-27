@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/09/13
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corporation.  All rights reserved.
 //
@@ -43,6 +42,7 @@ using namespace KFS;
 #include <vector>
 #include <fstream>
 #include <ostream>
+#include <iostream>
 
 #include "common/log.h"
 
@@ -114,7 +114,7 @@ int main(int argc, char **argv)
         KFS::MsgLogger::Init(NULL);
     }
 
-    KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    KFS::MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
     if (help) {
         cout << "Usage: " << argv[0] << " -m <machines file> " << " -l <log fn>" << endl;
         exit(0);
@@ -256,6 +256,7 @@ KFS::gatherState(int sock)
 
         }
     }
+    delete [] buf;
 }
 
 void

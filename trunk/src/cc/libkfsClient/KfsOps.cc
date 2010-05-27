@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/05/24
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -60,6 +59,7 @@ CreateOp::Request(ostream &os)
     os << "CREATE " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Filename: " << filename << "\r\n";
     os << "Num-replicas: " << numReplicas << "\r\n";
@@ -72,6 +72,7 @@ MkdirOp::Request(ostream &os)
     os << "MKDIR " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Directory: " << dirname << "\r\n\r\n";
 }
@@ -82,6 +83,7 @@ RmdirOp::Request(ostream &os)
     os << "RMDIR " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Pathname: " << pathname << "\r\n";
     os << "Directory: " << dirname << "\r\n\r\n";
@@ -95,6 +97,7 @@ RenameOp::Request(ostream &os)
     os << "RENAME " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Old-name: " << oldname << "\r\n";
     os << "New-path: " << newpath << "\r\n";
@@ -108,6 +111,7 @@ ReaddirOp::Request(ostream &os)
     os << "READDIR " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Directory File-handle: " << fid << "\r\n\r\n";
 }
 
@@ -117,6 +121,7 @@ SetMtimeOp::Request(ostream &os)
     os << "SET_MTIME" << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Pathname: " << pathname << "\r\n";
     os << "Mtime-sec: " << mtime.tv_sec << "\r\n";
     os << "Mtime-usec: " << mtime.tv_usec << "\r\n\r\n";
@@ -125,17 +130,19 @@ SetMtimeOp::Request(ostream &os)
 void
 DumpChunkServerMapOp::Request(ostream &os)
 {
-	os << "DUMP_CHUNKTOSERVERMAP" << "\r\n";
-	os << "Cseq: " << seq << "\r\n";
-	os << "Version: " << KFS_VERSION_STR << "\r\n\r\n";
+    os << "DUMP_CHUNKTOSERVERMAP" << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n\r\n";
 }
 
 void
 DumpChunkMapOp::Request(ostream &os)
 {
-	os << "DUMP_CHUNKMAP" << "\r\n";
-	os << "Cseq: " << seq << "\r\n";
-	os << "Version: " << KFS_VERSION_STR << "\r\n\r\n";
+    os << "DUMP_CHUNKMAP" << "\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n\r\n";
 }
 
 void
@@ -143,6 +150,7 @@ UpServersOp::Request(ostream &os)
 {
     os << "UPSERVERS" << "\r\n";
     os << "Cseq: " << seq << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n\r\n";
 }
 
@@ -151,6 +159,7 @@ ReaddirPlusOp::Request(ostream &os)
 {
     os << "READDIRPLUS " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Directory File-handle: " << fid << "\r\n\r\n";
 }
@@ -160,6 +169,7 @@ GetDirSummaryOp::Request(ostream &os)
 {
     os << "GETDIRSUMMARY " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Directory File-handle: " << fid << "\r\n\r\n";
 }
@@ -170,6 +180,7 @@ RemoveOp::Request(ostream &os)
     os << "REMOVE " << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Pathname: " << pathname << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Filename: " << filename << "\r\n\r\n";
@@ -178,9 +189,10 @@ RemoveOp::Request(ostream &os)
 void
 LookupOp::Request(ostream &os)
 {
-    os << "LOOKUP \r\n";
+    os << "LOOKUP\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Parent File-handle: " << parentFid << "\r\n";
     os << "Filename: " << filename << "\r\n\r\n";
 }
@@ -188,9 +200,10 @@ LookupOp::Request(ostream &os)
 void
 LookupPathOp::Request(ostream &os)
 {
-    os << "LOOKUP_PATH \r\n";
+    os << "LOOKUP_PATH\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Root File-handle: " << rootFid << "\r\n";
     os << "Pathname: " << filename << "\r\n\r\n";
 }
@@ -200,9 +213,10 @@ GetAllocOp::Request(ostream &os)
 {
     assert(fileOffset >= 0);
 
-    os << "GETALLOC \r\n";
+    os << "GETALLOC\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Pathname: " << filename << "\r\n";
     os << "File-handle: " << fid << "\r\n";
     os << "Chunk-offset: " << fileOffset << "\r\n\r\n";
@@ -211,18 +225,31 @@ GetAllocOp::Request(ostream &os)
 void
 GetLayoutOp::Request(ostream &os)
 {
-    os << "GETLAYOUT \r\n";
+    os << "GETLAYOUT\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "File-handle: " << fid << "\r\n\r\n";
+}
+
+void
+CoalesceBlocksOp::Request(ostream &os)
+{
+    os << "COALESCE_BLOCKS\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
+    os << "Src-path: " << srcPath << "\r\n";
+    os << "Dest-path: " << dstPath << "\r\n\r\n";
 }
 
 void
 GetChunkMetadataOp::Request(ostream &os)
 {
-    os << "GET_CHUNK_METADATA \r\n";
+    os << "GET_CHUNK_METADATA\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n\r\n";
 }
 
@@ -234,22 +261,32 @@ AllocateOp::Request(ostream &os)
 
     gethostname(hostname, MAXHOSTNAMELEN);
 
-    os << "ALLOCATE \r\n";
+    os << "ALLOCATE\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Client-host: " << hostname << "\r\n";
     os << "Pathname: " << pathname << "\r\n";
     os << "File-handle: " << fid << "\r\n";
-    os << "Chunk-offset: " << fileOffset << "\r\n\r\n";
+    os << "Chunk-offset: " << fileOffset << "\r\n";
+    if (append) {
+        os << "Chunk-append: 1\r\n";
+        os << "Space-reserve: " << spaceReservationSize << "\r\n";
+        os << "Max-appenders: " << maxAppendersPerChunk << "\r\n";
+    }
+    os << "\r\n";
 }
 
 void
 TruncateOp::Request(ostream &os)
 {
-    os << "TRUNCATE \r\n";
+    os << "TRUNCATE\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Pathname: " << pathname << "\r\n";
+    if (pruneBlksFromHead)
+        os << "Prune-from-head: 1\r\n";
     os << "File-handle: " << fid << "\r\n";
     os << "Offset: " << fileOffset << "\r\n\r\n";
 }
@@ -259,9 +296,10 @@ OpenOp::Request(ostream &os)
 {
     const char *modeStr;
 
-    os << "OPEN \r\n";
+    os << "OPEN\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     if (openFlags == O_RDONLY)
 	modeStr = "READ";
@@ -269,25 +307,51 @@ OpenOp::Request(ostream &os)
 	assert(openFlags == O_WRONLY || openFlags == O_RDWR);
 	modeStr = "WRITE";
     }
-
     os << "Intent: " << modeStr << "\r\n\r\n";
 }
 
 void
 CloseOp::Request(ostream &os)
 {
-    os << "CLOSE \r\n";
-    os << "Cseq: " << seq << "\r\n";
-    os << "Version: " << KFS_VERSION_STR << "\r\n";
-    os << "Chunk-handle: " << chunkId << "\r\n\r\n";
+    os <<
+        "CLOSE\r\n"
+        "Cseq: "         << seq             << "\r\n"
+        "Version: "      << KFS_VERSION_STR << "\r\n"
+        "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n"
+        "Chunk-handle: " << chunkId         << "\r\n"
+    ;
+    if (! writeInfo.empty()) {
+        os <<
+            "Has-write-id: 1\r\n"
+            "Num-servers: "  << writeInfo.size() << "\r\n"
+            "Servers:"
+        ;
+        for (vector<WriteInfo>::const_iterator i = writeInfo.begin();
+                i < writeInfo.end(); ++i) {
+	    os << " " << i->serverLoc.ToString() << " " << i->writeId;
+        }
+        os << "\r\n";
+    } else if (chunkServerLoc.size() > 1) {
+        os <<
+            "Num-servers: " << chunkServerLoc.size() << "\r\n"
+            "Servers:"
+        ;
+        for (vector<ServerLocation>::const_iterator i = chunkServerLoc.begin();
+                i != chunkServerLoc.end(); ++i) {
+            os << " " << i->ToString();
+        }
+        os << "\r\n";
+    }
+    os << "\r\n";
 }
 
 void
 ReadOp::Request(ostream &os)
 {
-    os << "READ \r\n";
+    os << "READ\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Chunk-version: " << chunkVersion << "\r\n";
     os << "Offset: " << offset << "\r\n";
@@ -297,35 +361,86 @@ ReadOp::Request(ostream &os)
 void
 WriteIdAllocOp::Request(ostream &os)
 {
-    os << "WRITE_ID_ALLOC \r\n";
+    os << "WRITE_ID_ALLOC\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Chunk-version: " << chunkVersion << "\r\n";
     os << "Offset: " << offset << "\r\n";
     os << "Num-bytes: " << numBytes << "\r\n";
-    if (chunkServerLoc.size() > 1) {
-        os << "Num-servers: " << chunkServerLoc.size() << "\r\n";
-        os << "Servers:";
-        for (vector<ServerLocation>::size_type i = 0; i < chunkServerLoc.size(); ++i) {
-            os << chunkServerLoc[i].ToString().c_str() << ' ';
-        }
-        os << "\r\n";
+    if (isForRecordAppend)
+        os << "For-record-append: " << 1 << "\r\n";
+    else
+        os << "For-record-append: " << 0 << "\r\n";
+    os << "Num-servers: " << chunkServerLoc.size() << "\r\n";
+    os << "Servers:";
+    for (vector<ServerLocation>::size_type i = 0; i < chunkServerLoc.size(); ++i) {
+        os << chunkServerLoc[i].ToString().c_str() << ' ';
     }
-    os << "\r\n";
+    os << "\r\n\r\n";
+}
+
+void
+ChunkSpaceReserveOp::Request(ostream &os)
+{
+    os << "CHUNK_SPACE_RESERVE\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
+    os << "Chunk-handle: " << chunkId << "\r\n";
+    os << "Chunk-version: " << chunkVersion << "\r\n";
+    os << "Num-bytes: " << numBytes << "\r\n";
+    os << "Num-servers: " << writeInfo.size() << "\r\n";
+    os << "Servers:";
+    for (vector<WriteInfo>::size_type i = 0; i < writeInfo.size(); ++i) {
+	os << writeInfo[i].serverLoc.ToString().c_str();
+	os << ' ' << writeInfo[i].writeId << ' ';
+    }
+    os << "\r\n\r\n";
+}
+
+void
+ChunkSpaceReleaseOp::Request(ostream &os)
+{
+    os << "CHUNK_SPACE_RELEASE\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
+    os << "Chunk-handle: " << chunkId << "\r\n";
+    os << "Chunk-version: " << chunkVersion << "\r\n";
+    os << "Num-bytes: " << numBytes << "\r\n";
+    os << "Num-servers: " << writeInfo.size() << "\r\n";
+    os << "Servers:";
+    for (vector<WriteInfo>::size_type i = 0; i < writeInfo.size(); ++i) {
+	os << writeInfo[i].serverLoc.ToString().c_str();
+	os << ' ' << writeInfo[i].writeId << ' ';
+    }
+    os << "\r\n\r\n";
 }
 
 void
 WritePrepareOp::Request(ostream &os)
 {
-    os << "WRITE_PREPARE \r\n";
+    os << "WRITE_PREPARE\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Chunk-version: " << chunkVersion << "\r\n";
     os << "Offset: " << offset << "\r\n";
     os << "Num-bytes: " << numBytes << "\r\n";
+    // one checksum over the whole data
     os << "Checksum: " << checksum << "\r\n";
+    // one checksum per 64K block
+    os << "Checksum-entries: " << checksums.size() << "\r\n";
+    if (checksums.size() > 0) {
+        os << "Checksums: ";
+        for (uint32_t i = 0; i < checksums.size(); i++) {
+            os << checksums[i] << ' ';
+        }
+        os << "\r\n";
+    }
     os << "Num-servers: " << writeInfo.size() << "\r\n";
     os << "Servers:";
     for (vector<WriteInfo>::size_type i = 0; i < writeInfo.size(); ++i) {
@@ -338,11 +453,22 @@ WritePrepareOp::Request(ostream &os)
 void
 WriteSyncOp::Request(ostream &os)
 {
-    os << "WRITE_SYNC \r\n";
+    os << "WRITE_SYNC\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Chunk-version: " << chunkVersion << "\r\n";
+    os << "Offset: " << offset << "\r\n";
+    os << "Num-bytes: " << numBytes << "\r\n";
+    os << "Checksum-entries: " << checksums.size() << "\r\n";
+    if (checksums.size() > 0) {
+        os << "Checksums: ";
+        for (uint32_t i = 0; i < checksums.size(); i++) {
+            os << checksums[i] << ' ';
+        }
+        os << "\r\n";
+    }
     os << "Num-servers: " << writeInfo.size() << "\r\n";
     os << "Servers:";
     for (vector<WriteInfo>::size_type i = 0; i < writeInfo.size(); ++i) {
@@ -355,9 +481,10 @@ WriteSyncOp::Request(ostream &os)
 void
 SizeOp::Request(ostream &os)
 {
-    os << "SIZE \r\n";
+    os << "SIZE\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Chunk-version: " << chunkVersion << "\r\n\r\n";
 }
@@ -365,9 +492,10 @@ SizeOp::Request(ostream &os)
 void
 LeaseAcquireOp::Request(ostream &os)
 {
-    os << "LEASE_ACQUIRE \r\n";
+    os << "LEASE_ACQUIRE\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Pathname: " << pathname << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n\r\n";
 }
@@ -375,9 +503,10 @@ LeaseAcquireOp::Request(ostream &os)
 void
 LeaseRenewOp::Request(ostream &os)
 {
-    os << "LEASE_RENEW \r\n";
+    os << "LEASE_RENEW\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Pathname: " << pathname << "\r\n";
     os << "Chunk-handle: " << chunkId << "\r\n";
     os << "Lease-id: " << leaseId << "\r\n";
@@ -389,6 +518,7 @@ LeaseRelinquishOp::Request(ostream &os)
 {
     os << "LEASE_RELINQUISH\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Chunk-handle:" << chunkId << "\r\n";
     os << "Lease-id: " << leaseId << "\r\n";
@@ -396,11 +526,70 @@ LeaseRelinquishOp::Request(ostream &os)
 }
 
 void
-ChangeFileReplicationOp::Request(ostream &os)
+RecordAppendOp::Request(ostream &os)
 {
-    os << "CHANGE_FILE_REPLICATION \r\n";
+    os << "RECORD_APPEND\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
+    os << "Chunk-handle: " << chunkId << "\r\n";
+    os << "Chunk-version: " << chunkVersion << "\r\n";
+    os << "Num-bytes: " << contentLength << "\r\n";
+    os << "Checksum: " << checksum << "\r\n";
+    os << "Offset: " << offset << "\r\n";
+    os << "File-offset: -1\r\n";
+    os << "Num-servers: " << writeInfo.size() << "\r\n";
+    os << "Servers:";
+    for (vector<WriteInfo>::size_type i = 0; i < writeInfo.size(); ++i) {
+	os << writeInfo[i].serverLoc.ToString().c_str();
+	os << ' ' << writeInfo[i].writeId << ' ';
+    }
+    os << "\r\n\r\n";
+}
+
+void
+GetRecordAppendOpStatus::Request(ostream &os)
+{
+    os <<
+        "GET_RECORD_APPEND_OP_STATUS\r\n"
+        "Cseq: "          << seq     << "\r\n"
+        "Chunk-handle: "  << chunkId << "\r\n"
+        "Version: " << KFS_VERSION_STR << "\r\n"
+        "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n"
+        "Write-id: "      << writeId << "\r\n"
+    "\r\n";
+}
+
+void
+GetRecordAppendOpStatus::ParseResponseHeaderSelf(const Properties &prop)
+{
+    chunkVersion        = prop.getValue("Chunk-version",               (int64_t)-1);
+    opSeq               = prop.getValue("Op-seq",                      (int64_t)-1);
+    opStatus            = prop.getValue("Op-status",                   -1);
+    opOffset            = prop.getValue("Op-offset",                   (int64_t)-1);
+    opLength            = (size_t)prop.getValue("Op-length",           (uint64_t)0);     
+    widAppendCount      = (size_t)prop.getValue("Wid-append-count",    (uint64_t)0);  
+    widBytesReserved    = (size_t)prop.getValue("Wid-bytes-reserved",  (uint64_t)0); 
+    chunkBytesReserved  = (size_t)prop.getValue("Chunk-bytes-reserved",(uint64_t)0);
+    remainingLeaseTime  = prop.getValue("Remaining-lease-time",        (int64_t)-1);
+    widWasReadOnlyFlag  = prop.getValue("Wid-was-read-only",            0) != 0;
+    masterFlag          = prop.getValue("Chunk-master",                 0) != 0;
+    stableFlag          = prop.getValue("Stable-flag",                  0) != 0;
+    openForAppendFlag   = prop.getValue("Open-for-append-flag",         0) != 0;
+    appenderState       = prop.getValue("Appender-state",               -1);
+    appenderStateStr    = prop.getValue("Appender-state-string",        "");
+    masterCommitOffset  = prop.getValue("Master-commit-offset",         (int64_t)-1);
+    nextCommitOffset    = prop.getValue("Next-commit-offset",           (int64_t)-1);
+    widReadOnlyFlag     = prop.getValue("Wid-read-only",                 0) != 0;
+}
+
+void
+ChangeFileReplicationOp::Request(ostream &os)
+{
+    os << "CHANGE_FILE_REPLICATION\r\n";
+    os << "Cseq: " << seq << "\r\n";
+    os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "File-handle: " << fid << "\r\n";
     os << "Num-replicas: " << numReplicas << "\r\n\r\n";
 }
@@ -418,16 +607,22 @@ ChangeFileReplicationOp::Request(ostream &os)
 /// parsing.
 ///
 void
-KfsOp::ParseResponseHeaderCommon(string &resp, Properties &prop)
+KfsOp::ParseResponseHeader(std::istream& is)
 {
-    istringstream ist(resp);
-    kfsSeq_t resSeq;
     const char separator = ':';
+    Properties prop;
+    prop.loadProperties(is, separator, false);
+    ParseResponseHeader(prop);
+}
 
-    prop.loadProperties(ist, separator, false);
-    resSeq = prop.getValue("Cseq", (kfsSeq_t) -1);
+void
+KfsOp::ParseResponseHeader(const Properties &prop)
+{
+    // kfsSeq_t resSeq = prop.getValue("Cseq", (kfsSeq_t) -1);
     status = prop.getValue("Status", -1);
     contentLength = prop.getValue("Content-length", 0);
+    statusMsg = prop.getValue("Status-message", string());
+    ParseResponseHeaderSelf(prop);
 }
 
 ///
@@ -435,104 +630,64 @@ KfsOp::ParseResponseHeaderCommon(string &resp, Properties &prop)
 /// @param[in] buf: buffer containing the response
 /// @param[in] len: str-len of the buffer.
 void
-KfsOp::ParseResponseHeader(char *buf, int len)
+KfsOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    // XXX: Need to extract out the status: OK or what?
-    ParseResponseHeaderCommon(resp, prop);
 }
 
 ///
 /// Specific response parsing handlers.
 ///
 void
-CreateOp::ParseResponseHeader(char *buf, int len)
+CreateOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     fileId = prop.getValue("File-handle", (kfsFileId_t) -1);
 }
 
 void
-ReaddirOp::ParseResponseHeader(char *buf, int len)
+ReaddirOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     numEntries = prop.getValue("Num-Entries", 0);
 }
 
 void
-GetDirSummaryOp::ParseResponseHeader(char *buf, int len)
+GetDirSummaryOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     numFiles = prop.getValue("Num-files", 0);
     numBytes = prop.getValue("Num-bytes", 0);
 }
 
 void
-DumpChunkServerMapOp::ParseResponseHeader(char *buf, int len)
+DumpChunkServerMapOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-	string resp(buf, len);
-	Properties prop;
-
-	ParseResponseHeaderCommon(resp, prop);
 }
 
 void
-DumpChunkMapOp::ParseResponseHeader(char *buf, int len)
+DumpChunkMapOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-	string resp(buf, len);
-	Properties prop;
-
-	ParseResponseHeaderCommon(resp, prop);
 }
 
 void
-UpServersOp::ParseResponseHeader(char *buf, int len)
+UpServersOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-	string resp(buf, len);
-	Properties prop;
-
-	ParseResponseHeaderCommon(resp, prop);
 }
 
 void
-ReaddirPlusOp::ParseResponseHeader(char *buf, int len)
+ReaddirPlusOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     numEntries = prop.getValue("Num-Entries", 0);
 }
 
 void
-MkdirOp::ParseResponseHeader(char *buf, int len)
+MkdirOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     fileId = prop.getValue("File-handle", (kfsFileId_t) -1);
 }
 
 void
-LookupOp::ParseResponseHeader(char *buf, int len)
+LookupOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
     string s;
 
-    ParseResponseHeaderCommon(resp, prop);
     fattr.fileId = prop.getValue("File-handle", (kfsFileId_t) -1);
     s = prop.getValue("Type", "");
     fattr.isDirectory = (s == "dir");
@@ -550,15 +705,11 @@ LookupOp::ParseResponseHeader(char *buf, int len)
 }
 
 void
-LookupPathOp::ParseResponseHeader(char *buf, int len)
+LookupPathOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
     string s;
     istringstream ist;
 
-    ParseResponseHeaderCommon(resp, prop);
-
     fattr.fileId = prop.getValue("File-handle", (kfsFileId_t) -1);
     s = prop.getValue("Type", "");
     fattr.isDirectory = (s == "dir");
@@ -577,14 +728,12 @@ LookupPathOp::ParseResponseHeader(char *buf, int len)
 }
 
 void
-AllocateOp::ParseResponseHeader(char *buf, int len)
+AllocateOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     chunkId = prop.getValue("Chunk-handle", (kfsFileId_t) -1);
     chunkVersion = prop.getValue("Chunk-version", (int64_t) -1);
+    if (append)
+        fileOffset = prop.getValue("Chunk-offset", (off_t) 0);
 
     string master = prop.getValue("Master", "");
     if (master != "") {
@@ -613,12 +762,8 @@ AllocateOp::ParseResponseHeader(char *buf, int len)
 }
 
 void
-GetAllocOp::ParseResponseHeader(char *buf, int len)
+GetAllocOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     chunkId = prop.getValue("Chunk-handle", (kfsFileId_t) -1);
     chunkVersion = prop.getValue("Chunk-version", (int64_t) -1);
 
@@ -637,12 +782,14 @@ GetAllocOp::ParseResponseHeader(char *buf, int len)
 }
 
 void
-GetLayoutOp::ParseResponseHeader(char *buf, int len)
+CoalesceBlocksOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
+    dstStartOffset = prop.getValue("Dst-start-offset", (off_t) 0);
+}
 
-    ParseResponseHeaderCommon(resp, prop);
+void
+GetLayoutOp::ParseResponseHeaderSelf(const Properties &prop)
+{
     numChunks = prop.getValue("Num-chunks", 0);
 }
 
@@ -673,24 +820,16 @@ GetLayoutOp::ParseLayoutInfo()
 }
 
 void
-SizeOp::ParseResponseHeader(char *buf, int len)
+SizeOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     size = prop.getValue("Size", (long long) 0);
 }
 
 void
-ReadOp::ParseResponseHeader(char *buf, int len)
+ReadOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
     string checksumStr;
     uint32_t nentries;
-
-    ParseResponseHeaderCommon(resp, prop);
 
     nentries = prop.getValue("Checksum-entries", 0);
     checksumStr = prop.getValue("Checksums", "");
@@ -706,32 +845,20 @@ ReadOp::ParseResponseHeader(char *buf, int len)
 }
 
 void
-WriteIdAllocOp::ParseResponseHeader(char *buf, int len)
+WriteIdAllocOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     writeIdStr = prop.getValue("Write-id", "");
 }
 
 void
-LeaseAcquireOp::ParseResponseHeader(char *buf, int len)
+LeaseAcquireOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     leaseId = prop.getValue("Lease-id", (long long) -1);
 }
 
 void
-ChangeFileReplicationOp::ParseResponseHeader(char *buf, int len)
+ChangeFileReplicationOp::ParseResponseHeaderSelf(const Properties &prop)
 {
-    string resp(buf, len);
-    Properties prop;
-
-    ParseResponseHeaderCommon(resp, prop);
     numReplicas = prop.getValue("Num-replicas", 1);
 }
 

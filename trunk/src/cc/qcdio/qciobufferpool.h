@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/11/01
-// Author: Mike Ovsiannikov
 //
 // Copyright 2008,2009 Quantcast Corp.
 //
@@ -112,6 +111,7 @@ public:
         Client& inClient);
     int GetBufferSize() const
         { return mBufferSize; }
+    int GetFreeBufferCount();
 
 private:
     class Partition;

@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file replay.cc
  * \brief log replay
@@ -34,6 +34,7 @@
 #include "entry.h"
 #include "kfstree.h"
 #include "LayoutManager.h"
+#include "common/log.h"
 
 using namespace KFS;
 
@@ -239,18 +240,19 @@ replay_rename(deque <string> &c)
 /*!
  * \brief replay allocate
  * format: allocate/file/<fileID>/offset/<offset>/chunkId/<chunkID>/
- * chunkVersion/<chunkVersion>/{mtime/<time>}
+ * chunkVersion/<chunkVersion>/{mtime/<time>}{/append/<1|0>}
  */
 static bool
 replay_allocate(deque <string> &c)
 {
 	fid_t fid;
 	chunkId_t cid, logChunkId;
-	chunkOff_t offset;
+	chunkOff_t offset, tmp = 0;
 	seq_t chunkVersion, logChunkVersion;
 	int status = 0;
 	MetaFattr *fa;
 	struct timeval mtime;
+        
 
 	c.pop_front();
 	bool ok = pop_fid(fid, "file", c, true);
@@ -258,7 +260,8 @@ replay_allocate(deque <string> &c)
 	ok = pop_fid(logChunkId, "chunkId", c, ok);
 	ok = pop_fid(logChunkVersion, "chunkVersion", c, ok);
 	// if the log has the mtime, pass it thru
-	bool gottime = pop_time(mtime, "mtime", c, ok);
+	const bool gottime = pop_time(mtime, "mtime", c, ok);
+	const bool append = pop_fid(tmp, "append", c, ok) && tmp != 0;
 
 	// during normal operation, if a file that has a valid 
 	// lease is removed, we move the file to the dumpster and log it.
@@ -301,7 +304,12 @@ replay_allocate(deque <string> &c)
 			status = metatree.assignChunkId(fid, offset,
 							cid, chunkVersion);
 			if (status == 0) {
-				gLayoutManager.AddChunkToServerMapping(cid, fid, NULL);
+				gLayoutManager.AddChunkToServerMapping(cid, fid, offset, NULL);
+				// In case of append create begin make chunk stable entry,
+				// if it doesn't already exist.
+				if (append)
+					gLayoutManager.ReplayPendingMakeStable(
+						cid, chunkVersion, -1, false, 0, true);
 				if (cid > chunkID.getseed()) {
 					// chunkID are handled by a two-stage
 					// allocation: the seed is updated in
@@ -326,6 +334,39 @@ replay_allocate(deque <string> &c)
 }
 
 /*!
+ * \brief replay coalesce (do the cleanup/accounting actions)
+ * format: coalesce/old/<srcFid>/new/<dstFid>/count/<# of blocks coalesced>
+ */
+static bool
+replay_coalesce(deque <string> &c)
+{
+ 	fid_t srcFid, dstFid;
+	size_t count;
+
+	c.pop_front();
+	bool ok = pop_fid(srcFid, "old", c, true);
+	ok = pop_fid(dstFid, "new", c, ok);
+	ok = pop_size(count, "count", c, ok);
+	vector<chunkId_t> srcChunks;
+	fid_t             retSrcFid      = -1;
+	fid_t             retDstFid      = -1;
+	chunkOff_t        dstStartOffset = -1;
+	ok = ok && metatree.coalesceBlocks(
+		metatree.getFattr(srcFid), metatree.getFattr(dstFid),
+		retSrcFid, srcChunks, retDstFid, dstStartOffset) == 0;
+	if (ok) {
+		gLayoutManager.CoalesceBlocks(srcChunks, retSrcFid, retDstFid,
+						dstStartOffset);
+	}
+	return (
+		ok &&
+		retSrcFid == srcFid && retDstFid == dstFid &&
+		srcChunks.size() == count
+	);
+}
+
+
+/*!
  * \brief replay truncate
  * format: truncate/file/<fileID>/offset/<offset>{/mtime/<time>}
  */
@@ -347,6 +388,35 @@ replay_truncate(deque <string> &c)
 
 		// an allocation should not occur during replay
 		status = metatree.truncate(fid, offset, &allocOffset);
+
+		if ((status == 0)  && gottime) {
+			MetaFattr *fa = metatree.getFattr(fid);
+			if (fa != NULL) 
+				fa->mtime = mtime;
+		}
+	}
+	return (ok && status == 0);
+}
+
+/*!
+ * \brief replay prune blks from head of file
+ * format: pruneFromHead/file/<fileID>/offset/<offset>{/mtime/<time>}
+ */
+static bool
+replay_pruneFromHead(deque <string> &c)
+{
+	fid_t fid;
+	chunkOff_t offset;
+	int status = 0;
+	struct timeval mtime;
+
+	c.pop_front();
+	bool ok = pop_fid(fid, "file", c, true);
+	ok = pop_fid(offset, "offset", c, ok);
+	// if the log has the mtime, pass it thru
+	bool gottime = pop_time(mtime, "mtime", c, ok);
+	if (ok) {
+		status = metatree.pruneFromHead(fid, offset);
 
 		if ((status == 0)  && gottime) {
 			MetaFattr *fa = metatree.getFattr(fid);
@@ -448,6 +518,58 @@ restore_time(deque <string> &c)
 	return true;
 }
 
+/*!
+ * \brief restore make chunk stable
+ * format:
+ * "mkstable{done}/fileId/" << fid <<
+ * "/chunkId/"        << chunkId <<
+ * "/chunkVersion/"   << chunkVersion  <<
+ * "/size/"           << chunkSize <<
+ * "/checksum/"       << chunkChecksum <<
+ * "/hasChecksum/"    << (hasChunkChecksum ? 1 : 0)
+ */
+static bool
+restore_makechunkstable(deque <string> &c, bool addFlag)
+{
+	fid_t     fid;
+	chunkId_t chunkId;
+	seq_t     chunkVersion;
+	off_t     chunkSize;
+        string    str;
+	fid_t     tmp;
+	uint32_t  checksum;
+	bool      hasChecksum;
+
+	c.pop_front();
+	bool ok = pop_fid(fid, "fileId", c, true);
+	ok = pop_fid(chunkId, "chunkId", c, ok);
+	ok = pop_fid(chunkVersion, "chunkVersion", c, ok);
+	ok = pop_name(str, "size", c, ok);
+        chunkSize = toNumber(str);
+	ok = pop_fid(tmp, "checksum", c, ok);
+	checksum = (uint32_t)tmp;
+	ok = pop_fid(tmp, "hasChecksum", c, ok);
+	hasChecksum = tmp != 0;
+	if (ok) {
+		gLayoutManager.ReplayPendingMakeStable(
+			chunkId, chunkVersion, chunkSize,
+			hasChecksum, checksum, addFlag);
+	}
+	return ok;
+}
+
+static bool
+restore_mkstable(deque <string> &c)
+{
+	return restore_makechunkstable(c, true);
+}
+
+static bool
+restore_mkstabledone(deque <string> &c)
+{
+	return restore_makechunkstable(c, false);
+}
+
 static void
 init_map(DiskEntry &e)
 {
@@ -459,11 +581,15 @@ init_map(DiskEntry &e)
 	e.add_parser("rename", replay_rename);
 	e.add_parser("allocate", replay_allocate);
 	e.add_parser("truncate", replay_truncate);
+	e.add_parser("coalesce", replay_coalesce);
+	e.add_parser("pruneFromHead", replay_pruneFromHead);
 	e.add_parser("setrep", replay_setrep);
 	e.add_parser("size", replay_size);
 	e.add_parser("setmtime", replay_setmtime);
 	e.add_parser("chunkVersionInc", restore_chunkVersionInc);
 	e.add_parser("time", restore_time);
+	e.add_parser("mkstable", restore_mkstable);
+	e.add_parser("mkstabledone", restore_mkstabledone);
 }
 
 /*!

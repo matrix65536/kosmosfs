@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file kfsops.cc
  * \brief KFS file system operations.
@@ -32,11 +32,13 @@
 #include <boost/lexical_cast.hpp>
 #include "common/log.h"
 #include "common/config.h"
+#include "libkfsIO/Globals.h"
 
 using std::mem_fun;
 using std::for_each;
 using std::find_if;
 using std::lower_bound;
+using std::set;
 
 using std::cout;
 using std::endl;
@@ -44,6 +46,11 @@ using std::endl;
 using namespace KFS;
 
 const string DUMPSTERDIR("dumpster");
+
+static inline time_t TimeNow()
+{
+	return libkfsio::globalNetManager().Now();
+}
 
 /*!
  * \brief Make a dumpster directory into which we can rename busy
@@ -131,13 +138,14 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 		int16_t numReplicas, bool exclusive)
 {
 	if (!legalname(fname)) {
-		KFS_LOG_VA_WARN("Bad file name %s", fname.c_str());
+		KFS_LOG_STREAM_WARN << "Bad file name " << fname <<
+		KFS_LOG_EOM;
 		return -EINVAL;
 	}
 
 	if (numReplicas <= 0) {
-		KFS_LOG_VA_DEBUG("Bad # of replicas (%d) for %s",
-				numReplicas, fname.c_str());
+		KFS_LOG_STREAM_DEBUG << "Bad # of replicas (" <<
+			numReplicas << ") for " << fname << KFS_LOG_EOM;
 		return -EINVAL;
 	}
 
@@ -153,7 +161,9 @@ Tree::create(fid_t dir, const string &fname, fid_t *newFid,
 
 		int status = remove(dir, fname, "");
 		if (status == -EBUSY) {
-			KFS_LOG_VA_INFO("Remove failed as file (%d:%s) is busy", dir, fname.c_str());
+			KFS_LOG_STREAM_INFO << "Remove failed as file (" <<
+				dir << ":" << fname << ") is busy" <<
+			KFS_LOG_EOM;
 			return status;
 		}
 		assert(status == 0);
@@ -204,16 +214,26 @@ Tree::remove(fid_t dir, const string &fname, const string &pathname, off_t *file
 	if (fa->type != KFS_FILE)
 		return -EISDIR;
 
+	string pn = pathname;
 	if (fa->filesize > 0) {
 		if (pathname != "") {
 			updateSpaceUsageForPath(pathname, -fa->filesize);
 		} else {
-			string pn = getPathname(dir);
+			pn = getPathname(dir);
 			updateSpaceUsageForPath(pn, -fa->filesize);
 		}
 
 		if (filesize != NULL)
 			*filesize = fa->filesize;
+	}
+
+	if (pn != "") {
+		PathToFidCacheMapIter iter = mPathToFidCache.find(pn);
+		if (iter != mPathToFidCache.end())
+			mPathToFidCache.erase(iter);
+	}
+	else { 
+		mPathToFidCache.clear();
 	}
 
 	if (fa->chunkcount > 0) {
@@ -223,7 +243,8 @@ Tree::remove(fid_t dir, const string &fname, const string &pathname, off_t *file
 		if (gLayoutManager.IsValidLeaseIssued(chunkInfo)) {
 			// put the file into dumpster
 			int status = moveToDumpster(dir, fname);
-			KFS_LOG_VA_DEBUG("Moving %s to dumpster", fname.c_str());
+			KFS_LOG_STREAM_DEBUG << "Moving " << fname << " to dumpster" <<
+			KFS_LOG_EOM;
 			return status;
 		}
 
@@ -303,8 +324,8 @@ Tree::rmdir(fid_t dir, const string &dname, const string &pathname)
 	MetaFattr *fa = lookup(dir, dname);
 
 	if ((dir == ROOTFID) && (dname == DUMPSTERDIR)) {
-		KFS_LOG_VA_INFO(" Preventing removing dumpster (%s)",
-					dname.c_str());
+		KFS_LOG_STREAM_INFO << "Preventing removing dumpster (" <<
+			dname << ")" << KFS_LOG_EOM;
 		return -EPERM;
 	}
 
@@ -319,13 +340,22 @@ Tree::rmdir(fid_t dir, const string &dname, const string &pathname)
 	if (!emptydir(myID))
 		return -ENOTEMPTY;
 
+	string pn = pathname;
 	if (fa->filesize > 0) {
 		if (pathname != "") {
 			updateSpaceUsageForPath(pathname, -fa->filesize);
 		} else {
-			string pn = getPathname(dir);
+			pn = getPathname(dir);
 			updateSpaceUsageForPath(pn, -fa->filesize);
 		}
+	}
+	if (pn != "") {
+		PathToFidCacheMapIter iter = mPathToFidCache.find(pn);
+		if (iter != mPathToFidCache.end())
+			mPathToFidCache.erase(iter);
+	}
+	else {
+		mPathToFidCache.clear(); 
 	}
 
 	UpdateNumDirs(-1);
@@ -401,24 +431,42 @@ Tree::getDentry(fid_t fid)
  * Do a depth first dir listing of the tree.  This can be useful for debugging
  * purposes.
  */
-void
-Tree::listPaths(ofstream &ofs)
+int
+Tree::listPaths(ostream &ofs)
 {
-	listPaths(ofs, "/", ROOTFID);
+	set<fid_t> dummy;
+	int count;
+
+	count = listPaths(ofs, "/", ROOTFID, dummy);
 	ofs.flush();
 	ofs << '\n';
+	return count;
 }
 
-void
-Tree::listPaths(ofstream &ofs, string parent, fid_t dir)
+int
+Tree::listPaths(ostream &ofs, set<fid_t> specificIds)
+{
+	int count;
+
+	count = listPaths(ofs, "/", ROOTFID, specificIds);
+	ofs.flush();
+	ofs << '\n';
+	return count;
+}
+
+int
+Tree::listPaths(ostream &ofs, string parent, fid_t dir, set<fid_t> specificIds)
 {
 	vector<MetaDentry *> entries;
 	MetaFattr *dirattr = getFattr(dir);
 	struct tm tm;
 	char datebuf[256];
+	// if the specificIds is an empty set, we list everything
+	bool listAllPaths = specificIds.empty();
+	int count = 0;
 
 	if (dirattr == NULL)
-		return;
+		return 0;
 
 	readdir(dir, entries);
 	for (uint32_t i = 0; i < entries.size(); i++) {
@@ -434,43 +482,70 @@ Tree::listPaths(ofstream &ofs, string parent, fid_t dir)
 			string subdir = parent + entryname;
 			gmtime_r(&(fa->mtime.tv_sec), &tm);
 			asctime_r(&tm, datebuf);
-			// ofs << subdir << ' ' << fa->mtime.tv_sec << " " << fa->mtime.tv_usec << '\n';
-			ofs << subdir << ' ' << datebuf;
-			listPaths(ofs, subdir + "/", fa->id());
+			if (listAllPaths) {
+				ofs << subdir << " <dir> " << fa->id() << ' ' << datebuf;
+				count++;
+			}
+			count += listPaths(ofs, subdir + "/", fa->id(), specificIds);
 			continue;
 		}
 		gmtime_r(&(fa->mtime.tv_sec), &tm);
 		asctime_r(&tm, datebuf);
-		// ofs << parent << entryname << ' ' << fa->mtime.tv_sec << " " << fa->mtime.tv_usec << '\n';
-		ofs << parent << entryname << ' ' << datebuf;
-		// ofs << parent << entryname << '\n';
+		if (listAllPaths) {
+			ofs << parent << entryname << ' ' << fa->id() << ' ' << fa->filesize << ' ' << datebuf;
+			count++;
+		} else {
+			set<fid_t>::const_iterator iter = specificIds.find(fa->id());
+			if (iter != specificIds.end()) {
+				ofs << parent << entryname << ' ' << fa->id() << ' ' << fa->filesize << ' ' << datebuf;
+				count++;
+			}
+		}
 	}
+	return count;
+}
+
+struct timeval& max(struct timeval &a, struct timeval &b)
+{
+	if (a.tv_sec > b.tv_sec)
+		return a;
+	if (a.tv_sec < b.tv_sec)
+		return b;
+	if (a.tv_usec > b.tv_usec)
+		return a;
+	return b;
 }
 
 /*
  * For fast "du", we store the size of a directory tree in the Fattr for that
  * tree id.  This method should be called whenever the size values need to be
  * recomputed for accuracy.  This is an expensive operation: we have to traverse
- * from root to each leaf in the tree.
+ * from root to each leaf in the tree.  When recomputing the dir. size, we also
+ * update the mtime to the root of the tree.
  */
 void
 Tree::recomputeDirSize()
 {
-	recomputeDirSize(ROOTFID);
+	off_t dummy = 0;
+
+	recomputeDirSize(ROOTFID, dummy);
 }
 
 /*
  * A simple depth first traversal of the directory tree starting at the root
  * @param[in] dir  The directory we are processing
+ * @param[out] dirsz  The size in bytes of the directory tree rooted at dir
  */
-off_t
-Tree::recomputeDirSize(fid_t dir)
+void
+Tree::recomputeDirSize(fid_t dir, off_t &dirsz)
 {
 	vector<MetaDentry *> entries;
 	MetaFattr *dirattr = getFattr(dir);
 
-	if (dirattr == NULL)
-		return 0;
+	if (dirattr == NULL) {
+		dirsz = 0;
+		return;
+	}
 
 	readdir(dir, entries);
 	dirattr->filesize = 0;
@@ -485,14 +560,19 @@ Tree::recomputeDirSize(fid_t dir)
 			continue;
 		if (fa->type == KFS_DIR) {
 			// Do a depth first traversal
-			dirattr->filesize += recomputeDirSize(fa->id());
+			off_t subdirSz = 0;
+			recomputeDirSize(fa->id(), subdirSz);
+			dirattr->filesize += subdirSz;
+			dirattr->mtime = max(dirattr->mtime, fa->mtime);
 			continue;
 		}
-		if (fa->filesize > 0)
+		if (fa->filesize > 0) {
 			dirattr->filesize += fa->filesize;
+			dirattr->mtime = max(dirattr->mtime, fa->mtime);
+		}
 	}
 
-	return dirattr->filesize;
+	dirsz = dirattr->filesize;
 }
 
 /*
@@ -587,14 +667,36 @@ MetaFattr *
 Tree::lookupPath(fid_t rootdir, const string &path)
 {
 	string component;
-	bool isabs = absolute(path);
-	fid_t dir = (rootdir == 0 || isabs) ? ROOTFID : rootdir;
+	const bool isabs = absolute(path);
+	const fid_t cdir = (rootdir == 0 || isabs) ? ROOTFID : rootdir;
 	string::size_type cstart = isabs ? 1 : 0;
 	string::size_type slash = path.find('/', cstart);
 
 	if (path.size() == cstart)
-		return lookup(dir, "/");
+		return lookup(cdir, "/");
+	
+	if (cdir == ROOTFID) {
+		PathToFidCacheMapIter iter = mPathToFidCache.find(path);
+		if (iter != mPathToFidCache.end()) {
+			// NOTE: We use the fid to extract the fa 
+			// and validate that the fa matches. This works because 
+			// the fid isn't re-used.  This means that if the
+			// file got deleted and the FA pointer got reused, we
+			// won't find a match for the fid in the tree.  
+			MetaFattr *fa = getFattr(iter->second.fid);
+			if (fa == iter->second.fa) {
+				gPathToFidCacheHit->Update(1);
+				iter->second.lastAccessTime = TimeNow();
+				KFS_LOG_STREAM_DEBUG << "Cache hit for " << path <<
+					"->" << iter->second.fid <<
+				KFS_LOG_EOM;
+				return fa;
+			}
+			mPathToFidCache.erase(iter);
+		}
+	}
 
+	fid_t dir = cdir;
 	while (slash != string::npos) {
 		component.assign(path, cstart, slash - cstart);
 		MetaFattr *fa = lookup(dir, component);
@@ -606,7 +708,43 @@ Tree::lookupPath(fid_t rootdir, const string &path)
 	}
 
 	component.assign(path, cstart, path.size() - cstart);
-	return lookup(dir, component);
+	MetaFattr * const fa = lookup(dir, component);
+	if (cdir == ROOTFID && fa && gPathToFidCacheMiss) {
+		gPathToFidCacheMiss->Update(1);
+
+		if (mIsPathToFidCacheEnabled) {
+			PathToFidCacheEntry fce;
+
+			fce.fid = fa->id();
+			fce.fa  = fa;
+			fce.lastAccessTime = TimeNow();
+			mPathToFidCache.insert(std::make_pair(path, fce));
+		}
+	}
+	return fa;
+}
+
+void
+Tree::cleanupPathToFidCache()
+{
+	time_t now = TimeNow();
+
+	if (now - mLastPathToFidCacheCleanupTime < FID_CACHE_CLEANUP_INTERVAL) 
+		return;
+	mLastPathToFidCacheCleanupTime = now;
+	PathToFidCacheMapIter iter = mPathToFidCache.begin();
+	while (iter != mPathToFidCache.end()) {
+		if (now - iter->second.lastAccessTime <=
+		FID_CACHE_ENTRY_EXPIRE_INTERVAL) {
+			iter++;
+			continue;
+		}
+		KFS_LOG_STREAM_DEBUG << "Clearing out cache entry: " <<
+			iter->first << KFS_LOG_EOM;
+		PathToFidCacheMapIter toErase = iter;
+		iter++;
+		mPathToFidCache.erase(toErase);
+	}
 }
 
 /*
@@ -719,6 +857,12 @@ public:
 	}
 };
 
+static bool
+ChunkIdLt(MetaChunkInfo *m, chunkId_t myid) 
+{
+	return m->chunkId < myid;
+}
+
 /*!
  * \brief Retrieve the chunk-version for a file/chunkId
  * \param[in] file	file id for the file
@@ -736,6 +880,18 @@ Tree::getChunkVersion(fid_t file, chunkId_t chunkId, seq_t *chunkVersion)
 
 	*chunkVersion = 0;
 	getalloc(file, v);
+	// chunkid's are allocating using an incrementing counter.
+	// For a given file, the chunkid's should be in sorted order
+	// So, binary search to find it.
+	i = lower_bound(v.begin(), v.end(), chunkId, ChunkIdLt);
+	if (i != v.end()) {
+		m = *i;
+		if (m->chunkId == chunkId) {
+			*chunkVersion = m->chunkVersion;
+			return 0;
+		}
+	}
+	// paranoia
 	i = find_if(v.begin(), v.end(), ChunkIdMatch(chunkId));
 	if (i == v.end())
 		return -ENOENT;
@@ -757,7 +913,7 @@ Tree::getChunkVersion(fid_t file, chunkId_t chunkId, seq_t *chunkVersion)
  * \return		status code
  */
 int
-Tree::allocateChunkId(fid_t file, chunkOff_t offset, chunkId_t *chunkId,
+Tree::allocateChunkId(fid_t file, chunkOff_t &offset, chunkId_t *chunkId,
 			seq_t *chunkVersion, int16_t *numReplicas)
 {
 	MetaFattr *fa = getFattr(file);
@@ -767,6 +923,11 @@ Tree::allocateChunkId(fid_t file, chunkOff_t offset, chunkId_t *chunkId,
 	if (numReplicas != NULL) {
 		assert(fa->numReplicas != 0);
 		*numReplicas = fa->numReplicas;
+	}
+	if (offset == (off_t) -1) {
+		offset = fa->nextChunkOffset;
+	} else if (offset < 0 || (offset % CHUNKSIZE) != 0) {
+		return -EINVAL;
 	}
 
 	// Allocation information is stored for offset's in the file that
@@ -810,26 +971,31 @@ Tree::allocateChunkId(fid_t file, chunkOff_t offset, chunkId_t *chunkId,
  */
 int
 Tree::assignChunkId(fid_t file, chunkOff_t offset,
-		    chunkId_t chunkId, seq_t chunkVersion)
+		    chunkId_t chunkId, seq_t chunkVersion, chunkOff_t* appendOffset)
 {
-	chunkOff_t boundary = chunkStartOffset(offset);
-	MetaFattr *fa = getFattr(file);
+	MetaFattr * const fa = getFattr(file);
 	if (fa == NULL)
 		return -ENOENT;
 
+	chunkOff_t boundary = chunkStartOffset(offset);
 	// check if an id has already been assigned to this chunk
 	const Key ckey(KFS_CHUNKINFO, file, boundary);
-	Node *l = findLeaf(ckey);
+	Node * const l = findLeaf(ckey);
 	if (l != NULL) {
-		MetaChunkInfo *c = l->extractMeta<MetaChunkInfo>(ckey);
-		chunkId = c->chunkId;
-		if (c->chunkVersion == chunkVersion)
-			return -EEXIST;
-		c->chunkVersion = chunkVersion;
-		return 0;
+		if (! appendOffset) {
+			MetaChunkInfo * const c =
+				l->extractMeta<MetaChunkInfo>(ckey);
+			if (c->chunkVersion == chunkVersion)
+				return -EEXIST;
+			c->chunkVersion = chunkVersion;
+			fa->filesize = -1;
+			return 0;
+		}
+		boundary      = fa->nextChunkOffset;
+		*appendOffset = boundary;
 	}
 
-	MetaChunkInfo *m = new MetaChunkInfo(file, offset,
+	MetaChunkInfo * const m = new MetaChunkInfo(file, boundary,
 					chunkId, chunkVersion);
 	if (insert(m)) {
 		// insert failed
@@ -842,9 +1008,127 @@ Tree::assignChunkId(fid_t file, chunkOff_t offset,
 	// we will know the size of the file only when the write to this chunk
 	// is finished.  so, until then....
 	fa->filesize = -1;
+	if (boundary >= fa->nextChunkOffset) {
+		fa->nextChunkOffset = boundary + CHUNKSIZE;
+	}
 
 	UpdateNumChunks(1);
 
+	gettimeofday(&fa->mtime, NULL);
+	return 0;
+}
+
+int
+Tree::coalesceBlocks(const std::string &srcPath, const std::string &dstPath, 
+    fid_t &srcFid, vector<chunkId_t> &srcChunks, fid_t &dstFid, chunkOff_t &dstStartOffset)
+{
+	return (srcPath == dstPath ? -EINVAL : coalesceBlocks(
+		lookupPath(ROOTFID, srcPath), lookupPath(ROOTFID, dstPath),
+		srcFid, srcChunks, dstFid, dstStartOffset
+	));
+}
+
+int
+Tree::coalesceBlocks(MetaFattr* srcFa, MetaFattr* dstFa, 
+    fid_t &srcFid, vector<chunkId_t> &srcChunks, fid_t &dstFid, chunkOff_t &dstStartOffset)
+{
+	if (! srcFa || ! dstFa) {
+		return -ENOENT;
+	}
+	if (srcFa == dstFa) {
+		return -EINVAL;
+	}
+	if (srcFa->type != KFS_FILE || dstFa->type != KFS_FILE) {
+		return -EISDIR;
+	}
+	vector<MetaChunkInfo*> chunkInfo;
+	getalloc(srcFa->id(), chunkInfo);
+	srcFid = srcFa->id();
+	dstFid = dstFa->id();
+	dstStartOffset = dstFa->nextChunkOffset;
+	for (vector<MetaChunkInfo*>::const_iterator it = chunkInfo.begin();
+			it !=  chunkInfo.end();
+			++it) {
+                const chunkOff_t offset   = dstStartOffset + (*it)->offset;
+	        const chunkOff_t boundary = chunkStartOffset(offset);
+		assert(! findLeaf(Key(KFS_CHUNKINFO, dstFa->id(), boundary)));
+		const chunkId_t chunkId      = (*it)->chunkId;
+		const seq_t     chunkVersion = (*it)->chunkVersion;
+		// *it is invalid after the follwoing del
+		if (del(*it)) {
+			panic("coalesce block failed to delete chunk", false);
+		}
+		MetaChunkInfo* const m = new MetaChunkInfo(
+			dstFa->id(), offset, chunkId, chunkVersion);
+		if (insert(m)) {
+			delete m;
+			panic("coalesce block failed to insert chunk", false);
+		}
+#ifdef COALESCE_BLOCKS_DEBUG
+		assert(findLeaf(Key(KFS_CHUNKINFO, dstFa->id(), boundary)));
+#endif
+	        if (boundary >= dstFa->nextChunkOffset) {
+		        dstFa->nextChunkOffset = boundary + CHUNKSIZE;
+	        }
+		dstFa->chunkcount++;
+		srcChunks.push_back(chunkId);
+	}
+	// Update file size if needed. The file size includes "holes":
+	if (dstFa->nextChunkOffset > dstStartOffset) {
+		if (srcFa->filesize <= 0) {
+			dstFa->filesize = -1;
+		} else {
+			dstFa->filesize = dstStartOffset + srcFa->filesize;
+		}
+	}
+#ifdef COALESCE_BLOCKS_DEBUG
+	chunkInfo.clear();
+	getalloc(dstFa->id(), chunkInfo);
+	assert(dstFa->chunkcount == chunkInfo.size());
+	chunkInfo.clear();
+	getalloc(srcFa->id(), chunkInfo);
+	assert(chunkInfo.empty());
+#endif
+	srcFa->nextChunkOffset = 0;
+	srcFa->chunkcount = 0;
+	srcFa->filesize = 0;
+	return 0;
+}
+
+/*
+ * During a file truncation, blks from a specified offset to the end of the file
+ * are deleted.  In contrast, this operation does the opposite---delete blks from
+ * the head of the file to the specified offset.
+ */
+int
+Tree::pruneFromHead(fid_t file, chunkOff_t offset)
+{
+	MetaFattr *fa = getFattr(file);
+
+	if (fa == NULL)
+		return -ENOENT;
+	if (fa->type != KFS_FILE)
+		return -EISDIR;
+
+	vector <MetaChunkInfo *> chunkInfo;
+	vector <MetaChunkInfo *>::iterator m;
+
+	getalloc(fa->id(), chunkInfo);
+	assert(fa->chunkcount == (long long)chunkInfo.size());
+
+	// compute the starting offset for what will be the
+	// "first" chunk for the file
+	chunkOff_t firstChunkStartOffset = chunkStartOffset(offset);
+
+	m = chunkInfo.begin();
+	while (m != chunkInfo.end()) {
+		if ((*m)->offset >= firstChunkStartOffset) {
+			break;
+		}
+		(*m)->DeleteChunk();
+		++m;
+		UpdateNumChunks(-1);
+	}
 	gettimeofday(&fa->mtime, NULL);
 	return 0;
 }
@@ -875,7 +1159,7 @@ Tree::truncate(fid_t file, chunkOff_t offset, chunkOff_t *allocOffset)
 
 	// compute the starting offset for what will be the
 	// "last" chunk for the file
-	chunkOff_t lastChunkStartOffset = chunkStartOffset(offset);
+	const chunkOff_t lastChunkStartOffset = chunkStartOffset(offset);
 
 	MetaChunkInfo last(fa->id(), lastChunkStartOffset, 0, 0);
 
@@ -912,7 +1196,7 @@ Tree::truncate(fid_t file, chunkOff_t offset, chunkOff_t *allocOffset)
 		fa->chunkcount--;
 		UpdateNumChunks(-1);
 	}
-
+	fa->nextChunkOffset = lastChunkStartOffset + CHUNKSIZE;
 	gettimeofday(&fa->mtime, NULL);
 	return 0;
 }
@@ -1015,6 +1299,17 @@ Tree::rename(fid_t parent, const string &oldname, string &newname,
 		unlink(srcFid, "..", sfattr, true);
 	}
 
+	// renames are nasty; they invalidate the path->fid cache mappings
+	if (oldpath != "") {
+		PathToFidCacheMapIter iter = mPathToFidCache.find(oldpath);
+		if (iter != mPathToFidCache.end())
+			mPathToFidCache.erase(iter);
+	} else {
+		// for safety, rebuild the cache on demand
+		mPathToFidCache.clear();
+	}
+
+
 	status = del(src);
 	assert(status == 0);
 	MetaDentry *newSrc = new MetaDentry(ddir, dname, srcFid);
@@ -1088,8 +1383,9 @@ Tree::moveToDumpster(fid_t dir, const string &fname)
 		fa = lookup(ROOTFID, DUMPSTERDIR);
 		if (fa == NULL) {
 			assert(!"No dumpster");
-			KFS_LOG_VA_INFO("Unable to create dumpster dir to remove %s",
-					fname.c_str());
+			KFS_LOG_STREAM_INFO <<
+				"Unable to create dumpster dir to remove " << fname <<
+			KFS_LOG_EOM;
 			return -1;
 		}
 	}

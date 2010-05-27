@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/05/24
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -29,6 +28,7 @@
 
 #include <algorithm>
 #include <string>
+#include <iostream>
 #include <sstream>
 #include <vector>
 
@@ -59,6 +59,11 @@ enum KfsOp_t {
     CMD_LEASE_ACQUIRE,
     CMD_LEASE_RENEW,
     CMD_LEASE_RELINQUISH,
+    CMD_COALESCE_BLOCKS,
+    CMD_CHUNK_SPACE_RESERVE,
+    CMD_CHUNK_SPACE_RELEASE,
+    CMD_RECORD_APPEND,
+    CMD_GET_RECORD_APPEND_STATUS,
     CMD_CHANGE_FILE_REPLICATION,
     CMD_DUMP_CHUNKTOSERVERMAP,
     CMD_UPSERVERS,
@@ -83,21 +88,30 @@ struct KfsOp {
     size_t    contentLength;
     size_t    contentBufLen;
     char      *contentBuf;
+    std::string statusMsg; // optional, mostly for debugging
+
     KfsOp (KfsOp_t o, kfsSeq_t s) :
         op(o), seq(s), status(0), checksum(0), contentLength(0),
-        contentBufLen(0), contentBuf(NULL)
+        contentBufLen(0), contentBuf(NULL), statusMsg()
     {
 
     }
     // to allow dynamic-type-casting, make the destructor virtual
     virtual ~KfsOp() {
-        if (contentBuf != NULL)
-            delete [] contentBuf;
+        delete [] contentBuf;
     }
     void AttachContentBuf(const char *buf, size_t len) {
         AttachContentBuf((char *) buf, len);
     }
 
+    void AllocContentBuf(size_t len) {
+        contentBuf = new char[len];
+        contentBufLen = len;
+    }
+    void DeallocContentBuf() {
+        delete [] contentBuf;
+        ReleaseContentBuf();
+    }
     void AttachContentBuf(char *buf, size_t len) {
         contentBuf = buf;
         contentBufLen = len;
@@ -111,14 +125,15 @@ struct KfsOp {
 
     // Common parsing code: parse the response from string and fill
     // that into a properties structure.
-    void ParseResponseHeaderCommon(std::string &resp, Properties &prop);
-
+    void ParseResponseHeader(std::istream& is);
     // Parse a response header from the server: This does the
     // default parsing of OK/Cseq/Status/Content-length.
-    virtual void ParseResponseHeader(char *buf, int len);
+    void ParseResponseHeader(const Properties& prop);
 
     // Return information about op that can printed out for debugging.
     virtual std::string Show() const = 0;
+protected:
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
 };
 
 struct CreateOp : public KfsOp {
@@ -134,7 +149,7 @@ struct CreateOp : public KfsOp {
 
     }
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     std::string Show() const {
         std::ostringstream os;
 
@@ -171,7 +186,7 @@ struct MkdirOp : public KfsOp {
 
     }
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     std::string Show() const {
         std::ostringstream os;
 
@@ -241,7 +256,7 @@ struct ReaddirOp : public KfsOp {
     void Request(std::ostream &os);
     // This will only extract out the default+num-entries.  The actual
     // dir. entries are in the content-length portion of things
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     std::string Show() const {
         std::ostringstream os;
 
@@ -271,7 +286,7 @@ struct DumpChunkServerMapOp : public KfsOp {
 	{
 	}
 	void Request(std::ostream &os);
-	void ParseResponseHeader(char *buf, int len);
+        virtual void ParseResponseHeaderSelf(const Properties& prop);
 	std::string Show() const {
 		std::ostringstream os;
 		os << "dumpchunktoservermap";
@@ -285,7 +300,7 @@ struct UpServersOp : public KfsOp {
     {
     }
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     std::string Show() const {
         std::ostringstream os;
         os << "upservers";
@@ -299,7 +314,7 @@ struct DumpChunkMapOp : public KfsOp {
 	{
 	}
 	void Request(std::ostream &os);
-	void ParseResponseHeader(char *buf, int len);
+	virtual void ParseResponseHeaderSelf(const Properties& prop);
 	std::string Show() const {
 		std::ostringstream os;
 		os << "dumpchunkmap";
@@ -318,7 +333,7 @@ struct ReaddirPlusOp : public KfsOp {
     void Request(std::ostream &os);
     // This will only extract out the default+num-entries.  The actual
     // dir. entries are in the content-length portion of things
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     std::string Show() const {
         std::ostringstream os;
 
@@ -339,7 +354,7 @@ struct GetDirSummaryOp : public KfsOp {
     void Request(std::ostream &os);
     // This will only extract out the default+num-entries.  The actual
     // dir. entries are in the content-length portion of things
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     std::string Show() const {
         std::ostringstream os;
 
@@ -359,7 +374,7 @@ struct LookupOp : public KfsOp {
 
     }
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
 
     std::string Show() const {
         std::ostringstream os;
@@ -380,12 +395,33 @@ struct LookupPathOp : public KfsOp {
 
     }
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
 
     std::string Show() const {
         std::ostringstream os;
 
         os << "lookup_path: " << filename << " (rootFid = " << rootFid << ")";
+        return os.str();
+    }
+};
+
+/// Coalesce blocks from src->dst by appending the blocks of src to
+/// dst.  If the op is successful, src will end up with 0 blocks. 
+struct CoalesceBlocksOp: public KfsOp {
+    std::string srcPath; // input
+    std::string dstPath; // input
+    off_t	dstStartOffset; // output
+    CoalesceBlocksOp(kfsSeq_t s, std::string o, std::string n) :
+        KfsOp(CMD_COALESCE_BLOCKS, s), srcPath(o), dstPath(n)
+    {
+
+    }
+    void Request(std::ostream &os);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "coalesce blocks: " << srcPath << "<-" << dstPath;
         return os.str();
     }
 };
@@ -405,7 +441,7 @@ struct GetAllocOp: public KfsOp {
 
     }
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     std::string Show() const {
         std::ostringstream os;
 
@@ -434,7 +470,7 @@ struct GetLayoutOp: public KfsOp {
 
     }
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     int ParseLayoutInfo();
     std::string Show() const {
         std::ostringstream os;
@@ -468,13 +504,18 @@ struct AllocateOp : public KfsOp {
     // where is the chunk hosted name/port
     ServerLocation masterServer; // master for running the write transaction
     std::vector<ServerLocation> chunkServers;
+    // if this is set, then the metaserver will pick the offset in the
+    // file at which the chunk was allocated. 
+    bool append; 
+    // the space reservation size that will follow the allocation.
+    int spaceReservationSize;
+    // suggested max. # of concurrent appenders per chunk
+    int maxAppendersPerChunk;
     AllocateOp(kfsSeq_t s, kfsFileId_t f, const std::string &p) :
-        KfsOp(CMD_ALLOCATE, s), fid(f), fileOffset(0), pathname(p)
-    {
-
-    }
+        KfsOp(CMD_ALLOCATE, s), fid(f), fileOffset(0), pathname(p), append(false), 
+        spaceReservationSize(1 << 20), maxAppendersPerChunk(64) { }
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
     string Show() const {
         std::ostringstream os;
 
@@ -487,8 +528,10 @@ struct TruncateOp : public KfsOp {
     const char *pathname;
     kfsFileId_t fid;
     off_t fileOffset;
+    bool pruneBlksFromHead;
     TruncateOp(kfsSeq_t s, const char *p, kfsFileId_t f, off_t o) :
-        KfsOp(CMD_TRUNCATE, s), pathname(p), fid(f), fileOffset(o)
+        KfsOp(CMD_TRUNCATE, s), pathname(p), fid(f), fileOffset(o),
+        pruneBlksFromHead(false)
     {
 
     }
@@ -496,7 +539,11 @@ struct TruncateOp : public KfsOp {
     std::string Show() const {
         std::ostringstream os;
 
-        os << "truncate: fid=" << fid << " offset: " << fileOffset;
+        if (pruneBlksFromHead)
+            os << "prune blks from head: ";
+        else 
+            os << "truncate: ";
+        os << " fid=" << fid << " offset: " << fileOffset;
         return os.str();
     }
 };
@@ -514,97 +561,6 @@ struct OpenOp : public KfsOp {
         std::ostringstream os;
 
         os << "open: chunkid=" << chunkId;
-        return os.str();
-    }
-};
-
-struct CloseOp : public KfsOp {
-    kfsChunkId_t chunkId;
-    CloseOp(kfsSeq_t s, kfsChunkId_t c) :
-        KfsOp(CMD_CLOSE, s), chunkId(c)
-    {
-
-    }
-    void Request(std::ostream &os);
-    std::string Show() const {
-        std::ostringstream os;
-
-        os << "close: chunkid=" << chunkId;
-        return os.str();
-    }
-};
-
-// used for retrieving a chunk's size
-struct SizeOp : public KfsOp {
-    kfsChunkId_t chunkId;
-    int64_t chunkVersion;
-    off_t     size; /* result */
-    SizeOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
-        KfsOp(CMD_SIZE, s), chunkId(c), chunkVersion(v)
-    {
-
-    }
-    void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
-    std::string Show() const {
-        std::ostringstream os;
-
-        os << "size: chunkid=" << chunkId << " version=" << chunkVersion;
-        return os.str();
-    }
-};
-
-
-struct ReadOp : public KfsOp {
-    kfsChunkId_t chunkId;
-    int64_t      chunkVersion; /* input */
-    off_t 	 offset;   /* input */
-    size_t 	 numBytes; /* input */
-    struct timeval submitTime; /* when the client sent the request to the server */
-    std::vector<uint32_t> checksums; /* checksum for each 64KB block */
-    float   diskIOTime; /* as reported by the server */
-    float   elapsedTime; /* as measured by the client */
-    std::string drivename; /* drive from which data was read */
-
-    ReadOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
-        KfsOp(CMD_READ, s), chunkId(c), chunkVersion(v),
-        offset(0), numBytes(0), diskIOTime(0.0), elapsedTime(0.0)
-    {
-
-    }
-    void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
-
-    std::string Show() const {
-        std::ostringstream os;
-
-        os << "read: chunkid=" << chunkId << " version=" << chunkVersion;
-        os << " offset=" << offset << " numBytes=" << numBytes;
-        os << " checksum = " << checksum;
-        return os.str();
-    }
-};
-
-// op that defines the write that is going to happen
-struct WriteIdAllocOp : public KfsOp {
-    kfsChunkId_t chunkId;
-    int64_t      chunkVersion; /* input */
-    off_t 	 offset;   /* input */
-    size_t 	 numBytes; /* input */
-    std::string	 writeIdStr;  /* output */
-    std::vector<ServerLocation> chunkServerLoc;
-    WriteIdAllocOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, off_t o, size_t n) :
-        KfsOp(CMD_WRITE_ID_ALLOC, s), chunkId(c), chunkVersion(v),
-        offset(o), numBytes(n)
-    {
-
-    }
-    void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
-    std::string Show() const {
-        std::ostringstream os;
-
-        os << "write-id-alloc: chunkid=" << chunkId << " version=" << chunkVersion;
         return os.str();
     }
 };
@@ -637,20 +593,122 @@ public:
     }
 };
 
+struct CloseOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    std::vector<ServerLocation> chunkServerLoc;
+    std::vector<WriteInfo> writeInfo;
+    CloseOp(kfsSeq_t s, kfsChunkId_t c) :
+        KfsOp(CMD_CLOSE, s), chunkId(c), writeInfo()
+    {}
+    CloseOp(kfsSeq_t s, kfsChunkId_t c, const std::vector<WriteInfo>& wi) :
+        KfsOp(CMD_CLOSE, s), chunkId(c), writeInfo(wi)
+    {}
+    void Request(std::ostream &os);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "close: chunkid=" << chunkId;
+        return os.str();
+    }
+};
+
+// used for retrieving a chunk's size
+struct SizeOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    int64_t chunkVersion;
+    off_t     size; /* result */
+    SizeOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
+        KfsOp(CMD_SIZE, s), chunkId(c), chunkVersion(v)
+    {
+
+    }
+    void Request(std::ostream &os);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "size: chunkid=" << chunkId << " version=" << chunkVersion;
+        return os.str();
+    }
+};
+
+
+struct ReadOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    int64_t      chunkVersion; /* input */
+    off_t 	 offset;   /* input */
+    size_t 	 numBytes; /* input */
+    struct timeval submitTime; /* when the client sent the request to the server */
+    std::vector<uint32_t> checksums; /* checksum for each 64KB block */
+    float   diskIOTime; /* as reported by the server */
+    float   elapsedTime; /* as measured by the client */
+    std::string drivename; /* drive from which data was read */
+
+    ReadOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
+        KfsOp(CMD_READ, s), chunkId(c), chunkVersion(v),
+        offset(0), numBytes(0), diskIOTime(0.0), elapsedTime(0.0)
+    {
+
+    }
+    void Request(std::ostream &os);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
+
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "read: chunkid=" << chunkId << " version=" << chunkVersion;
+        os << " offset=" << offset << " numBytes=" << numBytes;
+        return os.str();
+    }
+};
+
+// op that defines the write that is going to happen
+struct WriteIdAllocOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    int64_t      chunkVersion; /* input */
+    off_t 	 offset;   /* input */
+    size_t 	 numBytes; /* input */
+    bool	 isForRecordAppend; /* set if this is for a record append that is coming */
+    std::string	 writeIdStr;  /* output */
+    std::vector<ServerLocation> chunkServerLoc;
+    WriteIdAllocOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, off_t o, size_t n) :
+        KfsOp(CMD_WRITE_ID_ALLOC, s), chunkId(c), chunkVersion(v),
+        offset(o), numBytes(n), isForRecordAppend(false)
+    {
+
+    }
+    void Request(std::ostream &os);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "write-id-alloc: chunkid=" << chunkId << " version=" << chunkVersion;
+        return os.str();
+    }
+};
+
 struct WritePrepareOp : public KfsOp {
     kfsChunkId_t chunkId;
     int64_t      chunkVersion; /* input */
     off_t 	 offset;   /* input */
     size_t 	 numBytes; /* input */
+    std::vector<uint32_t> checksums; /* checksum for each 64KB block */    
     std::vector<WriteInfo> writeInfo; /* input */
+    WritePrepareOp(kfsSeq_t s, kfsChunkId_t c, int64_t v) :
+        KfsOp(CMD_WRITE_PREPARE, s), chunkId(c), chunkVersion(v),
+        offset(0), numBytes(0)
+    {
+
+    }
     WritePrepareOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, std::vector<WriteInfo> &w) :
         KfsOp(CMD_WRITE_PREPARE, s), chunkId(c), chunkVersion(v),
         offset(0), numBytes(0), writeInfo(w)
     {
 
     }
+
     void Request(std::ostream &os);
-    // void ParseResponseHeader(char *buf, int len);
+    // virtual void ParseResponseHeaderSelf(const Properties& prop);
     std::string Show() const {
         std::ostringstream os;
 
@@ -664,22 +722,32 @@ struct WritePrepareOp : public KfsOp {
 struct WriteSyncOp : public KfsOp {
     kfsChunkId_t chunkId;
     int64_t chunkVersion;
+    // what is the range of data we are sync'ing
+    off_t   offset; /* input */
+    size_t  numBytes; /* input */
     std::vector<WriteInfo> writeInfo;
+    // send the checksums that cover the region
+    std::vector<uint32_t> checksums;
     WriteSyncOp() : KfsOp(CMD_WRITE_SYNC, 0) { }
-    WriteSyncOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, std::vector<WriteInfo> &w) :
-        KfsOp(CMD_WRITE_SYNC, s), chunkId(c), chunkVersion(v), writeInfo(w)
+    WriteSyncOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, off_t o, size_t n, std::vector<WriteInfo> &w) :
+        KfsOp(CMD_WRITE_SYNC, s), chunkId(c), chunkVersion(v), offset(o), numBytes(n), writeInfo(w)
     { }
-    void Init(kfsSeq_t s, kfsChunkId_t c, int64_t v, std::vector<WriteInfo> &w) {
+    void Init(kfsSeq_t s, kfsChunkId_t c, int64_t v, off_t o, size_t n, 
+              std::vector<uint32_t> &ck, std::vector<WriteInfo> &w) {
         seq = s;
         chunkId = c;
         chunkVersion = v;
+        offset = o;
+        numBytes = n;
+        checksums = ck;
         writeInfo = w;
     }
     void Request(std::ostream &os);
     std::string Show() const {
         std::ostringstream os;
 
-        os << "write-sync: chunkid=" << chunkId << " version=" << chunkVersion;
+        os << "write-sync: chunkid=" << chunkId << " version=" << chunkVersion
+           << " offset = " << offset << " numBytes = " << numBytes;
 	std::for_each(writeInfo.begin(), writeInfo.end(), ShowWriteInfo(os));
         return os.str();
     }
@@ -696,7 +764,7 @@ struct LeaseAcquireOp : public KfsOp {
     }
 
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
 
     std::string Show() const {
         std::ostringstream os;
@@ -747,6 +815,147 @@ struct LeaseRelinquishOp : public KfsOp {
     }
 };
 
+/// add in ops for space reserve/release/record-append
+struct ChunkSpaceReserveOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    int64_t      chunkVersion; /* input */
+    size_t 	 numBytes; /* input */
+    std::vector<WriteInfo> writeInfo; /* input */
+    ChunkSpaceReserveOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, std::vector<WriteInfo> &w, size_t n) :
+        KfsOp(CMD_CHUNK_SPACE_RESERVE, s), chunkId(c), chunkVersion(v),
+        numBytes(n), writeInfo(w)
+    {
+
+    }
+    void Request(std::ostream &os);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "chunk-space-reserve: chunkid=" << chunkId << " version=" << chunkVersion;
+        os << " num-bytes: " << numBytes;
+        return os.str();
+    }
+};
+
+struct ChunkSpaceReleaseOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    int64_t      chunkVersion; /* input */
+    size_t 	 numBytes; /* input */
+    std::vector<WriteInfo> writeInfo; /* input */
+    ChunkSpaceReleaseOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, std::vector<WriteInfo> &w, size_t n) :
+        KfsOp(CMD_CHUNK_SPACE_RELEASE, s), chunkId(c), chunkVersion(v),
+        numBytes(n), writeInfo(w)
+    {
+
+    }
+    void Request(std::ostream &os);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "chunk-space-release: chunkid=" << chunkId << " version=" << chunkVersion;
+        os << " num-bytes: " << numBytes;
+        return os.str();
+    }
+};
+
+struct RecordAppendOp : public KfsOp {
+    kfsChunkId_t chunkId;
+    int64_t      chunkVersion; /* input */
+    off_t	 offset; /* input: this client's view of where it is writing in the file */
+    std::vector<WriteInfo> writeInfo; /* input */
+    RecordAppendOp(kfsSeq_t s, kfsChunkId_t c, int64_t v, off_t o, std::vector<WriteInfo> &w) :
+        KfsOp(CMD_RECORD_APPEND, s), chunkId(c), chunkVersion(v), offset(o), writeInfo(w)
+    {
+
+    }
+    void Request(std::ostream &os);
+    std::string Show() const {
+        std::ostringstream os;
+
+        os << "record-append: chunkid=" << chunkId << " version=" << chunkVersion;
+        os << " num-bytes: " << contentLength;
+        return os.str();
+    }
+};
+
+struct GetRecordAppendOpStatus : public KfsOp
+{
+    kfsChunkId_t chunkId;          // input
+    int64_t      writeId;          // input
+    kfsSeq_t     opSeq;            // output
+    int64_t      chunkVersion;
+    int64_t      opOffset;
+    size_t       opLength;
+    int          opStatus;
+    size_t       widAppendCount;
+    size_t       widBytesReserved;
+    size_t       chunkBytesReserved;
+    int64_t      remainingLeaseTime;
+    int64_t      masterCommitOffset;
+    int64_t      nextCommitOffset;
+    int          appenderState;
+    std::string  appenderStateStr;
+    bool         masterFlag;
+    bool         stableFlag;
+    bool         openForAppendFlag;
+    bool         widWasReadOnlyFlag;
+    bool         widReadOnlyFlag;
+ 
+    GetRecordAppendOpStatus(kfsSeq_t seq, kfsChunkId_t c, int64_t w) :
+        KfsOp(CMD_GET_RECORD_APPEND_STATUS, seq),
+        chunkId(c),
+        writeId(w),
+        opSeq(-1),
+        chunkVersion(-1),
+        opOffset(-1),
+        opLength(0),
+        opStatus(-1),
+        widAppendCount(0),
+        widBytesReserved(0),
+        chunkBytesReserved(0),
+        remainingLeaseTime(0),
+        masterCommitOffset(-1),
+        nextCommitOffset(-1),
+        appenderState(0),
+        appenderStateStr(),
+        masterFlag(false),
+        stableFlag(false),
+        openForAppendFlag(false),
+        widWasReadOnlyFlag(false),
+        widReadOnlyFlag(false)
+    {}
+    void Request(std::ostream &os);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
+    std::string Show() const
+    {
+        std::ostringstream os;
+        os << "get-record-append-op-status:"
+            " seq: "          << seq     <<
+            " chunkId: "      << chunkId <<
+            " writeId: "      << writeId <<
+            " chunk-version: "         << chunkVersion       <<
+            " op-seq: "                << opSeq              <<
+            " op-status: "             << opStatus           <<
+            " op-offset: "             << opOffset           <<
+            " op-length: "             << opLength           <<
+            " wid-read-only: "         << widReadOnlyFlag    <<
+            " master-commit: "         << masterCommitOffset <<
+            " next-commit: "           << nextCommitOffset   <<
+            " wid-append-count: "      << widAppendCount     <<
+            " wid-bytes-reserved: "    << widBytesReserved   <<
+            " chunk-bytes-reserved: "  << chunkBytesReserved <<
+            " remaining-lease-time: "  << remainingLeaseTime <<
+            " wid-was-read-only: "     << widWasReadOnlyFlag <<
+            " chunk-master: "          << masterFlag         <<
+            " stable-flag: "           << stableFlag         <<
+            " open-for-append-flag: "  << openForAppendFlag  <<
+            " appender-state: "        << appenderState      <<
+            " appender-state-string: " << appenderStateStr
+        ;
+        return os.str();
+    }
+};
+
 struct ChangeFileReplicationOp : public KfsOp {
     kfsFileId_t fid; // input
     int16_t numReplicas; // desired replication
@@ -757,7 +966,7 @@ struct ChangeFileReplicationOp : public KfsOp {
     }
 
     void Request(std::ostream &os);
-    void ParseResponseHeader(char *buf, int len);
+    virtual void ParseResponseHeaderSelf(const Properties& prop);
 
     std::string Show() const {
         std::ostringstream os;

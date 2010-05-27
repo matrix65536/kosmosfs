@@ -3,7 +3,6 @@
 //
 // Created 2008/06/11
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -46,9 +45,9 @@
 #include "common/log.h"
 #include "libkfsIO/FileHandle.h"
 #include "libkfsClient/KfsClient.h"
-#include "KfsToolsCommon.h"
 
 using std::cout;
+using std::cerr;
 using std::endl;
 using std::string;
 using boost::scoped_array;
@@ -71,19 +70,17 @@ int main(int argc, char **argv)
     bool help = false;
     ofstream cksumS;
     int port = -1, retval = -1;
-    const char *srcFn = NULL, *kfsFn = NULL;
-    string metaServerHost = "";
+    const char *metaserver = NULL, *srcFn = NULL, *kfsFn = NULL;
     const char *cksumFn = NULL;
     bool verboseLogging = false;
+    bool checkReplicas = false;
 
-    KFS::tools::getEnvServer(metaServerHost, port);
-    
     KFS::MsgLogger::Init(NULL);
 
-    while ((optchar = getopt(argc, argv, "s:p:f:k:c:hv")) != -1) {
+    while ((optchar = getopt(argc, argv, "s:p:f:k:c:hdv")) != -1) {
         switch (optchar) {
             case 's':
-                KFS::tools::parseServer(optarg, metaServerHost, port);
+                metaserver = optarg;
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -93,6 +90,9 @@ int main(int argc, char **argv)
                 break;
             case 'k':
                 kfsFn = optarg;
+                break;
+            case 'd':
+                checkReplicas = true;
                 break;
             case 'c':
                 cksumFn = optarg;
@@ -107,26 +107,40 @@ int main(int argc, char **argv)
         }
     }
 
-    help = help || (metaServerHost=="") || (port < 0);
+    help = help || (!metaserver) || (port < 0);
 
     if (help) {
-        cout << "Usage: " << argv[0] << " -s <metaserver> -p <port> "
+        cout << "Usage: " << argv[0] << " -s <metaserver> -p <port> {-v} "
              << " [-f <srcFn> -k <KFS file> {-c <cksum save file>}] | "
-             << " [-c <cksum file>] {-v}"
+             << " [-c <cksum file>] | "
+             << " [-k <KFS file> -d]"
              << endl;
         exit(-1);
     }
 
-    if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
-    } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
-    } 
-
-    gKfsClient = getKfsClientFactory()->GetClient(metaServerHost, port);
+    gKfsClient = getKfsClientFactory()->GetClient(metaserver, port);
     if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(-1);
+    }
+
+    if (verboseLogging) {
+        gKfsClient->SetLogLevel("DEBUG");
+    } else {
+        gKfsClient->SetLogLevel("INFO");
+    } 
+
+    if (checkReplicas) {
+        string md5sum;
+        bool match = gKfsClient->CompareChunkReplicas(kfsFn, md5sum);
+        retval = match ? 0 : -1;
+        if (match) {
+            cout << md5sum << endl;
+            cerr << "Verdict: for file " << kfsFn << " all replicas are identical" << endl;
+        }
+        else
+            cerr << "Verdict: for file " << kfsFn << " all replicas are not identical!" << endl;
+        exit(retval);
     }
 
     if (srcFn != NULL) {
@@ -168,7 +182,7 @@ static int verifyChecksums(const char *cksumFn)
         while (ist >> cksum) {
             cksums.push_back(cksum);
         }
-        if (!gKfsClient->VerifyDataChecksums(kfsFn, cksums)) {
+        if (!gKfsClient->VerifyDataChecksums(kfsFn.c_str(), cksums)) {
             cout << "Checksum mismatch in file: " << srcFn << " kfsfn: " << kfsFn << endl;
         }
     }

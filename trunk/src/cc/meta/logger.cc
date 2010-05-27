@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.
@@ -193,5 +193,5 @@ KFS::logger_init()
 	if (oplog.startLog(replayer.logno()) < 0)
 		panic("KFS::logger_init, startLog", true);
 	logRotater.SetInterval(LOG_ROLLOVER_MAXSEC);
-	globals().netManager.RegisterTimeoutHandler(&logRotater);
+	globalNetManager().RegisterTimeoutHandler(&logRotater);
 }

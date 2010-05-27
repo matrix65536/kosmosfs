@@ -3,7 +3,6 @@
 //
 // Created 2008/06/18
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -42,7 +41,7 @@ using std::cout;
 using std::endl;
 using namespace KFS;
 
-static int restoreCheckpoint();
+static int restoreCheckpoint(const string &lockfn);
 static int replayLogs();
 
 int main(int argc, char **argv)
@@ -51,13 +50,19 @@ int main(int argc, char **argv)
     char optchar;
     bool help = false;
     string logdir, cpdir, pathFn;
+    // the name of the lock file that is used to synchronize between
+    // the various tools that load the checkpoint file.
+    string lockfn;
     int status;
 
     KFS::MsgLogger::Init(NULL);
-    KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    KFS::MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
 
-    while ((optchar = getopt(argc, argv, "hl:c:f:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hl:c:f:L:")) != -1) {
         switch (optchar) {
+            case 'L':
+                lockfn = optarg;
+                break;
             case 'l': 
                 logdir = optarg;
                 break;
@@ -78,7 +83,7 @@ int main(int argc, char **argv)
     }
 
     if (help) {
-        cout << "Usage: " << argv[0] << " [-l <logdir>] [-c <cpdir>] [-f <output fn>]"
+        cout << "Usage: " << argv[0] << " [-L <lockfile>] [-l <logdir>] [-c <cpdir>] [-f <output fn>]"
              << endl;
         exit(-1);
     }
@@ -87,7 +92,8 @@ int main(int argc, char **argv)
 
     logger_setup_paths(logdir);
     checkpointer_setup_paths(cpdir);
-    status = restoreCheckpoint();
+
+    status = restoreCheckpoint(lockfn);
     if (status != 0)
         panic("restore checkpoint failed!", false);
     status = replayLogs();
@@ -99,9 +105,12 @@ int main(int argc, char **argv)
     exit(0);
 }
 
-static int restoreCheckpoint()
+static int restoreCheckpoint(const string &lockfn)
 {
     int status = 0;
+
+    if (lockfn != "")
+        acquire_lockfile(lockfn, 10);
 
     if (file_exists(LASTCP)) {
         Restorer r;

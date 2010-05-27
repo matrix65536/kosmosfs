@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2009/03/16
-// Author: Mike Ovsiannikov
 //
 // Copyright 2008,2009 Quantcast Corp.
 //
@@ -23,9 +22,9 @@
 // 
 //----------------------------------------------------------------------------
 
-#include "fdpoll.h"
-#include "kfsutils.h"
-#include "kfsdebug.h"
+#include "qcfdpoll.h"
+#include "qcutils.h"
+#include "qcdebug.h"
 
 #include <cerrno>
 
@@ -34,20 +33,18 @@
 #include <fcntl.h>
 #include <string.h>
 
-#ifndef KFS_OS_NAME_LINUX
+#ifndef QC_OS_NAME_LINUX
 #include <map>
-#ifdef KFS_USE_BOOST
+#ifdef QC_USE_BOOST
 #include <boost/pool/pool_alloc.hpp> 
 #endif
 #endif
 
-using namespace KFS;
-
-#ifdef KFS_OS_NAME_SUNOS
+#ifdef QC_OS_NAME_SUNOS
 #include <sys/filio.h>
 #include <sys/devpoll.h>
 
-class FdPoll::Impl
+class QCFdPoll::Impl
 {
 public:
     Impl() 
@@ -61,7 +58,7 @@ public:
     {
         mDevpollFd = open("/dev/poll", O_RDWR);
         if (mDevpollFd == -1) {
-            KFSUtils::FatalError("Unable to open /dev/poll device:", errno);
+            QCUtils::FatalError("Unable to open /dev/poll device:", errno);
         }
     }
     ~Impl()
@@ -178,7 +175,7 @@ public:
 
 private:
     typedef std::map<Fd, std::pair<void*, size_t>
-#ifdef KFS_USE_BOOST
+#ifdef QC_USE_BOOST
         , std::less<Fd>, boost::fast_pool_allocator<
             std::pair<const Fd, std::pair<void*, size_t> > >
 #endif
@@ -261,11 +258,11 @@ private:
         const Impl& inImpl);
 };
 
-#elif defined (KFS_OS_NAME_LINUX)
+#elif defined (QC_OS_NAME_LINUX)
 
 #include <sys/epoll.h>
 
-class FdPoll::Impl
+class QCFdPoll::Impl
 {
 public:
     enum { kFdCountHint = 1 << 10 };
@@ -320,7 +317,7 @@ public:
         mEpollEventCount = epoll_wait(
             mEpollFd, mEventsPtr, theEventCount, inWaitMilliSec);
         mNextEventIdx = 0;
-        KFSASSERT(mEpollEventCount <= theEventCount);
+        QCASSERT(mEpollEventCount <= theEventCount);
         return (mEpollEventCount >= 0 ? mEpollEventCount :
             (errno > 0 ? -errno : (errno == 0 ? mEpollEventCount : errno)));
     }
@@ -331,7 +328,7 @@ public:
         if (mNextEventIdx >= mEpollEventCount) {
             return false;
         }
-        KFSASSERT(mEventsPtr);
+        QCASSERT(mEventsPtr);
         outOpType      = FdPollMask(mEventsPtr[mNextEventIdx].events);
         outUserDataPtr = mEventsPtr[mNextEventIdx].data.ptr;
         mNextEventIdx++;
@@ -410,12 +407,12 @@ private:
         const Impl& inImpl);
 };
 
-#else /* KFS_OS_NAME_LINUX */
-/* #ifndef KFS_OS_NAME_LINUX */
+#else /* QC_OS_NAME_LINUX */
+/* #ifndef QC_OS_NAME_LINUX */
 
 #include <poll.h>
 
-class FdPoll::Impl
+class QCFdPoll::Impl
 {
 public:
     Impl()
@@ -444,7 +441,7 @@ public:
         if (inFd < 0) {
             return EBADF;
         }
-        KFSASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
+        QCASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
         FdMap::iterator const theIt = mFdMap.find(inFd);
         if (theIt == mFdMap.end()) {
             Alloc(inFd, inOpType, inUserDataPtr);
@@ -460,7 +457,7 @@ public:
         theEntry.revents = 0;
         theIt->second.mUserDataPtr = inUserDataPtr;
         theIt->second.mHoleFlag    = false;
-        KFSASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
+        QCASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
         return 0;
     }
     int Set(
@@ -471,7 +468,7 @@ public:
         if (inFd < 0) {
             return EBADF;
         }
-        KFSASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
+        QCASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
         FdMap::iterator const theIt = mFdMap.find(inFd);
         if (theIt == mFdMap.end() || theIt->second.mHoleFlag) {
             return ENOENT;
@@ -489,13 +486,13 @@ public:
         if (inFd < 0) {
             return EBADF;
         }
-        KFSASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
+        QCASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
         FdMap::iterator const theIt = mFdMap.find(inFd);
         if (theIt == mFdMap.end() || theIt->second.mHoleFlag) {
             return ENOENT;
         }
         const int theIdx = theIt->second.mIdx;
-        KFSRTASSERT(theIdx >= 0 && theIdx < mFdCount);
+        QCRTASSERT(theIdx >= 0 && theIdx < mFdCount);
         if (theIdx + 1 == mFdCount) {
             // Remove last entry.
             mFdCount--;
@@ -514,7 +511,7 @@ public:
             theIt->second.mHoleFlag    = true;
             mHolesCnt++;
         }
-        KFSASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
+        QCASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
         return 0;
     }
     int Poll(
@@ -545,7 +542,7 @@ public:
             } else {
                 struct pollfd&              theEntry = mPollVecPtr[mNextIdx];
                 FdMap::const_iterator const theIt    = mFdMap.find(theEntry.fd);
-                KFSRTASSERT(theIt != mFdMap.end());
+                QCRTASSERT(theIt != mFdMap.end());
                 if (theIt->second.mHoleFlag) {
                     mDoCompactionFlag = true;
                 } else {
@@ -569,7 +566,7 @@ private:
         void* mUserDataPtr;
     };
     typedef std::map<Fd, FdMapEnry
-#ifdef KFS_USE_BOOST
+#ifdef QC_USE_BOOST
         , std::less<Fd>,
         boost::fast_pool_allocator<std::pair<const Fd, FdMapEnry> >
 #endif
@@ -647,7 +644,7 @@ private:
     }
     void Compact()
     {
-        KFSASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
+        QCASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
         const int kMaxHolesCnt = 16;
         if (mHolesCnt <= kMaxHolesCnt && ! mDoCompactionFlag) {
             return;
@@ -673,7 +670,7 @@ private:
         }
         mFdCount = k;
         mHolesCnt = 0;
-        KFSASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
+        QCASSERT(int(mFdMap.size()) == mFdCount && mHolesCnt >= 0);
     }
 private:
     Impl(
@@ -684,52 +681,52 @@ private:
 
 #endif
 
-FdPoll::FdPoll()
+QCFdPoll::QCFdPoll()
     : mImpl(*new(Impl))
 {}
 
-FdPoll::~FdPoll()
+QCFdPoll::~QCFdPoll()
 {
     delete &mImpl;
 }
 
-int
-FdPoll::Add(
-    FdPoll::Fd inFd,
+    int
+QCFdPoll::Add(
+    QCFdPoll::Fd inFd,
     int          inOpType,
     void*        inUserDataPtr)
 {
     return mImpl.Add(inFd, inOpType, inUserDataPtr);
 }
 
-int
-FdPoll::Set(
-    FdPoll::Fd inFd,
+    int
+QCFdPoll::Set(
+    QCFdPoll::Fd inFd,
     int          inOpType,
     void*        inUserDataPtr)
 {
     return mImpl.Set(inFd, inOpType, inUserDataPtr);
 }
 
-int
-FdPoll::Poll(
+    int
+QCFdPoll::Poll(
     int inMaxEventCountHint,
     int inWaitMilliSec)
 {
     return mImpl.Poll(inMaxEventCountHint, inWaitMilliSec);
 }
 
-bool
-FdPoll::Next(
+    bool
+QCFdPoll::Next(
     int&   outOpType,
     void*& outUserDataPtr)
 {
     return mImpl.Next(outOpType, outUserDataPtr);
 }
 
-int
-FdPoll::Remove(
-    FdPoll::Fd inFd)
+    int
+QCFdPoll::Remove(
+    QCFdPoll::Fd inFd)
 {
     return mImpl.Remove(inFd);
 }

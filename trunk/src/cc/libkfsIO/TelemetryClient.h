@@ -3,7 +3,6 @@
 //
 // Created 2008/09/14
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corporation.
 //

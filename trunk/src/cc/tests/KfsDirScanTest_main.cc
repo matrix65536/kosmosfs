@@ -3,8 +3,21 @@
 //
 // Created 2008/07/16
 //
-// Copyright 2008 Quantcast Corporation.  All rights reserved.
-// Quantcast PROPRIETARY and CONFIDENTIAL.
+// Copyright 2008 Quantcast Corporation.  
+//
+// This file is part of Kosmos File System (KFS).
+//
+// Licensed under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+// implied. See the License for the specific language governing
+// permissions and limitations under the License.
 //
 // \brief Test that evaluates readdirplus() followed by calls to get attributes.
 //----------------------------------------------------------------------------
@@ -73,14 +86,14 @@ main(int argc, char **argv)
 
 void dirListPlusAttr(const string &kfspathname)
 {
-    if (gKfsClient->IsFile(kfspathname)) {
+    if (gKfsClient->IsFile(kfspathname.c_str())) {
         cout << kfspathname << " is a file..." << endl;
         return;
     }
 
     vector<KfsFileAttr> fattrs;
 
-    if (gKfsClient->ReaddirPlus(kfspathname, fattrs) < 0) {
+    if (gKfsClient->ReaddirPlus(kfspathname.c_str(), fattrs) < 0) {
         cout << "unable to do readdirplus on " << kfspathname << endl;
         return;
     }
@@ -91,22 +104,22 @@ void dirListPlusAttr(const string &kfspathname)
     for (uint32_t i = 0; i < fattrs.size(); i++) {
         string abspath = kfspathname + "/" + fattrs[i].filename;
 
-        if (gKfsClient->IsFile(abspath))
-            replicas = gKfsClient->GetReplicationFactor(abspath);
+        if (gKfsClient->IsFile(abspath.c_str()))
+            replicas = gKfsClient->GetReplicationFactor(abspath.c_str());
     }
 
     KFS_LOG_VA_INFO("Done getting replication factor for all entries on %s", kfspathname.c_str());
 
-    KfsFileStat statbuf;
+    struct stat statbuf;
     uint64_t dirsz = 0;
 
     for (uint32_t i = 0; i < fattrs.size(); i++) {
         string abspath = kfspathname + "/" + fattrs[i].filename;
 
-        if (gKfsClient->IsFile(abspath)) {
-            int res = gKfsClient->Stat(abspath, statbuf);
+        if (gKfsClient->IsFile(abspath.c_str())) {
+            int res = gKfsClient->Stat(abspath.c_str(), statbuf);
             if (res == 0)
-                dirsz += statbuf.size;
+                dirsz += statbuf.st_size;
         }
     }
 

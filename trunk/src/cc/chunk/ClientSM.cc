@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/23
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -21,7 +20,7 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 //
-// 
+//
 //----------------------------------------------------------------------------
 
 #include "ClientSM.h"
@@ -30,6 +29,7 @@
 #include "ChunkServer.h"
 #include "Utils.h"
 #include "KfsOps.h"
+#include "AtomicRecordAppender.h"
 
 #include <string>
 #include <sstream>
@@ -38,18 +38,54 @@ using std::ostringstream;
 
 #include "common/log.h"
 #include "libkfsIO/Globals.h"
+#include "DiskIo.h"
+#include "qcdio/qcutils.h"
 
-#include <boost/scoped_array.hpp>
-using boost::scoped_array;
+#define CLIENT_SM_LOG_STREAM_PREFIX << "I" << mInstanceNum << "I " << GetPeerName() << " "
+#define CLIENT_SM_LOG_STREAM(pri)  KFS_LOG_STREAM(pri)  CLIENT_SM_LOG_STREAM_PREFIX
+#define CLIENT_SM_LOG_STREAM_DEBUG KFS_LOG_STREAM_DEBUG CLIENT_SM_LOG_STREAM_PREFIX
+#define CLIENT_SM_LOG_STREAM_WARN  KFS_LOG_STREAM_WARN  CLIENT_SM_LOG_STREAM_PREFIX
+#define CLIENT_SM_LOG_STREAM_INFO  KFS_LOG_STREAM_INFO  CLIENT_SM_LOG_STREAM_PREFIX
+#define CLIENT_SM_LOG_STREAM_ERROR KFS_LOG_STREAM_ERROR CLIENT_SM_LOG_STREAM_PREFIX
+#define CLIENT_SM_LOG_STREAM_FATAL KFS_LOG_STREAM_FATAL CLIENT_SM_LOG_STREAM_PREFIX
 
 using namespace KFS;
 using namespace KFS::libkfsio;
 
 const int kMaxCmdHeaderLength = 1 << 10;
+bool ClientSM::sTraceRequestResponse = false;
+uint64_t ClientSM::sInstanceNum = 10000;
+
+inline std::string ClientSM::GetPeerName()
+{
+    return (mNetConnection ?
+        mNetConnection->GetPeerName() :
+        std::string("not connected")
+    );
+}
+
+inline BufferManager& ClientSM::GetBufferManager()
+{
+    return DiskIo::GetBufferManager();
+}
+
+inline void ClientSM::SendResponse(KfsOp* op, ClientSM::ByteCount opBytes)
+{
+    ByteCount respBytes = 0;
+    respBytes = mNetConnection->GetNumBytesToWrite();
+    SendResponse(op);
+    respBytes = std::max(ByteCount(0),
+        mNetConnection->GetNumBytesToWrite() - respBytes);
+    mPrevNumToWrite = mNetConnection->GetNumBytesToWrite();
+    GetBufferManager().Put(*this, opBytes - respBytes);
+}
 
 ClientSM::ClientSM(NetConnectionPtr &conn)
     : mNetConnection(conn),
-      mCurOp(0)
+      mCurOp(0),
+      mPrevNumToWrite(0),
+      mRecursionCnt(0),
+      mInstanceNum(sInstanceNum++)
 {
     SET_HANDLER(this, &ClientSM::HandleRequest);
     mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
@@ -60,13 +96,24 @@ ClientSM::~ClientSM()
 {
     KfsOp *op;
 
-    assert(mOps.empty());
+    assert(mOps.empty() && mPendingOps.empty() && mPendingSubmitQueue.empty());
     while (!mOps.empty()) {
-        op = mOps.front();
+        op = mOps.front().first;
         mOps.pop_front();
         delete op;
     }
+    while (!mPendingOps.empty()) {
+        op = mPendingOps.front().dependentOp;
+        mPendingOps.pop_front();
+        delete op;
+    }
+    while (!mPendingSubmitQueue.empty()) {
+        op = mPendingSubmitQueue.front().dependentOp;
+        mPendingSubmitQueue.pop_front();
+        delete op;
+    }
     gClientManager.Remove(this);
+    // CLIENT_SM_LOG_STREAM_DEBUG << "~ClientSM" << KFS_LOG_EOM;
 }
 
 ///
@@ -77,60 +124,31 @@ ClientSM::~ClientSM()
 void
 ClientSM::SendResponse(KfsOp *op)
 {
-    IOBuffer::OStream os;
-    ReadOp *rop;
-    const string s = op->Show();
-    const string clientIP = mNetConnection->GetPeerName();
-
-#ifdef DEBUG
-    verifyExecutingOnNetProcessor();
-#endif    
-    op->Response(os);
+    assert(mNetConnection && op);
 
     struct timeval now;
-    float timespent;
-    
-    gettimeofday(&now, NULL);
-    timespent = ComputeTimeDiff(op->startTime, now);
+    gettimeofday(&now, 0);
+    const double timespent = ComputeTimeDiff(op->startTime, now);
+    const bool   tooLong   = timespent > 0.2;
+    CLIENT_SM_LOG_STREAM(op->status >= 0 ?
+            (tooLong ? MsgLogger::kLogLevelINFO : MsgLogger::kLogLevelDEBUG) :
+            MsgLogger::kLogLevelERROR) <<
+        "seq: "        << op->seq <<
+        " status: "    << op->status <<
+        " buffers: "   << GetByteCount() <<
+        " " << op->Show() <<
+        (op->statusMsg.empty() ? "" : " msg: ") << op->statusMsg <<
+        (tooLong ? " RPC too long " : " took: ") << timespent << " sec." <<
+    KFS_LOG_EOM;
 
-    KFS_LOG_VA_DEBUG("Client %s, Command %s: Response status: %d\n", 
-                     clientIP.c_str(), s.c_str(), op->status);
-
+    IOBuffer::OStream os;
+    op->Response(os);
     mNetConnection->Write(&os);
-
-    if (timespent > 0.2) {
-        KFS_LOG_STREAM_INFO << "RPC too long: Client: " << clientIP << ": "
-                            << op->Show() <<  " : RPC time: " << timespent << KFS_LOG_EOM;
-    }
-
-    if (op->op == CMD_WRITE_SYNC) {
-        KFS_LOG_STREAM_INFO <<
-            "Ack'ing to " << clientIP << ": " << op->Show() <<
-            ", status = " << op->status <<
-        KFS_LOG_EOM;
-    }
-
-    if (op->op == CMD_READ) {
-        struct timeval now;
-        float timespent;
-
-        gettimeofday(&now, NULL);
-        timespent = ComputeTimeDiff(op->startTime, now);
-
-        // need to send out the data read
-        rop = static_cast<ReadOp *> (op);
-        
-        KFS_LOG_VA_INFO("Client: %s, Read done: %s, status = %d (RPC time = %.3f)", clientIP.c_str(), 
-                        rop->Show().c_str(), rop->status, timespent);
-        if (op->status >= 0) {
-            assert(rop->dataBuf->BytesConsumable() == rop->status);
-            mNetConnection->Write(rop->dataBuf, rop->numBytesIO);
-        }
-    } else if (op->op == CMD_GET_CHUNK_METADATA) {
-        GetChunkMetadataOp *gcm = static_cast<GetChunkMetadataOp *>(op);
-        if (op->status >= 0)
-            mNetConnection->Write(gcm->dataBuf, gcm->numBytesIO);            
-    }
+    IOBuffer* iobuf = 0;
+    int       len   = 0;
+    op->ResponseContent(iobuf, len);
+    mNetConnection->Write(iobuf, len);
+    gClientManager.RequestDone((int64_t)(timespent * 1e6), *op);
 }
 
 ///
@@ -147,109 +165,168 @@ ClientSM::HandleRequest(int code, void *data)
     IOBuffer *iobuf;
     KfsOp *op;
     int cmdLen = 0;
+    bool gotCmd = false;
 
 #ifdef DEBUG
     verifyExecutingOnNetProcessor();
-#endif    
+#endif
+    assert(mRecursionCnt >= 0 && mNetConnection);
+    mRecursionCnt++;
 
     switch (code) {
     case EVENT_NET_READ:
+        if (IsWaiting()) {
+            CLIENT_SM_LOG_STREAM_DEBUG <<
+                "spurious read: " << (mCurOp ? mCurOp->Show() : "cmd") <<
+                " waiting for: " << GetByteCount() <<
+                " bytes of io buffers" <<
+            KFS_LOG_EOM;
+            mNetConnection->SetMaxReadAhead(0);
+            break;
+        }
 	// We read something from the network.  Run the RPC that
 	// came in.
 	iobuf = (IOBuffer *) data;
-	while (mCurOp || IsMsgAvail(iobuf, &cmdLen)) {
-	    // if we don't have all the data for the command, wait
-	    if (!HandleClientCmd(iobuf, cmdLen))
-		break;
+	while ((mCurOp || IsMsgAvail(iobuf, &cmdLen)) &&
+                (gotCmd = HandleClientCmd(iobuf, cmdLen))) {
+            cmdLen = 0;
+            gotCmd = 0;
 	}
-        int hdrsz;
-        if (! mCurOp &&
-                (hdrsz = iobuf->BytesConsumable()) > MAX_RPC_HEADER_LEN) {
-            KFS_LOG_VA_ERROR("exceeded max request header size: %d > %d,"
-                " closing connection\n", (int)hdrsz, (int)MAX_RPC_HEADER_LEN);
+        if (! mCurOp) {
+            int hdrsz;
+            if (cmdLen > 0 && ! gotCmd) {
+                CLIENT_SM_LOG_STREAM_ERROR <<
+                    " failed to parse request, closing connection;"
+                    " header size: "    << cmdLen <<
+                    " read available: " << iobuf->BytesConsumable() <<
+                KFS_LOG_EOM;
+                gClientManager.BadRequest();
+            } else if ((hdrsz = iobuf->BytesConsumable()) > MAX_RPC_HEADER_LEN) {
+                CLIENT_SM_LOG_STREAM_ERROR <<
+                    " exceeded max request header size: " << hdrsz <<
+                    " limit: " << MAX_RPC_HEADER_LEN <<
+                    ", closing connection" <<
+                KFS_LOG_EOM;
+                gClientManager.BadRequestHeader();
+            } else {
+                break;
+            }
             iobuf->Clear();
-            HandleRequest(EVENT_NET_ERROR, NULL);
+            mNetConnection->Close();
         }
 	break;
 
-    case EVENT_NET_WROTE:
-	// Something went out on the network.  For now, we don't
-	// track it. Later, we may use it for tracking throttling
-	// and such.
+    case EVENT_NET_WROTE: {
+            const int rem = mNetConnection->GetNumBytesToWrite();
+            GetBufferManager().Put(*this, mPrevNumToWrite - rem);
+            mPrevNumToWrite = rem;
+        }
 	break;
 
     case EVENT_CMD_DONE:
-	// An op finished execution.  Send response back in FIFO
+        // An op finished execution.  Send response back in FIFO
         gChunkServer.OpFinished();
-            
-	op = (KfsOp *) data;
-	op->done = true;
+        op = (KfsOp *) data;
+        op->done = true;
         assert(!mOps.empty());
-	while (!mOps.empty()) {
-	    KfsOp *qop = mOps.front();
-	    if (!qop->done)
-		break;
-            if (mNetConnection)
-                SendResponse(qop);
-	    mOps.pop_front();
+        if (sTraceRequestResponse) {
+            IOBuffer::OStream os;
+            op->Response(os);
+            IOBuffer::IStream is(os);
+            string line;
+            while (getline(is, line)) {
+                CLIENT_SM_LOG_STREAM_DEBUG <<
+                    "response: " << line <<
+                KFS_LOG_EOM;
+            }
+        }
+        while (!mOps.empty()) {
+            KfsOp *qop = mOps.front().first;
+            if (!qop->done) {
+                if (! op) {
+                    break;
+                }
+                if (op->op == CMD_WRITE_ID_ALLOC ||
+                        op->op == CMD_RECORD_APPEND) {
+                    OpsQueue::iterator i;
+                    for (i = mOps.begin(); i != mOps.end() && op != i->first; ++i)
+                        {}
+                    assert(i != mOps.end() && op == i->first);
+                    assert(mPendingOps.empty() || op->seq != mPendingOps.front().op->seq);
+                    if (i != mOps.end()) {
+                        SendResponse(op, i->second);
+                    }
+                    if (i != mOps.end()) {
+                        mOps.erase(i);
+                        OpFinished(op);
+                    }
+                    delete op;
+                } else {
+                    CLIENT_SM_LOG_STREAM_DEBUG <<
+                        "previous op still pending: " <<
+                        qop->Show() << "; deferring reply to: " <<
+                        op->Show() <<
+                    KFS_LOG_EOM;
+                }
+                break;
+            }
+            if (qop == op) {
+                op = 0;
+            }
+            SendResponse(qop, mOps.front().second);
+            mOps.pop_front();
             OpFinished(qop);
-	    delete qop;
-	}
-        if (mNetConnection)
-            mNetConnection->StartFlush();
-	break;
-
+            delete qop;
+        }
+        mNetConnection->StartFlush();
+        break;
 
     case EVENT_INACTIVITY_TIMEOUT:
-        {
-            std::string ip;
-            int nRead  = 0;
-            int nWrite = 0;
-            if (mNetConnection) {
-                ip     = mNetConnection->GetPeerName();
-                nRead  = mNetConnection->GetNumBytesToRead();
-                nWrite = mNetConnection->GetNumBytesToWrite();
-            } else {
-                ip = "unknown";
-            }
-	    KFS_LOG_VA_INFO("Closing connection to peer: %s due to timeout"
-                " pending read: %d write: %d", ip.c_str(), nRead, nWrite);
-        }
-        // Fall through
     case EVENT_NET_ERROR:
-
-	if (mNetConnection) {
-            string clientIP = mNetConnection->GetPeerName();
-            KFS_LOG_VA_INFO("Closing connection from client %s", clientIP.c_str());
-	    mNetConnection->Close();
-        }
-
-        // get rid of the connection to all the peers in daisy chain;
-        // if there were any outstanding ops, they will all come back
-        // to this method as EVENT_CMD_DONE and we clean them up above.
-        ReleaseAllServers(mRemoteSyncers);
-
-        // if there are any disk ops, wait for the ops to finish
-        SET_HANDLER(this, &ClientSM::HandleTerminate);
-
-        if (HandleTerminate(code, NULL) != 0) {
-            // this was deleted, return now.
-            return 0;
-        }
+        CLIENT_SM_LOG_STREAM_DEBUG <<
+            "closing connection"
+            " due to " << (code == EVENT_INACTIVITY_TIMEOUT ?
+                "inactivity timeout" : "network error") <<
+            ", socket error: " <<
+                QCUtils::SysError(mNetConnection->GetSocketError()) <<
+            ", pending read: " << mNetConnection->GetNumBytesToRead() <<
+            " write: " << mNetConnection->GetNumBytesToWrite() <<
+        KFS_LOG_EOM;
+	mNetConnection->Close();
 	break;
 
     default:
 	assert(!"Unknown event");
 	break;
     }
-    // Enforce 5 min timeout if connection has pending read and write.
-    if (mNetConnection) {
-        mNetConnection->SetInactivityTimeout(
-            (mNetConnection->HasPendingRead() ||
-                mNetConnection->IsWriteReady()) ?
-            gClientManager.GetIoTimeoutSec() :
-            gClientManager.GetIdleTimeoutSec());
+
+    assert(mRecursionCnt > 0);
+    if (mRecursionCnt == 1) {
+        if (mNetConnection->IsGood()) {
+            // Enforce 5 min timeout if connection has pending read and write.
+            mNetConnection->SetInactivityTimeout(
+                (mNetConnection->HasPendingRead() ||
+                    mNetConnection->IsWriteReady()) ?
+                gClientManager.GetIoTimeoutSec() :
+                gClientManager.GetIdleTimeoutSec());
+        } else {
+            std::list<RemoteSyncSMPtr> serversToRelease;
+
+            mRemoteSyncers.swap(serversToRelease);
+            // get rid of the connection to all the peers in daisy chain;
+            // if there were any outstanding ops, they will all come back
+            // to this method as EVENT_CMD_DONE and we clean them up above.
+            ReleaseAllServers(serversToRelease);
+            ReleaseChunkSpaceReservations();
+            mRecursionCnt--;
+            // if there are any disk ops, wait for the ops to finish
+            SET_HANDLER(this, &ClientSM::HandleTerminate);
+            HandleTerminate(EVENT_NET_ERROR, NULL);
+            // this can be deleted, return now.
+            return 0;
+        }
     }
+    mRecursionCnt--;
     return 0;
 }
 
@@ -267,7 +344,7 @@ ClientSM::HandleTerminate(int code, void *data)
 
 #ifdef DEBUG
     verifyExecutingOnNetProcessor();
-#endif    
+#endif
 
     switch (code) {
     case EVENT_CMD_DONE:
@@ -275,12 +352,13 @@ ClientSM::HandleTerminate(int code, void *data)
 	// An op finished execution.  Send a response back
 	op = (KfsOp *) data;
 	op->done = true;
-	if (op != mOps.front())
+	if (op != mOps.front().first)
 	    break;
 	while (!mOps.empty()) {
-	    op = mOps.front();
+	    op = mOps.front().first;
 	    if (!op->done)
 		break;
+            GetBufferManager().Put(*this, mOps.front().second);
             OpFinished(op);
 	    // we are done with the op
 	    mOps.pop_front();
@@ -310,105 +388,245 @@ ClientSM::HandleTerminate(int code, void *data)
     return 0;
 }
 
+template <typename T> bool
+ClientSM::GetWriteOp(T* wop, int align, IOBuffer *iobuf, int cmdLen, IOBuffer*& ioOpBuf)
+{
+    const size_t nAvail = iobuf->BytesConsumable() - cmdLen;
+    if (nAvail < wop->numBytes) {
+        if (! mCurOp) {
+            BufferManager& bufMgr = GetBufferManager();
+            bool overQuota = false;
+            if (wop->numBytes > gChunkManager.GetMaxIORequestSize() ||
+                    (overQuota = bufMgr.IsOverQuota(*this, wop->numBytes))) {
+                CLIENT_SM_LOG_STREAM_ERROR <<
+                    "seq: " << wop->seq <<
+                    " bad write request size: " << wop->numBytes <<
+                    " buffers: " << GetByteCount() <<
+                    (overQuota ? " over quota" : "") <<
+                    ", closing connection" <<
+                KFS_LOG_EOM;
+                delete wop;
+                return false;
+            }
+            // Move write data to the start of the buffers, to make it
+            // aligned. Normally only one buffer will be created.
+            iobuf->Consume(cmdLen);
+            const int off(align % IOBufferData::GetDefaultBufferSize());
+            if (off > 0) {
+                IOBuffer buf;
+                buf.ReplaceKeepBuffersFull(iobuf, off, nAvail);
+                iobuf->Move(&buf);
+                iobuf->Consume(off);
+            } else {
+                iobuf->MakeBuffersFull();
+            }
+            mCurOp = wop;
+            if (! bufMgr.Get(*this, wop->numBytes)) {
+                CLIENT_SM_LOG_STREAM_DEBUG <<
+                    "seq: " << wop->seq <<
+                    " request for: " << wop->numBytes << " bytes denied" <<
+                    " cur: "   << GetByteCount() <<
+                    " total: " << bufMgr.GetTotalByteCount() <<
+                    " used: "  << bufMgr.GetUsedByteCount() <<
+                    " bufs: "  << bufMgr.GetFreeBufferCount() <<
+                    " op: " << wop->Show() <<
+                    " waiting for buffers" <<
+                KFS_LOG_EOM;
+                mNetConnection->SetMaxReadAhead(0);
+                return false;
+            }
+        }
+        mNetConnection->SetMaxReadAhead(wop->numBytes - nAvail);
+        // we couldn't process the command...so, wait
+        return false;
+    }
+    if (ioOpBuf) {
+        ioOpBuf->Clear();
+    } else {
+        ioOpBuf = new IOBuffer();
+    }
+    if (nAvail != wop->numBytes || cmdLen > 0) {
+        assert(nAvail >= wop->numBytes);
+        iobuf->Consume(cmdLen);
+        const int off(align % IOBufferData::GetDefaultBufferSize());
+        if (nAvail == wop->numBytes && off <= 0) {
+            iobuf->MakeBuffersFull();
+            ioOpBuf->Move(iobuf);
+        } else {
+            ioOpBuf->ReplaceKeepBuffersFull(iobuf, off, wop->numBytes);
+            ioOpBuf->Consume(off);
+        }
+    } else {
+        ioOpBuf->Move(iobuf);
+    }
+    mCurOp = 0;
+    mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
+    return true;
+}
+
+inline BufferManager::ByteCount
+IoRequestBytes(size_t numBytes)
+{
+    if (numBytes <= 0) {
+        return 0;
+    }
+    return ((numBytes + KFS::CHECKSUM_BLOCKSIZE - 1) /
+        KFS::CHECKSUM_BLOCKSIZE * KFS::CHECKSUM_BLOCKSIZE);
+}
+
 ///
 /// We have a command in a buffer.  It is possible that we don't have
 /// everything we need to execute it (for example, for a write we may
 /// not have received all the data the client promised).  So, parse
 /// out the command and if we have everything execute it.
-/// 
-
+///
 bool
-ClientSM::HandleClientCmd(IOBuffer *iobuf,
-                          int cmdLen)
+ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 {
     KfsOp *op = mCurOp;
-    size_t nAvail;
 
     assert(op ? cmdLen == 0 : cmdLen > 0);
     if (! op) {
+        if (sTraceRequestResponse) {
+            IOBuffer::IStream is(*iobuf, cmdLen);
+            string line;
+            while (getline(is, line)) {
+                CLIENT_SM_LOG_STREAM_DEBUG <<
+                    "request: " << line <<
+                KFS_LOG_EOM;
+            }
+        }
         IOBuffer::IStream is(*iobuf, cmdLen);
         if (ParseCommand(is, &op) != 0) {
             assert(! op);
             is.Rewind(cmdLen);
-            char buf[128];
-            while (is.getline(buf, sizeof(buf))) {
-                KFS_LOG_VA_DEBUG("Aye?: %s", buf);
+            string line;
+            int    maxLines = 64;
+            while (--maxLines >= 0 && getline(is, line)) {
+                CLIENT_SM_LOG_STREAM_ERROR <<
+                    "invalid request: " << line <<
+                KFS_LOG_EOM;
             }
             iobuf->Consume(cmdLen);
             // got a bogus command
-            return true;
+            return false;
         }
     }
 
+    ByteCount bufferBytes = -1;
     if (op->op == CMD_WRITE_PREPARE) {
-        WritePrepareOp *wop = static_cast<WritePrepareOp *> (op);
-        assert(wop != NULL);
-        // if we don't have all the data for the write, hold on...
-        nAvail = iobuf->BytesConsumable() - cmdLen;
-        if (nAvail < wop->numBytes) {
-            if (! mCurOp) {
-                if (wop->numBytes > gChunkManager.GetMaxIORequestSize()) {
-                    KFS_LOG_VA_ERROR("bad write request size: %d, closing connection\n",
-                        (int)wop->numBytes);
-                    iobuf->Clear();
-                    delete op;
-                    HandleRequest(EVENT_NET_ERROR, NULL);
-                    return true;
-                }
-                // Move write data to the start of the buffers, to make it
-                // aligned. Normally only one buffer will be created.
-                iobuf->Consume(cmdLen);
-                const int off(wop->offset % IOBufferData::GetDefaultBufferSize());
-                if (off > 0) {
-                    IOBuffer buf;
-                    buf.ReplaceKeepBuffersFull(iobuf, off, nAvail);
-                    iobuf->Move(&buf);
-                    iobuf->Consume(off);
-                } else {
-                    iobuf->MakeBuffersFull();
-                }
-                mCurOp = op;
-            }
-            mNetConnection->SetMaxReadAhead(wop->numBytes - nAvail);
-            // we couldn't process the command...so, wait
+        WritePrepareOp* const wop = static_cast<WritePrepareOp*>(op);
+        assert(! wop->dataBuf);
+        if (! GetWriteOp(wop, wop->offset, iobuf, cmdLen, wop->dataBuf)) {
             return false;
         }
-        wop->dataBuf = new IOBuffer();
-        if (nAvail != wop->numBytes || cmdLen > 0) {
-            assert(nAvail >= wop->numBytes);
-            iobuf->Consume(cmdLen);
-            const int off(wop->offset % IOBufferData::GetDefaultBufferSize());
-            if (nAvail == wop->numBytes && off <= 0) {
-                iobuf->MakeBuffersFull();
-                wop->dataBuf->Move(iobuf);
-            } else {
-                wop->dataBuf->ReplaceKeepBuffersFull(iobuf, off, wop->numBytes);
-                wop->dataBuf->Consume(off);
+        bufferBytes = IoRequestBytes(wop->numBytes);
+    } else if (op->op == CMD_RECORD_APPEND) {
+        RecordAppendOp* const waop = static_cast<RecordAppendOp*>(op);
+        IOBuffer* opBuf = &waop->dataBuf;
+        if (! GetWriteOp(
+                waop,
+                mCurOp ? 0 :
+                    gAtomicRecordAppendManager.GetAlignment(waop->chunkId),
+                iobuf,
+                cmdLen,
+                opBuf
+            )) {
+            return false;
+        }
+        assert(opBuf == &waop->dataBuf);
+        bufferBytes = IoRequestBytes(waop->numBytes);
+    } else {
+        iobuf->Consume(cmdLen);
+    }
+    CLIENT_SM_LOG_STREAM_DEBUG <<
+        "got: seq: " << op->seq << " " << op->Show() <<
+    KFS_LOG_EOM;
+
+    bool submitResponseFlag = false;
+    if (op->op == CMD_READ) {
+        ReadOp* const rop = static_cast<ReadOp*>(op);
+        bufferBytes = IoRequestBytes(rop->numBytes);
+        if (! mCurOp) {
+            BufferManager& bufMgr = GetBufferManager();
+            if (bufMgr.IsOverQuota(*this, bufferBytes)) {
+                CLIENT_SM_LOG_STREAM_ERROR <<
+                    " bad read request size: " << rop->numBytes <<
+                    " need: " << bufferBytes <<
+                    " buffers: " << GetByteCount() <<
+                    " over quota, closing connection" <<
+                KFS_LOG_EOM;
+                delete rop;
+                return false;
             }
-        } else {
-            wop->dataBuf->Move(iobuf);
+            if (! bufMgr.Get(*this, bufferBytes)) {
+                mCurOp = op;
+                CLIENT_SM_LOG_STREAM_DEBUG <<
+                    "request for: " << bufferBytes << " bytes denied" <<
+                    " cur: "   << GetByteCount() <<
+                    " total: " << bufMgr.GetTotalByteCount() <<
+                    " used: "  << bufMgr.GetUsedByteCount() <<
+                    " bufs: "  << bufMgr.GetFreeBufferCount() <<
+                    " op: "    << op->Show() <<
+                    " waiting for buffers" <<
+                KFS_LOG_EOM;
+                mNetConnection->SetMaxReadAhead(0);
+                return false;
+            }
+            mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
         }
         mCurOp = 0;
+
+        if (! gChunkManager.IsChunkStable(rop->chunkId)) {
+            // Do not allow dirty reads.
+            rop->statusMsg = "chunk not stable";
+            rop->status    = -EAGAIN;
+            submitResponseFlag = true;
+            CLIENT_SM_LOG_STREAM_ERROR <<
+                " read request for unstable chunk: " << rop->chunkId <<
+                " denied" <<
+            KFS_LOG_EOM;
+        }
+    }
+
+    if (bufferBytes < 0) {
+        assert(
+            op->op != CMD_WRITE_PREPARE &&
+            op->op != CMD_RECORD_APPEND &&
+            op->op != CMD_READ
+        );
+        // This is needed to account for large number of small responses to
+        // prevent out of buffers in the case where the client queues requests
+        // but doesn't read replies.
+        const int kLargeReponseHeaderSize = 4 << 10;
+        bufferBytes = kLargeReponseHeaderSize;
+        BufferManager& bufMgr = GetBufferManager();
+        if (! bufMgr.Get(*this, bufferBytes)) {
+            mCurOp = op;
+            CLIENT_SM_LOG_STREAM_DEBUG <<
+                "request for: " << bufferBytes << " bytes denied" <<
+                " cur: "   << GetByteCount() <<
+                " total: " << bufMgr.GetTotalByteCount() <<
+                " used: "  << bufMgr.GetUsedByteCount() <<
+                " bufs: "  << bufMgr.GetFreeBufferCount() <<
+                " op: "    << op->Show() <<
+                " waiting for buffers" <<
+            KFS_LOG_EOM;
+            mNetConnection->SetMaxReadAhead(0);
+            return false;
+        }
         mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
-        // KFS_LOG_VA_DEBUG("Got command: %s", buf.get());
-        // KFS_LOG_VA_DEBUG("# of bytes avail for write: %lu", nAvail);
-    } else {
-        string s = op->Show();
-
-        KFS_LOG_VA_DEBUG("Got command: %s\n", s.c_str());
-
-        iobuf->Consume(cmdLen);
+        mCurOp = 0;
     }
 
     if (op->op == CMD_WRITE_SYNC) {
-        string clientIP = mNetConnection->GetPeerName();
-        KFS_LOG_VA_INFO("Received write sync from %s: %s", clientIP.c_str(), op->Show().c_str());
         // make the write sync depend on a previous write
         KfsOp *w = NULL;
-        for (deque<KfsOp *>::iterator i = mOps.begin(); i != mOps.end(); i++) {
-            if (((*i)->op == CMD_WRITE_PREPARE) || ((*i)->op == CMD_WRITE_PREPARE_FWD) ||
-                ((*i)->op == CMD_WRITE)) {                
-                w = *i;
+        for (OpsQueue::iterator i = mOps.begin(); i != mOps.end(); i++) {
+            if (i->first->op == CMD_WRITE_PREPARE ||
+                    i->first->op == CMD_WRITE_PREPARE_FWD ||
+                    i->first->op == CMD_WRITE) {
+                w = i->first;
             }
         }
         if (w != NULL) {
@@ -419,52 +637,73 @@ ClientSM::HandleClientCmd(IOBuffer *iobuf,
             p.dependentOp = op;
             mPendingOps.push_back(p);
 
-            KFS_LOG_STREAM_DEBUG <<
-                "Keeping write-sync (" << op->seq <<
-                ") pending and depends on " << op->seq <<
+            CLIENT_SM_LOG_STREAM_DEBUG <<
+                "keeping write-sync (" << op->seq <<
+                ") pending and depends on " << w->seq <<
             KFS_LOG_EOM;
             return true;
         } else {
-            KFS_LOG_VA_DEBUG("Write-sync is being pushed down; no writes left... (%d ops left in q)",
-                             (int)mOps.size());
+            CLIENT_SM_LOG_STREAM_DEBUG <<
+                "write-sync is being pushed down; no writes left, "
+                << mOps.size() << " ops left" <<
+            KFS_LOG_EOM;
         }
     }
 
-    mOps.push_back(op);
-
+    mOps.push_back(std::make_pair(op, bufferBytes));
     op->clnt = this;
-    // op->Execute();
     gChunkServer.OpInserted();
-
-    SubmitOp(op);
-
+    if (submitResponseFlag) {
+        HandleRequest(EVENT_CMD_DONE, op);
+    } else {
+        // op->Execute();
+        SubmitOp(op);
+    }
     return true;
 }
 
 void
 ClientSM::OpFinished(KfsOp *doneOp)
 {
-
-    // multiple ops could be waiting for a single op to finish...
-    while (1) {
-        if (mPendingOps.empty())
-            return;
-
-        OpPair p;
-        p = mPendingOps.front();
-
-        if (p.op->seq != doneOp->seq) {
+    // Multiple ops could be waiting for a single op to finish.
+    //
+    // Do not run pending submit queue here, if it is not empty.
+    // If pending submit is not empty here, then this is recursive call. Just
+    // add the op to the pending submit queue and let the caller run the queue.
+    // This is need to send responses in the request order, and to limit the
+    // recursion depth.
+    const bool runPendingSubmitQueueFlag = mPendingSubmitQueue.empty();
+    while (! mPendingOps.empty()) {
+        OpPair& p = mPendingOps.front();
+        if (p.op != doneOp) {
             break;
         }
-
-        KFS_LOG_STREAM_DEBUG <<
-            "Submitting write-sync (" << p.dependentOp->seq <<
+        CLIENT_SM_LOG_STREAM_DEBUG <<
+            "submitting write-sync (" << p.dependentOp->seq <<
             ") since " << p.op->seq << " finished" <<
         KFS_LOG_EOM;
-        mOps.push_back(p.dependentOp);
+        mPendingSubmitQueue.splice(mPendingSubmitQueue.end(),
+            mPendingOps, mPendingOps.begin());
+    }
+    if (! runPendingSubmitQueueFlag) {
+        return;
+    }
+    while (! mPendingSubmitQueue.empty()) {
+        KfsOp* const op = mPendingSubmitQueue.front().dependentOp;
+        mPendingSubmitQueue.pop_front();
         gChunkServer.OpInserted();
-        mPendingOps.pop_front();
-        SubmitOp(p.dependentOp);
+        mOps.push_back(std::make_pair(op, 0));
+        SubmitOp(op);
+    }
+}
+
+void
+ClientSM::ReleaseChunkSpaceReservations()
+{
+    for (ChunkSpaceResMap::iterator iter = mReservations.begin();
+         iter != mReservations.end(); iter++) {
+        gAtomicRecordAppendManager.ChunkSpaceRelease(
+            iter->first.chunkId, iter->first.transactionId, iter->second);
     }
 }
 
@@ -472,4 +711,21 @@ RemoteSyncSMPtr
 ClientSM::FindServer(const ServerLocation &loc, bool connect)
 {
     return KFS::FindServer(mRemoteSyncers, loc, connect);
+}
+
+void
+ClientSM::Granted(ClientSM::ByteCount byteCount)
+{
+    CLIENT_SM_LOG_STREAM_DEBUG << "granted: " << byteCount << " op: " <<
+        (mCurOp ? mCurOp->Show() : std::string("null")) <<
+    KFS_LOG_EOM;
+    if (! mNetConnection) {
+        return;
+    }
+    if (mCurOp) {
+        IOBuffer buf;
+        ClientSM::HandleClientCmd(&buf, 0);
+    } else {
+        mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
+    }
 }

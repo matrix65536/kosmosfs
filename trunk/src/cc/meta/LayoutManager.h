@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/06
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -37,6 +36,7 @@
 #include <vector>
 #include <set>
 #include <sstream>
+#include <boost/pool/pool_alloc.hpp> 
 
 #include "kfstypes.h"
 #include "meta.h"
@@ -44,8 +44,10 @@
 #include "ChunkServer.h"
 #include "LeaseCleaner.h"
 #include "ChunkReplicator.h"
+#include "ChunkServer.h"
 
 #include "libkfsIO/Counter.h"
+#include "common/properties.h"
 
 namespace KFS
 {
@@ -70,49 +72,153 @@ namespace KFS
 	/// the lease's version # (also, chunk won't disappear as long as
 	/// lease is valid).
 	struct LeaseInfo {
-		LeaseInfo(LeaseType t, int64_t i): leaseType(t), leaseId(i)
+		LeaseInfo(LeaseType t, int64_t i, bool append)
+			: leaseType(t),
+			  leaseId(i),
+			  chunkServer(),
+			  pathname(),
+			  appendFlag(append),
+                          relinquishedFlag(false),
+                          ownerWasDownFlag(false),
+			  expires(time(0) + LEASE_INTERVAL_SECS)
+			{}
+		LeaseInfo(LeaseType t, int64_t i, ChunkServerPtr &c, const std::string &p, bool append)
+			: leaseType(t),
+			  leaseId(i),
+			  chunkServer(c),
+			  pathname(p),
+			  appendFlag(append),
+                          relinquishedFlag(false),
+                          ownerWasDownFlag(false),
+			  expires(time(0) + LEASE_INTERVAL_SECS)
+			{}
+		LeaseInfo(const LeaseInfo& lease)
+			: leaseType(lease.leaseType),
+			  leaseId(lease.leaseId),
+			  chunkServer(lease.chunkServer),
+			  pathname(lease.pathname),
+			  appendFlag(lease.appendFlag),
+                          relinquishedFlag(lease.relinquishedFlag),
+                          ownerWasDownFlag(lease.ownerWasDownFlag),
+			  expires(lease.expires)
+			{}
+		LeaseInfo& operator=(const LeaseInfo& lease)
 		{
-			time(&expires);
-			// set it to default lease time 
-			expires += LEASE_INTERVAL_SECS;
-		}
-		LeaseInfo(LeaseType t, int64_t i, ChunkServerPtr &c, const std::string &p):
-			leaseType(t), leaseId(i), chunkServer(c), pathname(p)
-		{
-			time(&expires);
-			// set it to default lease time 
-			expires += LEASE_INTERVAL_SECS;
+			Mutable(leaseType)        = lease.leaseType;
+			Mutable(leaseId)          = lease.leaseId;
+			Mutable(chunkServer)      = lease.chunkServer;
+			Mutable(pathname)         = lease.pathname;
+			Mutable(appendFlag)       = lease.appendFlag;
+			Mutable(relinquishedFlag) = lease.relinquishedFlag;
+                        Mutable(ownerWasDownFlag) = lease.ownerWasDownFlag;
+			Mutable(expires)          = lease.expires;
+			return *this;
 		}
 		static bool IsValidLease(const LeaseInfo &l)
 		{
-			time_t now = time(0);
-			return now <= l.expires;
+			return time(0) <= l.expires;
 		}
 		static bool IsValidWriteLease(const LeaseInfo &l)
 		{
 			return (l.leaseType == WRITE_LEASE) &&
 				IsValidLease(l);
 		}
-
-		LeaseType leaseType;
-		int64_t leaseId;
+		static bool IsWriteLease(const LeaseInfo &l)
+		{
+			return (l.leaseType == WRITE_LEASE);
+		}
+		const LeaseType leaseType;
+		const int64_t leaseId;
 		// set for a write lease
-		ChunkServerPtr chunkServer;
+		const ChunkServerPtr chunkServer;
 		// for a write lease, record the pathname; we can use the path
 		// to traverse the dir. tree and update space used at each level
 		// of the tree
-		std::string pathname;
+		const std::string pathname;
+                const bool appendFlag:1;
+                bool       relinquishedFlag:1;
+                bool       ownerWasDownFlag:1;
 		time_t expires;
+	private:
+		template<typename T> static T& Mutable(const T& val)
+		{
+			return const_cast<T&>(val);
+		}
 	};
+
+	// Chunks are made stable by a message from the metaserver ->
+	// chunkservers.  To prevent clients from seeing non-stable chunks, the
+	// metaserver delays issuing a read lease to a client if there is a make
+	// stable message in-flight.  Whenever the metaserver receives acks for
+	// the make stable message, it needs to update its state. This structure
+	// tracks the # of messages sent out and how many have been ack'ed.
+	// When all the messages have been ack'ed the entry for a particular
+	// chunk can be cleaned up.
+	struct MakeChunkStableInfo {
+		MakeChunkStableInfo(
+			int         nServers          = 0,
+			bool        beginMakeStable   = false,
+			std::string name              = std::string())
+		: beginMakeStableFlag(beginMakeStable),
+		  logMakeChunkStableFlag(false),
+		  serverAddedFlag(false),
+		  numServers(nServers),
+		  numAckMsg(0),
+		  pathname(name),
+		  chunkChecksum(0),
+		  chunkSize(-1)
+		{}
+		bool              beginMakeStableFlag:1;
+		bool              logMakeChunkStableFlag:1;
+		bool              serverAddedFlag:1;
+		int               numServers;
+		int               numAckMsg;
+		const std::string pathname;
+		uint32_t          chunkChecksum;
+		off_t             chunkSize;
+		seq_t             chunkVersion;
+	};
+	typedef std::map <chunkId_t, MakeChunkStableInfo,
+            std::less<chunkId_t>,
+            boost::fast_pool_allocator<
+                std::pair<const chunkId_t, MakeChunkStableInfo> >
+        > NonStableChunksMap;
+
+	struct PendingMakeStableEntry {
+		PendingMakeStableEntry(
+			off_t    size        = -1,
+			bool     hasChecksum = false,
+			uint32_t checksum    = 0,
+			seq_t    version     = -1)
+			: mSize(size),
+			  mHasChecksum(hasChecksum),
+			  mChecksum(checksum),
+			  mChunkVersion(version)
+			{}
+		off_t    mSize;
+		bool     mHasChecksum;
+		uint32_t mChecksum;
+		seq_t    mChunkVersion;
+        };
+        typedef std::map <chunkId_t, PendingMakeStableEntry,
+            std::less<chunkId_t>,
+            boost::fast_pool_allocator<
+                std::pair<const chunkId_t, PendingMakeStableEntry> >
+	> PendingMakeStableMap;
 
 	// Given a chunk-id, where is stored and who has the lease(s)
 	struct ChunkPlacementInfo {
 		ChunkPlacementInfo() :
-			fid(-1), ongoingReplications(0) { }
+			fid(-1), chunkOffsetIndex(0), ongoingReplications(0) { }
 		// For cross-validation, we store the fid here.  This
 		// is also useful during re-replication: given a chunk, we
 		// can get its fid and from all the attributes of the file
 		fid_t fid;
+		// Offset within in the file where this chunk is located.  The
+		// metatree is key'ed using <fid, offset> to get the chunk info.
+		// So, given a chunkid, use the key to get at the chunk info.
+		// To save memory, store <offset / CHUNKSIZE>
+		uint32_t chunkOffsetIndex;
 		/// is this chunk being (re) replicated now?  if so, how many
 		int ongoingReplications;
 		std::vector<ChunkServerPtr> chunkServers;
@@ -201,18 +307,141 @@ namespace KFS
 	};
 
 	// chunkid to server(s) map
-	typedef std::map <chunkId_t, ChunkPlacementInfo > CSMap;
-	typedef std::map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
-	typedef std::map <chunkId_t, ChunkPlacementInfo >::iterator CSMapIter;
-#if 0
-	typedef std::tr1::unordered_map <chunkId_t, ChunkPlacementInfo > CSMap;
-	typedef std::tr1::unordered_map <chunkId_t, ChunkPlacementInfo >::const_iterator CSMapConstIter;
-	typedef std::tr1::unordered_map <chunkId_t, ChunkPlacementInfo >::iterator CSMapIter;
-#endif
+	class CSMap {
+	private:
+		typedef std::map <chunkId_t, ChunkPlacementInfo,
+        	    std::less<chunkId_t>,
+        	    boost::fast_pool_allocator<
+                	std::pair<const chunkId_t, ChunkPlacementInfo> >
+        	> Map;
+		void update() {
+			if ((mKeyValidFlag = mIt != mMap.end())) {
+				mKey = mIt->first;
+			}
+		}
+	public:
+		typedef Map::iterator       iterator;
+		typedef Map::const_iterator const_iterator;
+		typedef Map::value_type     value_type;
+		typedef Map::key_type       key_type;
+		typedef Map::mapped_type    mapped_type;
+		typedef Map::size_type      size_type;
+
+		CSMap() : mMap(), mIt(mMap.end()), mKey(), mKeyValidFlag(false) {}
+		 ~CSMap() {}
+		const_iterator find(const key_type& key) const {
+			return const_iterator(const_cast<CSMap*>(this)->find(key));
+		}
+		iterator find(const key_type& key) {
+			if (mKeyValidFlag && mKey == key) {
+				return mIt;
+			}
+			mIt           = mMap.find(key);
+			mKey          = key;
+			mKeyValidFlag = true;
+			return mIt;
+		}
+		void clear() {
+			mMap.clear();
+			mIt           = mMap.end();
+			mKey          = key_type();
+			mKeyValidFlag = false;
+		}
+		size_type size() const {
+			return mMap.size();
+		}
+		bool empty() const {
+			return mMap.empty();
+		}
+		size_type erase(const key_type& key) {
+			if (mIt != mMap.end() && mIt->first == key) {
+				mMap.erase(mIt++);
+				update();
+				return 1;
+			}
+			return mMap.erase(key);
+		}
+		void erase(iterator it) {
+			if (mIt == it) {
+				mMap.erase(mIt++);
+				update();
+			} else {
+				mMap.erase(it);
+			}
+		}
+		std::pair<iterator, bool> insert(const value_type& val) {
+			if (mIt == mMap.end() || mIt->first != val.first) {
+				std::pair<iterator, bool> const ret = mMap.insert(val);
+				mIt           = ret.first;
+				mKey          = mIt->first;
+				mKeyValidFlag = true;
+				return ret;
+			}
+			return std::make_pair(mIt, false);
+		}
+		mapped_type& operator[](const key_type& key) {
+			return insert(value_type(key, mapped_type())).first->second;
+		}
+		iterator begin() {
+			return mMap.begin();
+		}
+		iterator end() {
+			return mMap.end();
+		}
+		const_iterator begin() const {
+			return mMap.begin();
+		}
+		const_iterator end() const {
+			return mMap.end();
+		}
+		iterator lower_bound(const key_type& key) {
+			return mMap.lower_bound(key);
+		}
+		iterator upper_bound(const key_type& key) {
+			return mMap.upper_bound(key);
+		}
+		const_iterator lower_bound(const key_type& key) const {
+			return mMap.lower_bound(key);
+		}
+		const_iterator upper_bound(const key_type& key) const {
+			return mMap.upper_bound(key);
+		}
+		size_type count(const key_type& key) const {
+			return (mMap.find(key) == mMap.end() ? 0 : 1);
+		}
+		iterator first() {
+			mIt = mMap.begin();
+			update();
+			return mIt;
+		}
+		iterator next() {
+			if (mIt != mMap.end()) {
+				++mIt;
+				update();
+			}
+			return mIt;
+		}
+		void copyInto(CSMap& map) const {
+			map.clear();
+			map.mMap = mMap;
+		}
+	private:
+		CSMap(const CSMap&);
+		CSMap& operator=(const CSMap&);
+	private:
+		Map      mMap;
+		iterator mIt;
+		key_type mKey;
+		bool     mKeyValidFlag;
+	};
+	typedef CSMap::const_iterator CSMapConstIter;
+	typedef CSMap::iterator CSMapIter;
 
 	// candidate set of chunks whose replication needs checking
-	typedef std::set <chunkId_t> CRCandidateSet;
-	typedef std::set <chunkId_t>::iterator CRCandidateSetIter;
+	typedef ChunkServer::ChunkIdSet ChunkIdSet;
+	typedef ChunkIdSet CRCandidateSet;
+	typedef CRCandidateSet::iterator CRCandidateSetIter;
+        typedef CRCandidateSet ReplicationCandidates;
 
 	//
 	// For maintenance reasons, we'd like to schedule downtime for a server.
@@ -228,10 +457,115 @@ namespace KFS
 		// the server we put in hibernation
 		ServerLocation location;
 		// the blocks on this server
-		CRCandidateSet blocks;
+		ReplicationCandidates blocks;
 		// when is it likely to wake up
 		time_t sleepEndTime;
 	};
+
+	// use a 10 min. interval to expire entries in the ARA cache.
+	const uint32_t ARA_CHUNK_CACHE_EXPIRE_INTERVAL = 600;
+
+	// For atomic record append, we'd like to assign multiple clients to the
+	// same block.  Whenever an allocation request comes in, we'll try to
+	// assign the last block of the file to the client; if that doesn't
+	// work (because the client passed in a hint saying it wanted a block
+	// past the current EOF), we'll allocate a new block.  Trying to find
+	// the last block of a file is expensive, particularly, when the system
+	// is scaled to handle few 100's of record appenders.  To optimize,
+	// stash the currently known last block of a file.
+	// A downside of this approach is that, if any of the blocks in the
+	// middle are non-full, we won't fill them up.
+	// If this structure works out, we'll need to extend this to hold a list
+	// of blocks that can be re-used for allocation (and thereby avoid the
+	// non-full problem).
+
+	class ARAChunkCache
+	{
+	public:
+		struct Entry {
+			Entry(
+				chunkId_t     cid = -1,
+				seq_t         cv  = -1,
+				off_t         co  = -1,
+				time_t        lat = 0,
+				MetaAllocate* req = 0)
+				: chunkId(cid),
+				  chunkVersion(cv),
+				  offset(co),
+				  lastAccessedTime(lat),
+				  lastDecayTime(lat),
+				  spaceReservationSize(0),
+				  numAppendersInChunk(0),
+				  lastPendingRequest(req)
+				{}
+			bool AddPending(MetaAllocate& req);
+			bool IsAllocationPending() const {
+				return (lastPendingRequest != 0);
+			}
+			// index into chunk->server map to work out where the block lives
+			chunkId_t chunkId;
+			seq_t     chunkVersion;
+			// the file offset corresponding to the last chunk
+			off_t     offset;
+			// when was this info last accessed; use this to cleanup 
+			time_t    lastAccessedTime;
+                	time_t    lastDecayTime;
+			// chunk space reservation approximation
+			int  spaceReservationSize;
+			// # of appenders to which this chunk was used for allocation
+			int  numAppendersInChunk;
+		private:
+			MetaAllocate* lastPendingRequest;
+			friend class ARAChunkCache;
+        	};
+		typedef std::map <fid_t, Entry, std::less<fid_t>,
+			boost::fast_pool_allocator<
+		    		std::pair<const fid_t, Entry> >
+		> Map;
+		typedef Map::const_iterator const_iterator;
+		typedef Map::iterator       iterator;
+
+		ARAChunkCache()
+			: mMap()
+			{}
+		~ARAChunkCache()
+			{ mMap.empty(); }
+		void RequestNew(MetaAllocate& req);
+		void RequestDone(const MetaAllocate& req);
+		void Timeout(time_t now);
+		inline bool Invalidate(fid_t fid);
+		inline bool Invalidate(fid_t fid, chunkId_t chunkId);
+		inline bool Invalidate(iterator it);
+		iterator Find(fid_t fid) {
+			return mMap.find(fid);
+		}
+		const_iterator Find(fid_t fid) const {
+			return mMap.find(fid);
+		}
+		const Entry* Get(const_iterator it) const {
+			return (it == mMap.end() ? 0 : &it->second);
+		}
+		Entry* Get(iterator it) {
+			return (it == mMap.end() ? 0 : &it->second);
+		}
+		const Entry* Get(fid_t fid) const {
+			return Get(Find(fid));
+		}
+		Entry* Get(fid_t fid) {
+			return Get(Find(fid));
+		}
+	private:
+		Map mMap;
+	};
+	typedef std::set<ServerLocation, std::less<ServerLocation>,
+            boost::fast_pool_allocator<ServerLocation>
+	> ServerLocationSet;
+	typedef std::map <std::string, std::vector<std::string>,
+            std::less<std::string>,
+            boost::fast_pool_allocator<
+                std::pair<const std::string, std::vector<std::string> > >
+        > CSCounters;
+	std::string ToString(const CSCounters& cntrs, std::string rowDelim);
 
         ///
         /// LayoutManager is responsible for write allocation:
@@ -293,6 +627,17 @@ namespace KFS
                 /// @retval 0 on success; -1 on failure
 		int AllocateChunk(MetaAllocate *r);
 
+		/// When allocating a chunk for append, we try to re-use an
+		/// existing chunk for a which a valid write lease exists.  
+                /// @param[in/out] r The request associated with the
+                /// write-allocation call.  When an existing chunk is re-used,
+		/// the chunkid/version is returned back to the caller.
+		/// @retval 0 on success; -1 on failure
+		int AllocateChunkForAppend(MetaAllocate *r);
+
+		void CoalesceBlocks(const vector<chunkId_t>& srcChunks, fid_t srcFid, 
+					fid_t dstFid, const off_t dstStartOffset);
+
 		/// A chunkid has been previously allocated.  The caller
 		/// is trying to grab the write lease on the chunk. If a valid
 		/// lease exists, we return it; otherwise, we assign a new lease,
@@ -332,20 +677,66 @@ namespace KFS
 		/// Handler to let a lease owner relinquish a lease.
 		int LeaseRelinquish(MetaLeaseRelinquish *r);
 
+		/// Internally generated: whenever an allocation fails,
+		/// invalidate the write lease, so that a subsequent allocation
+		/// will cause a version # bump and a new lease to be issued.
+		void InvalidateWriteLease(chunkId_t chunkId);
+
 		/// Is a valid lease issued on any of the chunks in the
 		/// vector of MetaChunkInfo's?
 		bool IsValidLeaseIssued(const std::vector <MetaChunkInfo *> &c);
+
+		void MakeChunkStableInit(
+			fid_t                         fid,
+			chunkId_t                     chunkId,
+			off_t                         chunkOffsetInFile,
+			std::string                   pathname,
+			const vector<ChunkServerPtr>& servers,
+			bool                          beginMakeStableFlag,
+			off_t                         chunkSize,
+			bool                          hasChunkChecksum,
+			uint32_t                      chunkChecksum);
+		bool AddServerToMakeStable(
+			ChunkPlacementInfo& placementInfo,
+			ChunkServerPtr      server,
+			chunkId_t           chunkId,
+			seq_t               chunkVersion,
+			const char*&        errMsg);
+                void BeginMakeChunkStableDone(const MetaBeginMakeChunkStable* req);
+		void LogMakeChunkStableDone(const MetaLogMakeChunkStable* req);
+		void MakeChunkStableDone(const MetaChunkMakeStable* req);
+		void ReplayPendingMakeStable(
+			chunkId_t chunkId,
+			seq_t     chunkVersion,
+			off_t     chunkSize,
+			bool      hasChunkChecksum,
+			uint32_t  chunkChecksum,
+			bool      addFlag);
+                int WritePendingMakeStable(ostream& os) const;
+		void CancelPendingMakeStable(fid_t fid, chunkId_t chunkId);
+                int GetChunkSizeDone(MetaChunkSize* req);
+		bool IsChunkStable(chunkId_t chunkId);
+		const char* AddNotStableChunk(
+			ChunkServerPtr server,
+			fid_t          allocFileId,
+			chunkId_t      chunkId,
+			seq_t          chunkVersion,
+			bool           appendFlag,
+			const string&  logPrefix);
+		void ProcessPendingBeginMakeStable();
 
                 /// Add a mapping from chunkId -> server.
                 /// @param[in] chunkId  chunkId that has been stored
                 /// on server c
                 /// @param[in] fid  fileId associated with this chunk.
+                /// @param[in] offset  offset in the file associated with this chunk.
                 /// @param[in] c   server that stores chunk chunkId.
                 ///   If c == NULL, then, we update the table to
                 /// reflect chunk allocation; whenever chunk servers
                 /// start up and tell us what chunks they have, we
                 /// line things up and see which chunk is stored where.
-		void AddChunkToServerMapping(chunkId_t chunkId, fid_t fid, ChunkServer *c);
+		void AddChunkToServerMapping(chunkId_t chunkId, fid_t fid, off_t offset, 
+						ChunkServer *c);
 
 		/// Remove the mappings for a chunk.
                 /// @param[in] chunkId  chunkId for which mapping needs to be nuked.
@@ -368,10 +759,12 @@ namespace KFS
                 ///
 		int GetChunkToServerMapping(chunkId_t chunkId, std::vector<ChunkServerPtr> &c);
 
-		CSMap GetChunkToServerMap() {
-			return mChunkToServerMap;
-		}
-
+                /// Get the mapping from chunkId -> file id.
+                /// @param[in] chunkId  chunkId
+                /// @param[out] fileId  file id the chunk belongs to
+                /// @retval true if a mapping was found; false otherwise
+                ///
+                bool GetChunkFileId(chunkId_t chunkId, fid_t& fileId);
 
 		/// Dump out the chunk location map to a file.  The file is
 		/// written to the specified dir.  The filename: 
@@ -385,6 +778,18 @@ namespace KFS
 		/// Dump out the list of chunks that are currently replication
 		/// candidates.
 		void DumpChunkReplicationCandidates(ostringstream &os);
+
+		/// Check the replication level of all the blocks and report
+		/// back files that are under-replicated.
+		/// Returns true if the system is healthy.
+		void Fsck(ostringstream &os);
+
+		///
+		/// How many blocks are at replication level of 1.
+		///
+		size_t GetNumUnderReplicatedBlocks() const {
+			return mPriorityChunkReplicationCandidates.size();
+		}
 
                 /// Ask each of the chunkserver's to dispatch pending RPCs
 		void Dispatch();
@@ -409,6 +814,11 @@ namespace KFS
 		/// and remove out dead leases.
 		void LeaseCleanup();
 
+		/// Periodically, re-check the replication level of all chunks
+		/// the system; this call initiates the checking work, which
+		/// gets done over time.
+		void InitCheckAllChunks();
+
 		/// Is an expensive call; use sparingly
 		void CheckAllLeases();
 
@@ -416,6 +826,7 @@ namespace KFS
 		/// @param[in] chunkId  the chunk for which leases need to be cleaned up
 		/// @param[in] v   the placement/lease info for the chunk
 		void LeaseCleanup(chunkId_t chunkId, ChunkPlacementInfo &v);
+		bool ExpiredLeaseCleanup(chunkId_t chunkId);
 
 		/// Handler that loops thru the chunk->location map and determines
 		/// if there are sufficient copies of each chunk.  Those chunks with
@@ -476,6 +887,19 @@ namespace KFS
 		/// Send a heartbeat message to all responsive chunkservers
 		void HeartbeatChunkServers();
 
+                void SetParameters(const Properties& props);
+		void SetChunkServersProperties(const Properties& props);
+
+		/// For layout emulator.
+		void GetChunkToServerMap(CSMap& map) {
+			mChunkToServerMap.copyInto(map);
+		}
+
+		CSCounters GetChunkServerCounters() const;
+
+		void AllocateChunkForAppendDone(MetaAllocate& req) {
+			mARAChunkCache.RequestDone(req);
+		}
         protected:
 		/// A rolling counter for tracking leases that are issued to
 		/// to clients/chunkservers for reading/writing chunks
@@ -518,6 +942,8 @@ namespace KFS
 		/// because during the time period that corresponds to a lease interval,
 		/// we may learn about leases that we had handed out before crashing.
 		time_t mRecoveryStartTime;
+		/// To keep track of uptime.
+		const time_t mStartTime;
 
 		/// Defaults to the width of a lease window
 		int mRecoveryIntervalSecs;
@@ -534,8 +960,10 @@ namespace KFS
                 /// List of connected chunk servers.
                 std::vector <ChunkServerPtr> mChunkServers;
 		/// Whenever the list of chunkservers has to be modified, this
-		/// lock is used to serialize access
-		pthread_mutex_t mChunkServersMutex;
+		/// lock is used to serialize access.  
+		/// XXX: The code is now single threaded.  Don't need this mutex
+		/// anymore.
+		// pthread_mutex_t mChunkServersMutex;
 
 		/// List of servers that are hibernating; if they don't wake up
 		/// the time the hibernation period ends, the blocks on those
@@ -545,7 +973,8 @@ namespace KFS
 		std::vector <HibernatingServerInfo_t> mHibernatingServers;
 
 		/// Track when servers went down so we can report it
-		std::ostringstream mDownServers;
+                typedef std::deque<string> DownServers;
+		DownServers mDownServers;
 
 		/// State about how each rack (such as, servers/space etc)
 		std::vector<RackInfo> mRacks;
@@ -554,11 +983,26 @@ namespace KFS
                 CSMap mChunkToServerMap;
 
                 /// Candidate set of chunks whose replication needs checking
-                CRCandidateSet mChunkReplicationCandidates;
+                ReplicationCandidates mChunkReplicationCandidates;
+
+		/// These are chunks with 1 copy; replicate first before we do
+		/// the rest that needs replication
+		CRCandidateSet mPriorityChunkReplicationCandidates;
 
 		/// chunks to which a lease has been handed out; whenever we
 		/// cleanup the leases, this set is walked 
 		CRCandidateSet mChunksWithLeases;
+
+		/// For files that are being atomic record appended to, track the last
+		/// chunk of the file that we can use for subsequent allocations
+		ARAChunkCache mARAChunkCache;
+
+		/// Set of chunks that are in the process being made stable: a
+		/// message has been sent to the associated chunkservers which are
+		/// flushing out data to disk.
+		NonStableChunksMap   mNonStableChunks;
+		ChunkIdSet           mPendingBeginMakeStable;
+		PendingMakeStableMap mPendingMakeStable;
 
 		/// Counters to track chunk replications
 		Counter *mOngoingReplicationStats;
@@ -566,11 +1010,44 @@ namespace KFS
 		/// how much todo before we are all done (estimate of the size
 		/// of the chunk-replication candidates set).
 		Counter *mReplicationTodoStats;
+		/// # of chunks for which there is only a single copy
+		Counter *mChunksWithOneReplicaStats;
 		/// Track the # of replication ops that failed
 		Counter *mFailedReplicationStats;
 		/// Track the # of stale chunks we have seen so far
 		Counter *mStaleChunkCount;
+                size_t mMastersCount;
+                size_t mSlavesCount;
+                bool   mAssignMasterByIpFlag;
+                int    mLeaseOwnerDownExpireDelay;
+                double mPercentLoadedNodesToAvoidForWrites;
+                // Write append space reservation accounting.
+                int    mMaxReservationSize;
+                int    mReservationDecayStep;
+                int    mChunkReservationThreshold;
+                double mReservationOvercommitFactor;
+		// Delay replication when connection breaks.
+		int    mServerDownReplicationDelay;
+                uint64_t mMaxDownServersHistorySize;
+                // Chunk server properties broadcasted to all chunk servers.
+		Properties mChunkServersProps;
+		string     mChunkServersPropsFileName;
+		bool       mReloadChunkServersPropertiesFlag;
+		// Chunk server restart logic.
+		int     mCSToRestartCount;
+                int     mMastersToRestartCount;
+		int     mMaxCSRestarting;
+		int64_t mMaxCSUptime;
+		int64_t mCSGracefulRestartTimeout;
+                int64_t mCSGracefulRestartAppendWithWidTimeout;
+                time_t  mLastReplicationCheckTime;
+                time_t  mLastRecomputeDirsizeTime;
 
+		bool ExpiredLeaseCleanup(
+	            chunkId_t                 chunkId,
+	            time_t                    now,
+	            int                       ownerDownExpireDelay = 0,
+	            const CRCandidateSetIter* chunksWithLeasesIt   = 0);
 		/// Find a set of racks to place a chunk on; the racks are
 		/// ordered by space.
 		void FindCandidateRacks(std::vector<int> &result);
@@ -623,7 +1100,8 @@ namespace KFS
 		/// @retval true if the chunk is to be replicated; false otherwise
 		bool CanReplicateChunkNow(chunkId_t chunkId,
 				ChunkPlacementInfo &clli,
-				int &extraReplicas);
+				int &extraReplicas,
+				bool &noSuchChunkFlag);
 
 		/// Replicate a chunk.  This involves finding a new location for
 		/// the chunk that is different from the existing set of replicas
@@ -634,9 +1112,9 @@ namespace KFS
 		/// @param[in] candidates   The set of servers on which the additional replicas
 		/// 				should be stored
 		/// @retval  The # of actual replications triggered
-		int ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
+		int ReplicateChunk(chunkId_t chunkId, ChunkPlacementInfo &clli,
 				uint32_t extraReplicas);
-		int ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
+		int ReplicateChunk(chunkId_t chunkId, ChunkPlacementInfo &clli,
 				uint32_t extraReplicas, const std::vector<ChunkServerPtr> &candidates);
 
 		/// The server has finished re-replicating a chunk.  If there is more
@@ -645,6 +1123,14 @@ namespace KFS
 		/// @param[in] chunkReplicated  The chunkid that the server says
 		///     it finished replication.
 		void FindReplicationWorkForServer(ChunkServerPtr &server, chunkId_t chunkReplicated);
+
+		/// From the candidates, handout work to nodes.  If any chunks are
+		/// over-replicated/chunk is deleted from system, add them to delset.
+		void HandoutChunkReplicationWork(CRCandidateSet &candidates,
+						CRCandidateSet &delset);
+		/// From the list of candidates, build a priority list---a list
+		/// of chunks with replication level of 1.
+		void RebuildPriorityReplicationList();
 
 		/// There are more replicas of a chunk than the requested amount.  So,
 		/// delete the extra replicas and reclaim space.  When deleting the addtional
@@ -667,6 +1153,10 @@ namespace KFS
 		/// Periodically, update our estimate of how much space is
 		/// used/available in each rack.
 		void UpdateRackSpaceUsageCounts();
+
+		/// Does any server have space/write-b/w available for
+		/// re-replication
+		bool IsAnyServerAvailForReReplication() const;
 
 		/// Periodically, rebalance servers by moving chunks around from
 		/// "over utilized" servers to "under utilized" servers.
@@ -695,15 +1185,11 @@ namespace KFS
 		/// we are in recovery after a restart.
 		/// Also, if the # of chunkservers that are connected to us is
 		/// less than some threshold, we are in recovery mode.
-		bool InRecovery()
-		{
-			if (mChunkServers.size() < mMinChunkserversToExitRecovery)
-				return true;
-			time_t now = time(0);
-			return now - mRecoveryStartTime <=
-				mRecoveryIntervalSecs;
-		}
+		inline bool InRecovery() const;
+		inline bool InRecoveryPeriod() const;
 
+                inline bool IsChunkServerRestartAllowed() const;
+                void ScheduleChunkServersRestart();
         };
 
 	// When the rebalance planner it works out a plan that specifies
@@ -716,8 +1202,6 @@ namespace KFS
 	};
 
         extern LayoutManager gLayoutManager;
-	void SetRecoveryInterval(int secs);
-	void SetPercentLoadedNodesToAvoidForWrites(double percent);
 }
 
 #endif // META_LAYOUTMANAGER_H

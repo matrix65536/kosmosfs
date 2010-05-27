@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/28
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -40,6 +39,7 @@
 #include "Chunk.h"
 #include "KfsOps.h"
 #include "common/cxxutil.h"
+#include "qcdio/qcdllist.h"
 
 namespace KFS
 {
@@ -48,8 +48,15 @@ namespace KFS
 const size_t KFS_CHUNK_HEADER_SIZE = 16384;
 
 class ChunkInfoHandle;
+
 class DiskIo;
 class Properties;
+struct ChunkDirInfo_t {
+    ChunkDirInfo_t() : usedSpace(0), availableSpace(0) { }
+    std::string dirname;
+    int64_t usedSpace;
+    int64_t availableSpace;
+};
 
 /// The chunk manager writes out chunks as individual files on disk.
 /// The location of the chunk directory is defined by chunkBaseDir.
@@ -60,9 +67,35 @@ class Properties;
 ///
 class ChunkManager {
 public:
+    struct Counters
+    {
+        typedef int64_t Counter;
+
+        Counter mBadChunkHeaderErrorCount;
+        Counter mReadChecksumErrorCount;
+        Counter mReadErrorCount;
+        Counter mWriteErrorCount;
+        Counter mOpenErrorCount;
+        Counter mCorruptedChunksCount;
+        Counter mDirLostChunkCount;
+        Counter mChunkDirLostCount;
+
+        void Clear()
+        {
+            mBadChunkHeaderErrorCount = 0;
+            mReadChecksumErrorCount   = 0;
+            mReadErrorCount           = 0;
+            mWriteErrorCount          = 0;
+            mOpenErrorCount           = 0;
+            mCorruptedChunksCount     = 0;
+            mDirLostChunkCount        = 0;
+            mChunkDirLostCount        = 0;
+        }
+    };
+
     ChunkManager();
     ~ChunkManager();
-    
+
     /// Init function to configure the chunk manager object.
     bool Init(const std::vector<std::string> &chunkDirs, int64_t totalSpace, const Properties& prop);
 
@@ -75,8 +108,10 @@ public:
     /// @retval status code
     int 	AllocChunk(kfsFileId_t fileId, kfsChunkId_t chunkId, 
                            int64_t chunkVersion,
-                           bool isBeingReplicated = false);
-
+                           bool isBeingReplicated = false,
+                           ChunkInfoHandle **cih = 0);
+    void    AllocChunkForAppend(
+        AllocChunkOp* op, int replicationPos, ServerLocation peerLoc);
     /// Delete a previously allocated chunk file.
     /// @param[in] chunkId id of the chunk being deleted.
     /// @retval status code
@@ -89,12 +124,21 @@ public:
     /// to a string stream
     void    DumpChunkMap(std::ostringstream &ofs);
 
+    /// A previously created dirty chunk should now be made "stable".
+    /// Move that chunk out of the dirty dir.
+    int	    MakeChunkStable(kfsChunkId_t chunkId);
+    bool    IsChunkStable(kfsChunkId_t chunkId) const;
+
+    /// Make <dstFid, dstChunkId> share the same chunk as <srcFid, srcChunkid>
+    int   CoalesceBlock(kfsFileId_t srcFid, kfsChunkId_t srcChunkId,
+                        kfsFileId_t dstFid, kfsChunkId_t dstChunkId);
+
     /// A previously created chunk is stale; move it to stale chunks
-    /// dir; space can be reclaimed later
+    /// dir only if we want to preserve it; otherwise, delete
     ///
     /// @param[in] chunkId id of the chunk being moved
     /// @retval status code
-    int		StaleChunk(kfsChunkId_t chunkId);
+    int		StaleChunk(kfsChunkId_t chunkId, bool deleteOk = false);
 
     /// Truncate a chunk to the specified size
     /// @param[in] chunkId id of the chunk being truncated.
@@ -118,7 +162,21 @@ public:
 
     /// Close a previously opened chunk and release resources.
     /// @param[in] chunkId id of the chunk being closed.
-    void	CloseChunk(kfsChunkId_t chunkId);
+    /// @retval 0 if the close was accepted; -1 otherwise
+    int		CloseChunk(kfsChunkId_t chunkId);
+
+    /// Utility function that returns a pointer to mChunkTable[chunkId].
+    /// @param[in] chunkId  the chunk id for which we want info
+    /// @param[out] cih  the resulting pointer from mChunkTable[chunkId]
+    /// @retval  0 on success; -EBADF if we can't find mChunkTable[chunkId]
+    int GetChunkInfoHandle(kfsChunkId_t chunkId, ChunkInfoHandle **cih);
+
+    /// Given a byte range, return the checksums for that range.
+    std::vector<uint32_t> GetChecksums(kfsChunkId_t chunkId, off_t offset, size_t numBytes);
+
+    /// For telemetry purposes, provide the driveName where the chunk
+    /// is stored and pass that back to the client. 
+    void  GetDriveName(ReadOp *op);
 
     /// Schedule a read on a chunk.
     /// @param[in] op  The read operation being scheduled.
@@ -157,7 +215,7 @@ public:
     /// @param[out] fid     Return the file-id that owns the chunk
     /// @param[out] chunkSize  The size of the chunk
     /// @retval status code
-    int 	ChunkSize(kfsChunkId_t chunkId, kfsFileId_t &fid, off_t *chunkSize);
+    int 	ChunkSize(kfsChunkId_t chunkId, kfsFileId_t &fid, off_t *chunkSize, bool *araStableFlag = 0);
 
     /// Cancel a previously scheduled chunk operation.
     /// @param[in] cont   The callback object that scheduled the
@@ -229,7 +287,10 @@ public:
     /// Retrieve the chunks hosted on this chunk server.
     /// @param[out] result  A vector containing info of all chunks
     /// hosted on this server.
-    void GetHostedChunks(std::vector<ChunkInfo_t> &result);
+    void GetHostedChunks(
+        std::vector<ChunkInfo_t> &stable,
+        std::vector<ChunkInfo_t> &notStable,
+        std::vector<ChunkInfo_t> &notStableAppend);
 
     /// Return the total space that is exported by this server.  If
     /// chunks are stored in a single directory, we use statvfs to
@@ -238,12 +299,16 @@ public:
     int64_t GetTotalSpace() { return GetTotalSpace(false); }
     int64_t GetUsedSpace() const { return mUsedSpace; };
     long GetNumChunks() const { return mNumChunks; };
+    long GetNumWritableChunks() const;
+
+    /// From the list of chunk dirs, return a count of the # drives that are usable.
+    int GetUsableChunkDirs() const;
 
     /// For a write, the client is defining a write operation.  The op
     /// is queued and the client pushes data for it subsequently.
     /// @param[in] wi  The op that defines the write
     /// @retval status code
-    int AllocateWriteId(WriteIdAllocOp *wi);
+    int AllocateWriteId(WriteIdAllocOp *wi, int replicationPos, ServerLocation peerLoc);
 
     /// For a write, the client has pushed data to us.  This is queued
     /// for a commit later on.
@@ -296,8 +361,8 @@ public:
     /// Push the changes from the write out to disk
     int Sync(WriteOp *op);
 
-    /// return 0 if the chunkId is good; -EBADF otherwise
-    int GetChunkChecksums(kfsChunkId_t chunkId, uint32_t **checksums);
+    ChunkInfo_t* GetChunkInfo(kfsChunkId_t chunkId);
+    
 
     void ChunkIOFailed(kfsChunkId_t chunkId, int err) {
         if (err == -EIO) {
@@ -309,10 +374,13 @@ public:
         return mMaxIORequestSize;
     }
     void Shutdown();
+    bool IsWriteAppenderOwns(kfsChunkId_t chunkId) const;
 
     inline void LruUpdate(ChunkInfoHandle& cih);
     inline bool IsInLru(const ChunkInfoHandle& cih) const;
     enum { kChunkInfoHandleListCount = 2 };
+    void GetCounters(Counters& counters)
+        { counters = mCounters; }
 
 private:
     class PendingWrites
@@ -398,6 +466,8 @@ private:
             mLru.splice(mLru.end(), mLru, i->GetLruIterator());
             return i->mOp;
         }
+        size_t GetChunkIdCount() const
+            { return mChunkIds.size(); }
     private:
         class LruIterator;
         class OpListEntry
@@ -598,6 +668,8 @@ private:
     int    mInactiveFdsCleanupIntervalSecs;
     time_t mNextInactiveFdCleanupTime;
 
+    Counters mCounters;
+
     inline void Delete(ChunkInfoHandle& cih);
     inline void Release(ChunkInfoHandle& cih);
 
@@ -630,12 +702,6 @@ private:
     /// @retval A disk connection pointer allocated via a call to new;
     /// it is the caller's responsibility to free the memory
     DiskIo *SetupDiskIo(kfsChunkId_t chunkId, KfsOp *op);
-
-    /// Utility function that returns a pointer to mChunkTable[chunkId].
-    /// @param[in] chunkId  the chunk id for which we want info
-    /// @param[out] cih  the resulting pointer from mChunkTable[chunkId]
-    /// @retval  0 on success; -EBADF if we can't find mChunkTable[chunkId]
-    int GetChunkInfoHandle(kfsChunkId_t chunkId, ChunkInfoHandle **cih);
 
     /// Checksums are computed on 64K blocks.  To verify checksums on
     /// reads, reads are aligned at 64K boundaries and data is read in
@@ -681,6 +747,8 @@ private:
     /// Helper function to move a chunk to the stale dir
     void MarkChunkStale(ChunkInfoHandle *cih);
 
+    /// On a restart, nuke out all the dirty chunks
+    void RemoveDirtyChunks();
 
     /// Scan the chunk dirs and rebuild the list of chunks that are hosted on this server
     void Restore();
@@ -690,6 +758,7 @@ private:
     /// Update the checksums in the chunk metadata based on the op.
     void UpdateChecksums(ChunkInfoHandle *cih, WriteOp *op);
     int64_t GetTotalSpace(bool startDiskIo);
+    bool IsChunkStable(const ChunkInfoHandle* cih) const;
 };
 
 inline ChunkManager::PendingWrites::OpListEntry::OpListEntry()
@@ -713,6 +782,9 @@ extern ChunkManager gChunkManager;
 /// Given a partition that holds chunks, get the path to the directory
 /// that is used to keep the stale chunks (from this partition)
 std::string GetStaleChunkPath(const std::string &partition);
+/// Given a partition that holds chunks, get the path to the directory
+/// that is used to keep the dirty chunks (from this partition)
+std::string GetDirtyChunkPath(const std::string partition);
 
 }
 

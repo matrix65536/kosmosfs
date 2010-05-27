@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/07/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -37,7 +36,6 @@ extern "C" {
 #include "common/log.h"
 
 #include "MonUtils.h"
-#include "KfsToolsCommon.h"
 
 using std::string;
 using std::cout;
@@ -61,12 +59,10 @@ int main(int argc, char **argv)
 {
     char optchar;
     bool help = false, meta = false, chunk = false;
-    string serverHost = "";
+    const char *server = NULL;
     int port = -1;
     bool verboseLogging = false;
 
-    KFS::tools::getEnvServer(serverHost, port);
-    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hmcs:p:v")) != -1) {
@@ -78,7 +74,7 @@ int main(int argc, char **argv)
                 chunk = true;
                 break;
             case 's':
-                KFS::tools::parseServer(optarg, serverHost, port);
+                server = optarg;
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -97,20 +93,20 @@ int main(int argc, char **argv)
     }
 
     if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelDEBUG);
     } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelINFO);
     } 
 
     help = help || (!meta && !chunk);
 
-    if (help || (serverHost == "") || (port < 0)) {
+    if (help || (server == NULL) || (port < 0)) {
         cout << "Usage: " << argv[0] << " [-m|-c] -s <server name> -p <port> {-v}" 
              << endl;
         exit(-1);
     }
 
-    ServerLocation loc(serverHost, port);
+    ServerLocation loc(server, port);
 
     if (meta)
         PingMetaServer(loc);

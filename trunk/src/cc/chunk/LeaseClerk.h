@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/10/09
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -77,14 +76,18 @@ public:
 
     /// Used for voluntarily giving up a write lease.
     ///
-    void RelinquishLease(kfsChunkId_t chunkId);
+    void RelinquishLease(kfsChunkId_t chunkId, off_t size = -1, bool hasChecksum = false, uint32_t checksum = 0);
     /// Record the occurence of a write.  This notifies the clerk to
     /// renew the lease prior to the end of the lease period.
     void DoingWrite(kfsChunkId_t chunkId);
 
     /// Check if lease is still valid.
-    /// @param[in] leaseId  The lease id that we are checking for validity.
+    /// @param[in] chunkId  The chunk whose lease we are checking for validity.
     bool IsLeaseValid(kfsChunkId_t chunkId);
+
+    /// Avoid renewing lease on a particular chunk.
+    /// @param[in] chunkId  The chunk for which we don't want lease renewal.
+    void AvoidRenewingLease(kfsChunkId_t chunkId);
 
     /// A handler for handling timeouts related to renewing leases.
     /// When a lease is registered with the clerk, the clerk sets up a
@@ -92,6 +95,9 @@ public:
     /// method is called with data being the chunkid for which a lease
     /// renewal may be needed.
     int HandleEvent(int code, void *data);
+
+    time_t GetLeaseExpireTime(kfsChunkId_t chunkId);
+    void UnregisterAllLeases();
 
     void Timeout();
 
@@ -104,6 +110,7 @@ private:
     void LeaseExpired(kfsChunkId_t chunkId);
 
     void CleanupExpiredLeases();
+    inline static time_t Now();
 };
 
 extern LeaseClerk gLeaseClerk;

@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2007/09/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.
@@ -73,7 +72,7 @@ KFS::tools::handleChangeReplication(const vector<string> &args)
         return -EINVAL;
     }
 
-    if ((res = kfsClient->SetReplicationFactor(args[0], numReplicas)) < 0) {
+    if ((res = kfsClient->SetReplicationFactor(args[0].c_str(), numReplicas)) < 0) {
 	cout << "Set replication failed: " << ErrorCodeToStr(res) << endl;
         return res;
     } 

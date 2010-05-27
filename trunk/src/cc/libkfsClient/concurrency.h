@@ -1,10 +1,9 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // \brief Provide class definitions relating to concurrency.
 // 
 // Created 2007/08/21
-// Author: Wang Lam (Kosmix Corp.) 
 //
 // Copyright 2007 Kosmix Corp.
 //
@@ -56,7 +55,16 @@ public:
      * Release the mutex automatically
      */
     ~MutexLock()
-    { int rval = pthread_mutex_unlock(mMutex); assert(!rval); (void)rval; }
+    { Release(); };
+    void Release()
+    {
+        if (mMutex) {
+            int rval = pthread_mutex_unlock(mMutex);
+            assert(!rval);
+            (void)rval;
+            mMutex = 0;
+        }
+    }
 
 private:
     pthread_mutex_t *mMutex;

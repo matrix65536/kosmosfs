@@ -3,7 +3,6 @@
 //
 // Created 2008/08/27
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -65,8 +64,8 @@ main(int argc, char **argv)
                 help = true;
                 break;
             case 's':
-                checkSize = true;
-                break;
+				checkSize = true;
+				break;
             case 'v':
             	verbose = true;
             	break;
@@ -92,7 +91,7 @@ main(int argc, char **argv)
 
     EmulatorSetup(logdir, cpdir, networkFn, chunkmapFn);
 
-    MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
 
     //cout << "Checking that the replicas are on three different racks" << endl;
 

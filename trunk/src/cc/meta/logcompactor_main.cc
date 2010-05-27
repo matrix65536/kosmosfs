@@ -3,7 +3,6 @@
 //
 // Created 2008/06/18
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -49,7 +48,7 @@ using std::cout;
 using std::endl;
 using namespace KFS;
 
-static int restoreCheckpoint();
+static int restoreCheckpoint(const string &lockFn);
 static int replayLogs();
 
 int main(int argc, char **argv)
@@ -59,13 +58,17 @@ int main(int argc, char **argv)
     bool help = false, computeDirSize = false;
     int16_t numReplicasPerFile = -1;
     string logdir, cpdir;
+    string lockFn;
     int status;
 
     KFS::MsgLogger::Init(NULL);
-    KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    KFS::MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
 
-    while ((optchar = getopt(argc, argv, "hpl:c:r:")) != -1) {
+    while ((optchar = getopt(argc, argv, "hpl:c:r:L:")) != -1) {
         switch (optchar) {
+            case 'L':
+                lockFn = optarg;
+                break;
             case 'l': 
                 logdir = optarg;
                 break;
@@ -89,7 +92,7 @@ int main(int argc, char **argv)
     }
 
     if (help) {
-        cout << "Usage: " << argv[0] << " [-l <logdir>] [-c <cpdir>] {-p} {-r <# of replicas>}"
+        cout << "Usage: " << argv[0] << " [-L <lockfile>] [-l <logdir>] [-c <cpdir>] {-p} {-r <# of replicas>}"
              << endl;
         cout << "where -p means recompute size of each directory in the tree" << endl;
 	cout << "where -r means change the replication for all files in the system to the specified value" << endl;
@@ -105,7 +108,7 @@ int main(int argc, char **argv)
 
     logger_setup_paths(logdir);
     checkpointer_setup_paths(cpdir);
-    status = restoreCheckpoint();
+    status = restoreCheckpoint(lockFn);
     if (status != 0)
         panic("restore checkpoint failed!", false);
     status = replayLogs();
@@ -121,9 +124,12 @@ int main(int argc, char **argv)
     exit(0);
 }
 
-static int restoreCheckpoint()
+static int restoreCheckpoint(const string &lockFn)
 {
     int status = 0;
+
+    if (lockFn != "")
+        acquire_lockfile(lockFn, 30);
 
     if (file_exists(LASTCP)) {
         Restorer r;

@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/11/01
-// Author: Mike Ovsiannikov
 //
 // Copyright 2008,2009 Quantcast Corp.
 //
@@ -65,7 +64,9 @@ public:
         }
         mFreeListPtr = new BufferIndex[inNumBuffers + 1];
         size_t const kPageSize = sysconf(_SC_PAGESIZE);
-        mAllocSize = size_t(inNumBuffers) * (inBufferSize + 1);
+        size_t const kAlign    = kPageSize > size_t(inBufferSize) ?
+            kPageSize : size_t(inBufferSize);
+        mAllocSize = size_t(inNumBuffers) * inBufferSize + kAlign;
         mAllocSize = (mAllocSize + kPageSize - 1) / kPageSize * kPageSize;
         mAllocPtr = mmap(0, mAllocSize,
             PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -77,8 +78,9 @@ public:
             Destroy();
             return errno;
         }
-        mStartPtr += (((char*)mAllocPtr - (char*)0) + inBufferSize - 1) /
-            inBufferSize * inBufferSize;
+        mStartPtr = 0;
+        mStartPtr += (((char*)mAllocPtr - (char*)0) + kAlign - 1) /
+            kAlign * kAlign;
         mTotalCnt     = inNumBuffers;
         mFreeCnt      = 0;
         *mFreeListPtr = 0;
@@ -369,4 +371,11 @@ QCIoBufferPool::TryToRefill(
         }
     }
     return (mFreeCnt >= inBufCnt);
+}
+
+    int
+QCIoBufferPool::GetFreeBufferCount()
+{
+    QCStMutexLocker theLock(mMutex);
+    return mFreeCnt;
 }

@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file queue.h
  * \brief queue for requested metadata operations
@@ -97,11 +97,8 @@ public:
  * throw in a mutex to allow multithreaded updating.
  */
 template <typename T> class MetaQueue {
-	deque <T *> queue;
-	MetaThread thread;
-	int waiters;		//!< threads waiting for results
-	T *dequeue_internal();
 public:
+	typedef deque<T *> Queue;
 	MetaQueue(): waiters(0) { }
 	~MetaQueue() { }
 	bool empty() { return queue.empty(); }
@@ -110,6 +107,15 @@ public:
 	T *dequeue_nowait();
 	void apply(FunctorWrapper<T> &f);
 	void remove(PredWrapper<T> &f);
+        void swap(Queue &q);
+private:
+	Queue queue;
+	MetaThread thread;
+	int waiters;		//!< threads waiting for results
+	T *dequeue_internal();
+private:
+	MetaQueue(const MetaQueue<T>&);
+	MetaQueue<T>& operator=(const MetaQueue<T>&);
 };
 
 /*!
@@ -196,6 +202,17 @@ MetaQueue <T>::remove(PredWrapper<T> &f)
 {
 	thread.lock();
 	remove_if(queue.begin(), queue.end(), f);
+	thread.unlock();
+}
+
+/*!
+ * \brief swap
+*/
+template <typename T> void
+MetaQueue <T>::swap(Queue &q)
+{
+	thread.lock();
+	queue.swap(q);
 	thread.unlock();
 }
 

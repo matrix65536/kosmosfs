@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2009/04/18
-// Author: Jakub Schmidtke
 //
 // This file is part of Kosmos File System (KFS).
 //

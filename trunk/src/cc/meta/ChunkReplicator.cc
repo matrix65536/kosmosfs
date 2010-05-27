@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2007/01/18
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.
@@ -36,12 +35,12 @@ ChunkReplicator::ChunkReplicator() :
 { 
 	SET_HANDLER(this, &ChunkReplicator::HandleEvent);
 	mTimer = new ChunkReplicatorTimeoutImpl(this);
-	globals().netManager.RegisterTimeoutHandler(mTimer);
+	globalNetManager().RegisterTimeoutHandler(mTimer);
 }
 
 ChunkReplicator::~ChunkReplicator()
 {
-	globals().netManager.UnRegisterTimeoutHandler(mTimer);
+	globalNetManager().UnRegisterTimeoutHandler(mTimer);
 	delete mTimer;
 }
 

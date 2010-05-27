@@ -4,7 +4,6 @@
 // \brief Hash declarations to get the code to compile on Mac
 //
 // Created 2007/10/01
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.

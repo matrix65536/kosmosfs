@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2007/09/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.

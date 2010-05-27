@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/22
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -34,12 +33,16 @@ class ClientSM; // forward declaration to get things to build...
 
 #include <deque>
 #include <list>
+#include <algorithm>
+#include <boost/functional/hash.hpp>
+#include <tr1/unordered_map>
 
 #include "libkfsIO/KfsCallbackObj.h"
 #include "libkfsIO/NetConnection.h"
 #include "Chunk.h"
 #include "RemoteSyncSM.h"
 #include "KfsOps.h"
+#include "BufferManager.h"
 
 namespace KFS
 {
@@ -53,7 +56,28 @@ namespace KFS
         KfsOp *dependentOp;
     };
 
-class ClientSM : public KfsCallbackObj {
+    // For record appends when client reserves space within a chunk,
+    // we use a hash table to track the various reservation requests
+    // for a single client.  The hash table is keyed by <chunkId, transactionId>
+    struct ChunkSpaceReservationKey_t {
+        ChunkSpaceReservationKey_t(kfsChunkId_t c, int64_t t) : 
+            chunkId(c), transactionId(t) { }
+        kfsChunkId_t chunkId;
+        int64_t transactionId; // unique for each chunkserver
+        bool operator==(const ChunkSpaceReservationKey_t &other) const {
+            return chunkId == other.chunkId && transactionId == other.transactionId;
+        }
+    };
+    static inline std::size_t hash_value(ChunkSpaceReservationKey_t const &csr) {
+        boost::hash<int> h;
+        return h(csr.transactionId);
+    }
+
+    typedef std::tr1::unordered_map<
+        ChunkSpaceReservationKey_t, size_t, boost::hash<ChunkSpaceReservationKey_t>
+    > ChunkSpaceResMap;
+
+class ClientSM : public KfsCallbackObj, private BufferManager::Client {
 public:
 
     ClientSM(NetConnectionPtr &conn);
@@ -83,18 +107,67 @@ public:
     //
     RemoteSyncSMPtr FindServer(const ServerLocation &loc, bool connect = true);
 
+    void ChunkSpaceReserve(kfsChunkId_t chunkId, int64_t writeId, int nbytes);
+
+    void ReleaseChunkSpaceReservations();
+
+    void ReleaseReservedSpace(kfsChunkId_t chunkId, int64_t writeId) {
+        mReservations.erase(ChunkSpaceReservationKey_t(chunkId, writeId));
+    }
+
+    size_t UseReservedSpace(kfsChunkId_t chunkId, int64_t writeId, size_t nbytes) {
+        ChunkSpaceResMap::iterator const iter = mReservations.find(
+            ChunkSpaceReservationKey_t(chunkId, writeId));
+        size_t ret = 0;
+        if (iter != mReservations.end()) {
+            ret = std::min(iter->second, nbytes);
+            iter->second -= ret;
+        }
+        return ret;
+    }
+    size_t GetReservedSpace(kfsChunkId_t chunkId, int64_t writeId) const {
+        // Cast until mac std::tr1::unordered_map gets "find() const"
+        ChunkSpaceResMap::const_iterator const iter =
+            const_cast<ChunkSpaceResMap&>(mReservations).find(
+            ChunkSpaceReservationKey_t(chunkId, writeId));
+        return (iter == mReservations.end() ? 0 : iter->second);
+    }
+    void ChunkSpaceReserve(kfsChunkId_t chunkId, int64_t writeId, size_t nbytes) {
+        mReservations.insert(
+            std::make_pair(ChunkSpaceReservationKey_t(chunkId, writeId), 0)
+        ).first->second += nbytes;
+    }
+
+    static void SetTraceRequestResponse(bool flag) {
+        sTraceRequestResponse = flag;
+    }
+
+    virtual void Granted(ByteCount byteCount);
 private:
-    NetConnectionPtr	mNetConnection;
-    KfsOp*              mCurOp;
+    typedef std::deque<std::pair<KfsOp*, ByteCount> > OpsQueue;
+    typedef std::list<OpPair,
+        boost::fast_pool_allocator<OpPair> > PendingOpsList;
+
+    NetConnectionPtr	       mNetConnection;
+    KfsOp*                     mCurOp;
     /// Queue of outstanding ops from the client.  We reply to ops in FIFO
-    std::deque<KfsOp *>	mOps;
+    OpsQueue	               mOps;
+
+    /// chunks for which the client has space reserved
+    ChunkSpaceResMap           mReservations;
 
     /// Queue of pending ops: ops that depend on other ops to finish before we can execute them.
-    std::list<OpPair> mPendingOps;
+    PendingOpsList            mPendingOps;
+    PendingOpsList            mPendingSubmitQueue;
 
     /// for writes, we daisy-chain the chunkservers in the forwarding path.  this list
     /// maintains the set of servers to which we have a connection.
     std::list<RemoteSyncSMPtr> mRemoteSyncers;
+    ByteCount                  mPrevNumToWrite;
+    int                        mRecursionCnt;
+    const uint64_t             mInstanceNum;
+    static bool                sTraceRequestResponse;
+    static uint64_t            sInstanceNum;
 
     /// Given a (possibly) complete op in a buffer, run it.
     /// @retval True if the command was handled (i.e., we have all the
@@ -106,6 +179,10 @@ private:
 
     /// Submit ops that have been held waiting for doneOp to finish.
     void		OpFinished(KfsOp *doneOp);
+    template <typename T> bool GetWriteOp(T* wop, int align, IOBuffer *iobuf, int cmdLen, IOBuffer*& ioOpBuf);
+    std::string GetPeerName();
+    inline void SendResponse(KfsOp* op, ByteCount opBytes);
+    inline static BufferManager& GetBufferManager();
 };
 
 }

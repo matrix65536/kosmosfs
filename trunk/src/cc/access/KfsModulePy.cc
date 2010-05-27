@@ -1,8 +1,8 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/08/01
-// Authors: Blake Lewis and Sriram Rao
+// Author: Blake Lewis (Kosmix Corp.) 
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -79,6 +79,7 @@ static PyObject *kfs_getNumChunks(PyObject *pself, PyObject *args);
 static PyObject *kfs_getChunkSize(PyObject *pself, PyObject *args);
 static PyObject *kfs_remove(PyObject *pself, PyObject *args);
 static PyObject *kfs_rename(PyObject *pself, PyObject *args);
+static PyObject *kfs_coalesceblocks(PyObject *pself, PyObject *args);
 static PyObject *kfs_open(PyObject *pself, PyObject *args);
 static PyObject *kfs_cd(PyObject *pself, PyObject *args);
 static PyObject *kfs_log_level(PyObject *pself, PyObject *args);
@@ -106,6 +107,7 @@ static PyMethodDef Client_methods[] = {
 	{ "create", kfs_create, METH_VARARGS, "Create file." },
 	{ "remove", kfs_remove, METH_VARARGS, "Remove file." },
 	{ "rename", kfs_rename, METH_VARARGS, "Rename file or directory." },
+	{ "coalesce_blocks", kfs_coalesceblocks, METH_VARARGS, "Coalesce blocks from src->dest." },
 	{ "open", kfs_open, METH_VARARGS, "Open file." },
         { "isfile", kfs_isfile, METH_VARARGS, "Check if a path is a file."},
 	{ "cd", kfs_cd, METH_VARARGS, "Change directory." },
@@ -135,6 +137,7 @@ PyDoc_STRVAR(Client_doc,
 "\tgetChunkSize(path)   --  return the default size of chunks in a file\n"
 "\tcreate(path, numReplicas=3) -- create a file and return a kfs.file object for it\n"
 "\tremove(path) -- remove a file\n"
+"\tcoalesceblocks(src, dst) -- append blocks from src->dest\n"
 "\topen(path[, mode]) -- open a file and return an object for it\n"
 "\tcd(path)     -- change current directory\n"
 "\tlog_level(level)     -- change the message log level\n"
@@ -1115,6 +1118,26 @@ kfs_rename(PyObject *pself, PyObject *args)
 		return NULL;
 	}
 	Py_RETURN_NONE;
+}
+
+static PyObject *
+kfs_coalesceblocks(PyObject *pself, PyObject *args)
+{
+	kfs_Client *self = (kfs_Client *)pself;
+	char *srcpath, *dstpath;
+
+	if (PyArg_ParseTuple(args, "ss", &srcpath, &dstpath) == -1)
+		return NULL;
+
+	string spath = build_path(self->cwd, srcpath);
+	string dpath = build_path(self->cwd, dstpath);
+        off_t dstStartOffset;
+	off_t status = self->client->CoalesceBlocks(spath.c_str(), dpath.c_str(), &dstStartOffset);
+	if (status < 0) {
+		PyErr_SetString(PyExc_IOError, strerror(-status));
+		return NULL;
+	}
+        return Py_BuildValue("l", dstStartOffset);
 }
 
 static PyObject *

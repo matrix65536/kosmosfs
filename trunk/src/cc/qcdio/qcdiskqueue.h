@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/11/11
-// Author: Mike Ovsiannikov
 //
 // Copyright 2008,2009 Quantcast Corp.
 //

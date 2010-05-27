@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2007/09/26
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.
@@ -28,11 +27,11 @@
 #include <iostream>    
 #include <fstream>
 #include <cerrno>
+#include <map>
 
 #include "libkfsClient/KfsClient.h"
 #include "common/log.h"
 #include "tools/KfsShell.h"
-#include "KfsToolsCommon.h"
 
 #include <iostream>
 #include <tr1/unordered_map>
@@ -67,12 +66,10 @@ main(int argc, char **argv)
     char optchar;
     bool verboseLogging = false;
 
-    getEnvServer(serverHost, port);
-    
     while ((optchar = getopt(argc, argv, "hqs:p:v")) != -1) {
         switch (optchar) {
             case 's':
-                parseServer(optarg, serverHost, port);
+                serverHost = optarg;
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -107,9 +104,9 @@ main(int argc, char **argv)
     }
 
     if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelDEBUG);
     } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelINFO);
     }
     
     factory->SetDefaultClient(kfsClient);
@@ -133,6 +130,7 @@ void printCmds()
     cout << "rmdir" << endl;
     cout << "stat" << endl;
     cout << "pwd" << endl;
+    cout << "append" << endl;
 }
 
 int handleHelp(const vector<string> &args)
@@ -155,6 +153,7 @@ void setupHandlers()
     handlers["stat"] = handleFstat;
     handlers["pwd"] = handlePwd;
     handlers["help"] = handleHelp;
+    handlers["append"] = handleAppend;
 }
 
 int processCmds(bool quietMode, int nargs, const char **cmdLine)

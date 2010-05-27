@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/23
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -27,37 +26,62 @@
 #include "Acceptor.h"
 #include "NetManager.h"
 #include "Globals.h"
+#include "common/log.h"
+#include "qcdio/qcutils.h"
+#include <stdlib.h>
 
 using namespace KFS;
 using namespace KFS::libkfsio;
 ///
 /// Create a TCP socket, bind it to the port, and listen for incoming connections.
 ///
-Acceptor::Acceptor(int port, IAcceptorOwner *owner)
+Acceptor::Acceptor(NetManager& netManager, int port, IAcceptorOwner *owner)
+    : mPort(port),
+      mAcceptorOwner(owner),
+      mConn(),
+      mNetManager(netManager)
 {
-    TcpSocket *sock;
-    int res;
-
-    sock = new TcpSocket();
-
-    mAcceptorOwner = owner;
-    res = sock->Listen(port);
-
-    mConn.reset(new NetConnection(sock, this, true));
-
-    if (res < 0) {
-        KFS_LOG_VA_FATAL("Unable to bind to port: %d, error = %d", port, res);
-        return;
-    }
-
     SET_HANDLER(this, &Acceptor::RecvConnection);
-    globals().netManager.AddConnection(mConn);
+    Acceptor::Listen();
+}
+
+Acceptor::Acceptor(int port, IAcceptorOwner *owner)
+    : mPort(port),
+      mAcceptorOwner(owner),
+      mConn(),
+      mNetManager(globalNetManager())
+{
+    SET_HANDLER(this, &Acceptor::RecvConnection);
+    Acceptor::Listen();
 }
 
 Acceptor::~Acceptor()
 {
-    mConn->Close();
-    mConn.reset();
+    if (mConn) {
+        mConn->Close();
+        mConn.reset();
+    }
+}
+
+void
+Acceptor::Listen()
+{
+    if (! mNetManager.IsRunning()) {
+        return;
+    }
+    TcpSocket * const sock = new TcpSocket();
+    const int res = sock->Listen(mPort);
+    if (res < 0) {
+        KFS_LOG_STREAM_FATAL <<
+            "Unable to bind to port: " << mPort <<
+            " error: " << QCUtils::SysError(res) <<
+        KFS_LOG_EOM;
+        delete sock;
+        return;
+    }
+    mConn.reset(new NetConnection(sock, this, true));
+    mConn->EnableReadIfOverloaded();
+    mNetManager.AddConnection(mConn);
 }
 
 ///
@@ -69,22 +93,52 @@ Acceptor::~Acceptor()
 int
 Acceptor::RecvConnection(int code, void *data)
 {
-    if (! data || code != EVENT_NEW_CONNECTION) {
-        assert(code == EVENT_NET_ERROR || code == EVENT_INACTIVITY_TIMEOUT);
+    switch (code) {
+        case EVENT_NEW_CONNECTION:
+        break;
+        case EVENT_NET_ERROR:
+            KFS_LOG_STREAM_INFO <<
+                "acceptor on port: " << mPort <<
+                " error: " << QCUtils::SysError(mConn ? mConn->GetSocketError() : 0) <<
+                ", restarting" <<
+            KFS_LOG_EOM;
+            if (mConn) {
+                mConn->Close();
+                mConn.reset();
+            }
+            if (mNetManager.IsRunning()) {
+                Listen();
+                if (! IsAcceptorStarted()) {
+                    abort();
+                }
+            }
         return 0;
+        case EVENT_INACTIVITY_TIMEOUT:
+            KFS_LOG_STREAM_DEBUG << "acceptror inactivity timeout event ignored" <<
+            KFS_LOG_EOM;
+        return 0;
+        default:
+            KFS_LOG_STREAM_FATAL <<
+                "Unexpected event code: " << code <<
+            KFS_LOG_EOM;
+            abort();
+        break;
     }
-
+    if (! data) {
+        KFS_LOG_STREAM_FATAL <<
+            "Unexpected null argument, event code: " << code <<
+        KFS_LOG_EOM;
+        abort();
+    }
     NetConnectionPtr conn = *(NetConnectionPtr *) data;
-    KfsCallbackObj *callbackObj;
-
-    callbackObj = mAcceptorOwner->CreateKfsCallbackObj(conn);
-    conn->SetOwningKfsCallbackObj(callbackObj);
-
-    ///
-    /// Add the connection to the net manager's list of "polling"
-    /// fd's. 
-    ///
-    globals().netManager.AddConnection(conn);
-
+    KfsCallbackObj * const obj = mAcceptorOwner->CreateKfsCallbackObj(conn);
+    if (conn) {
+        if (obj) {
+            conn->SetOwningKfsCallbackObj(obj);
+            mNetManager.AddConnection(conn);
+        } else {
+            conn->Close();
+        }
+    }
     return 0;
 }

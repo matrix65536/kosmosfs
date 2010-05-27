@@ -3,7 +3,6 @@
 //
 // Created 2008/08/27
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -94,7 +93,7 @@ main(int argc, char **argv)
     if (status < 0)
         exit(-1);
     
-    MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
 
     gLayoutEmulator.ToggleRebalancing(false);
 

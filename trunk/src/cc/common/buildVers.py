@@ -25,30 +25,15 @@
 
 import os,sys
 
-buildstr = None
-cmd = "svn info %s" % sys.argv[1]
-for l in os.popen(cmd):
-    kv = l.strip().split()
-    if len(kv) < 2:
-        continue
-    if kv[0].startswith('URL'):
-        buildstr = kv[1]
-        continue
-    if kv[0].startswith('Revision'):
-        buildstr = buildstr + "@" + kv[1]
-        srcRevision = kv[1]
-        continue
-
-if buildstr is None:
-    # fix this when we do the release to what the version is
-    buildstr = "https://kosmosfs.svn.sourceforge.net/svnroot/kosmosfs/0.2.3@"
-    srcRevision = "100"
+# get the version info from p4
+buildstr = "perforce1:1666/trunk@1000"
+srcRevision = "100"
 
 fh = open(sys.argv[2], "w")
 print >> fh, "//"
 print >> fh, "// This file is generated during compilation.  DO NOT EDIT!"
 print >> fh, "//"
-print >> fh, "#include \"common/Version.h\" "
+print >> fh, "#include \"Version.h\" "
 print >> fh, "const std::string KFS::KFS_BUILD_VERSION_STRING=\"%s\";" % buildstr
 print >> fh, "const std::string KFS::KFS_SOURCE_REVISION_STRING=\"%s\";" % srcRevision
 

@@ -1,5 +1,5 @@
 /*
- * $Id$ 
+ * $Id$
  *
  * \file entry.cc
  * \brief parse checkpoint and log entries

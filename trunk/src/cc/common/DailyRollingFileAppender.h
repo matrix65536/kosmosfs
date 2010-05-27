@@ -27,22 +27,25 @@
 
 #include "log.h"
 #include <string>
-#include <log4cpp/FileAppender.hh>
+#include <log4cpp/LayoutAppender.hh>
 
 namespace log4cpp
 {
     /**
      * Enhance the file appender and roll the log file on each day.
      */
-    class LOG4CPP_EXPORT DailyRollingFileAppender : public FileAppender {
+    class LOG4CPP_EXPORT DailyRollingFileAppender : public LayoutAppender {
     public:
         DailyRollingFileAppender(const std::string &name, const std::string &fileName,
                                  unsigned int maxDaysToKeep = 30,
                                  bool append = true,
-                                 mode_t mode = 00644);
-        virtual void setMaxDaysToKeep(unsigned int maxDaysToKeep);
-        virtual unsigned int getMaxDaysToKeep() const;
-        virtual void rollOver();
+                                 mode_t mode = 00644,
+                                 LayoutAppender* appender = 0);
+        virtual ~DailyRollingFileAppender();
+        void setMaxDaysToKeep(unsigned int maxDaysToKeep);
+        unsigned int getMaxDaysToKeep() const;
+        void rollOver();
+        virtual void close();
     protected:
         virtual void _append(const log4cpp::LoggingEvent &event);
         unsigned int _maxDaysToKeep;
@@ -51,6 +54,8 @@ namespace log4cpp
         // variable records the last modified time of the file we are
         // currently logging to
         struct tm _logsTime;
+        std::string _fileName;
+        LayoutAppender& _appender;
     };
 }
 

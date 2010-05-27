@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/15
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -1034,6 +1033,29 @@ int IOBuffer::CopyOut(char *buf, int numBytes) const
     }
     DebugVerify();
     return (cur - buf);
+}
+
+int
+IOBuffer::Copy(const IOBuffer* buf, int numBytes)
+{
+    DebugChecksum(*buf, numBytes);
+    int                   rem = numBytes;
+    BList::const_iterator it;
+    for (it = buf->mBuf.begin(); it != buf->mBuf.end() && rem > 0; ++it) {
+        const int nb = std::min(rem, it->BytesConsumable());
+        if (nb <= 0) {
+            continue;
+        }
+        char* const c = const_cast<char*>(it->Consumer());
+        mBuf.push_back(IOBufferData(*it, c, c + nb));
+        rem -= nb;
+    }
+    rem = numBytes - rem;
+    mByteCount += rem;
+    assert(mByteCount >= 0);
+    buf->DebugVerify();
+    DebugVerify();
+    return rem;
 }
 
 //

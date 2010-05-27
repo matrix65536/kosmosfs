@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/22
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -81,7 +80,7 @@ struct DiskChunkInfo_t {
         memcpy(chunkBlockChecksum, checksums, MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
     }
 
-    int Validate(kfsChunkId_t cid) const {
+    int Validate() const {
         if (metaMagic != CHUNK_META_MAGIC) {
             KFS_LOG_STREAM_INFO <<
                 "Magic # mismatch (got: " << std::hex << metaMagic <<
@@ -96,6 +95,13 @@ struct DiskChunkInfo_t {
             KFS_LOG_EOM;
             return -KFS::EBADCKSUM;
         }
+        return 0;
+    }
+
+    int Validate(kfsChunkId_t cid) const {
+        int ret = Validate();
+        if (ret < 0)
+            return ret;
 
         if (chunkId != cid) {
             KFS_LOG_STREAM_INFO <<
@@ -105,6 +111,7 @@ struct DiskChunkInfo_t {
         }
         return 0;
     }
+
 
     int metaMagic;
     int metaVersion;
@@ -161,11 +168,11 @@ struct ChunkInfo_t {
         dirname = path;
     }
     
-    std::string GetDirname() {
+    std::string GetDirname() const {
         return dirname;
     }
 
-    bool AreChecksumsLoaded() {
+    bool AreChecksumsLoaded() const {
         return chunkBlockChecksum != NULL;
     }
 
@@ -188,7 +195,7 @@ struct ChunkInfo_t {
         memcpy(chunkBlockChecksum, checksums, MAX_CHUNK_CHECKSUM_BLOCKS * sizeof(uint32_t));
     }
 
-    void VerifyChecksumsLoaded() {
+    void VerifyChecksumsLoaded() const {
         assert(chunkBlockChecksum != NULL);
         if (chunkBlockChecksum == NULL)
             die("Checksums are not loaded!");

@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.
@@ -39,40 +39,23 @@ class MetaThread {
 	pthread_mutex_t mutex;
 	pthread_cond_t cv;
 	pthread_t thread;
-#if defined (__APPLE__)
 	bool threadInited;
-#else
-	static const pthread_t NO_THREAD = -1u;
-#endif
 public:
 	typedef void *(*thread_start_t)(void *);
-#if defined (__APPLE__)
 	MetaThread() : threadInited(false)
 	{
 		pthread_mutex_init(&mutex, NULL);
 		pthread_cond_init(&cv, NULL);
 	}
-#else
-	MetaThread(): thread(NO_THREAD)
-	{
-		pthread_mutex_init(&mutex, NULL);
-		pthread_cond_init(&cv, NULL);
-	}
-#endif
 	~MetaThread()
 	{
 		pthread_mutex_destroy(&mutex);
-#if defined (__APPLE__)
 		if (threadInited) {
                 	int UNUSED_ATTR status = pthread_cancel(thread);
 			assert(status == 0);
+                	status = pthread_join(thread, 0);
+                	assert(status == 0);
 		}
-#else
-                if (thread != NO_THREAD) {
-			int UNUSED_ATTR status = pthread_cancel(thread);
-			assert(status == 0);
-                }
-#endif
 		pthread_cond_destroy(&cv);
 	}
 	void lock()
@@ -97,12 +80,20 @@ public:
 	}
 	void start(thread_start_t func, void *arg)
 	{
+		assert(! threadInited);
+		if (threadInited) {
+                	return;
+                }
 		int UNUSED_ATTR status;
 		status = pthread_create(&thread, NULL, func, arg);
+                threadInited = status == 0;
 		assert(status == 0);
 	}
 	void stop()
 	{
+		if (! threadInited) {
+                	return;
+                }
 		int UNUSED_ATTR status = pthread_cancel(thread);
 		assert(status == 0);
 	}
@@ -112,8 +103,12 @@ public:
 	}
 	void join()
 	{
+		if (! threadInited) {
+                	return;
+                }
 		int UNUSED_ATTR status = pthread_join(thread, NULL);
 		assert(status == 0);
+                threadInited = false;
 	}
 	bool isEqual(pthread_t other)
 	{

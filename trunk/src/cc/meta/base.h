@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file base.h
  * \brief Base class for KFS metadata nodes.
@@ -67,8 +67,11 @@ static const int META_SKIP = 16; //!< exclude from current CP
  * \brief base class for both internal and leaf nodes
  */
 class MetaNode {
+private:
 	MetaType type;
 	int flagbits;
+        MetaNode& operator=(const MetaNode&);
+        MetaNode(const MetaNode&);
 public:
 	MetaNode(MetaType t): type(t), flagbits(0) { }
 	MetaNode(MetaType t, int f): type(t), flagbits(f) { }

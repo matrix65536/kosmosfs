@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/06
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -29,6 +28,7 @@
 #include "NetDispatch.h"
 #include "util.h"
 #include "libkfsIO/Globals.h"
+#include "qcdio/qcutils.h"
 
 using namespace KFS;
 using namespace libkfsio;
@@ -38,112 +38,95 @@ using namespace libkfsio;
 #include <sstream>
 using std::string;
 using std::istringstream;
+using std::max;
 
-#include <boost/scoped_array.hpp>
-using boost::scoped_array;
+#include <boost/lexical_cast.hpp>
+#include <openssl/rand.h>
 
 #include "common/log.h"
 
-//
-// if a chunkserver is not responsive for over 10 mins, mark it down
-//
-const int32_t INACTIVE_SERVER_TIMEOUT = 600;
-
-#include "ChunkServerHeartbeater.h"
-
-KFS::ChunkServerHeartbeater gChunkServerHeartbeater;
-
-void KFS::ChunkServerHeartbeaterInit()
+static inline time_t TimeNow()
 {
-	globals().netManager.RegisterTimeoutHandler(&gChunkServerHeartbeater);
+	return libkfsio::globalNetManager().Now();
+}
+
+int ChunkServer::sHeartbeatTimeout     = 60;
+int ChunkServer::sHeartbeatInterval    = 30;
+int ChunkServer::sHeartbeatLogInterval = 100;
+const int kMaxReadAhead             = 4 << 10;
+const int kMaxRequestResponseHeader = 64 << 10;
+
+void ChunkServer::SetParameters(const Properties& prop)
+{
+	sHeartbeatTimeout  = prop.getValue(
+		"metaServer.chunkServer.heartbeatTimeout",
+                sHeartbeatTimeout);
+	sHeartbeatInterval = max(3, prop.getValue(
+		"metaServer.chunkServer.heartbeatInterval",
+                sHeartbeatInterval));
+        sHeartbeatLogInterval = prop.getValue(
+		"metaServer.chunkServer.heartbeatLogInterval",
+                sHeartbeatLogInterval);
+}
+
+static seq_t RandomSeqNo()
+{
+    seq_t ret = 0;
+    RAND_pseudo_bytes(
+        reinterpret_cast<unsigned char*>(&ret), int(sizeof(ret)));
+    return ((ret < 0 ? -ret : ret) >> 1);
 }
 
 ChunkServer::ChunkServer() :
-	mSeqNo(1),
+	mSeqNo(RandomSeqNo()),
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
-	mHeartbeatSkipped(false), mIsRetiring(false), mRackId(-1), 
+	mHeartbeatSkipped(false), mLastHeartbeatSent(TimeNow()),
+	mCanBeChunkMaster(false),
+	mIsRetiring(false), mRackId(-1), 
 	mNumCorruptChunks(0), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
-	mNumChunks(0), mCpuLoadAvg(0.0), mNumChunkWrites(0), 
-	mNumChunkWriteReplications(0), mNumChunkReadReplications(0)
+	mNumChunks(0), mCpuLoadAvg(0.0), mNumDrives(0), mNumChunkWrites(0),
+        mNumAppendsWithWid(0),
+	mNumChunkWriteReplications(0), mNumChunkReadReplications(0),
+	mLostChunks(0), mUptime(0), mHeartbeatProperties(),
+	mRestartScheduledFlag(false), mRestartQueuedFlag(false),
+	mRestartScheduledTime(0), mLastHeartBeatLoggedTime(0), mDownReason()
 {
 	// this is used in emulation mode...
 
 }
 
 ChunkServer::ChunkServer(NetConnectionPtr &conn) :
-	mSeqNo(1), mNetConnection(conn), 
+	mSeqNo(RandomSeqNo()), mNetConnection(conn), 
 	mHelloDone(false), mDown(false), mHeartbeatSent(false),
-	mHeartbeatSkipped(false), mIsRetiring(false), mRackId(-1), 
+	mHeartbeatSkipped(false), mLastHeartbeatSent(TimeNow()),
+	mCanBeChunkMaster(false), mIsRetiring(false), mRackId(-1), 
 	mNumCorruptChunks(0), mTotalSpace(0), mUsedSpace(0), mAllocSpace(0), 
-	mNumChunks(0), mCpuLoadAvg(0.0), mNumChunkWrites(0), 
-	mNumChunkWriteReplications(0), mNumChunkReadReplications(0)
+	mNumChunks(0), mCpuLoadAvg(0.0), mNumDrives(0), mNumChunkWrites(0), 
+        mNumAppendsWithWid(0),
+	mNumChunkWriteReplications(0), mNumChunkReadReplications(0),
+        mLostChunks(0), mUptime(0), mHeartbeatProperties(),
+	mRestartScheduledFlag(false), mRestartQueuedFlag(false),
+	mRestartScheduledTime(0), mLastHeartBeatLoggedTime(0), mDownReason()
 {
-        // Receive HELLO message
-        SET_HANDLER(this, &ChunkServer::HandleHello);
+	assert(mNetConnection);
+	SET_HANDLER(this, &ChunkServer::HandleRequest);
+	mNetConnection->SetInactivityTimeout(sHeartbeatInterval);
+	mNetConnection->SetMaxReadAhead(kMaxReadAhead);
+	KFS_LOG_STREAM_INFO <<
+		"new ChunkServer " << (const void*)this << " " <<
+		mNetConnection->GetPeerName() <<
+	KFS_LOG_EOM;
 }
 
 ChunkServer::~ChunkServer()
 {
-	// KFS_LOG_VA_DEBUG("Deleting %p", this);
-
-        if (mNetConnection)
+	KFS_LOG_STREAM_DEBUG << ServerID() <<
+		" ~ChunkServer " << (const void*)this <<
+	KFS_LOG_EOM;
+        if (mNetConnection) {
                 mNetConnection->Close();
+        }
 }
-
-///
-/// Handle a HELLO message from the chunk server.
-/// @param[in] code: The type of event that occurred
-/// @param[in] data: Data being passed in relative to the event that
-/// occurred.
-/// @retval 0 to indicate successful event handling; -1 otherwise.
-///
-int
-ChunkServer::HandleHello(int code, void *data)
-{
-	IOBuffer *iobuf;
-	int msgLen, retval;
-
-	switch (code) {
-	case EVENT_NET_READ:
-		// We read something from the network.  It
-		// better be a HELLO message.
-		iobuf = (IOBuffer *) data;
-		if (IsMsgAvail(iobuf, &msgLen)) {
-			retval = HandleMsg(iobuf, msgLen);
-			if (retval < 0) {
-				 // Couldn't process hello
-				 // message...bye-bye
-				mDown = true;
-				gNetDispatch.GetChunkServerFactory()->RemoveServer(this);
-				return -1;
-			}
-			if (retval > 0) {
-				// not all data is available...so, hold on
-				return 0;
-
-			}
-			mHelloDone = true;
-			mLastHeard = time(NULL);
-		}
-		break;
-
-	 case EVENT_NET_WROTE:
-		// Something went out on the network.  
-		break;
-
-	 case EVENT_NET_ERROR:
-		// KFS_LOG_VA_DEBUG("Closing connection");
-		mDown = true;
-		gNetDispatch.GetChunkServerFactory()->RemoveServer(this);
-		break;
-
-	 default:
-		assert(!"Unknown event");
-		return -1;
-	}
-	return 0;
-}
-
 
 ///
 /// Generic event handler.  Decode the event that occurred and
@@ -156,9 +139,11 @@ ChunkServer::HandleHello(int code, void *data)
 int
 ChunkServer::HandleRequest(int code, void *data)
 {
-	IOBuffer *iobuf;
-	int msgLen;
-	MetaRequest *op;
+	IOBuffer             *iobuf;
+	int                  msgLen;
+	MetaChunkRequest     *op;
+	bool                 gotMsgHdr;
+	ChunkServerPtr const doNotDelete(shared_from_this());
 
 	switch (code) {
 	case EVENT_NET_READ:
@@ -166,13 +151,34 @@ ChunkServer::HandleRequest(int code, void *data)
 		// either an RPC (such as hello) or a reply to
 		// an RPC we sent earlier.
 		iobuf = (IOBuffer *) data;
-		while (IsMsgAvail(iobuf, &msgLen)) {
-			HandleMsg(iobuf, msgLen);
+		while ((gotMsgHdr = IsMsgAvail(iobuf, &msgLen))) {
+			const int retval = HandleMsg(iobuf, msgLen);
+			if (retval < 0) {
+				iobuf->Clear();
+				Error(mHelloDone ?
+					"request or response parse error" :
+					"failed to parse hello message");
+				return 0;
+			}
+			if (retval > 0) {
+				break; // Need more data
+			}
+		}
+		if (! gotMsgHdr && iobuf->BytesConsumable() >
+				kMaxRequestResponseHeader) {
+			iobuf->Clear();
+			Error(mHelloDone ?
+				"request or response header length"
+					" exceeds max allowed" :
+				"hello message header length"
+					" exceeds max allowed");
+			return 0;
 		}
 		break;
 
 	case EVENT_CMD_DONE:
-		op = (MetaRequest *) data;
+		assert(mHelloDone && data);
+		op = (MetaChunkRequest *) data;
 		if (!mDown) {
 			SendResponse(op);
 		}	
@@ -184,33 +190,92 @@ ChunkServer::HandleRequest(int code, void *data)
 		// Something went out on the network.  
 		break;
 
-	case EVENT_NET_ERROR:
-		KFS_LOG_VA_INFO("Chunk server %s is down...", GetServerName());
-		
-		// Take out the server from write-allocation
-		mTotalSpace = mAllocSpace = mUsedSpace = 0;
-		
-		if (mNetConnection) {
-			mNetConnection->Close();
-			mNetConnection.reset();
+	case EVENT_INACTIVITY_TIMEOUT:
+		// Check heartbeat timeout.
+		if (mHelloDone || mLastHeartbeatSent + sHeartbeatTimeout >
+				TimeNow()) {
+			break;
 		}
+		Error("hello timeout");
+		return 0;
 
-		mDown = true;
-		FailDispatchedOps();
-		// force the server down thru the main loop to avoid races
-		op = new MetaBye(0, shared_from_this());
-		op->clnt = this;
-
-		gNetDispatch.GetChunkServerFactory()->RemoveServer(this);
-		submit_request(op);
-		
-		break;
+	case EVENT_NET_ERROR:
+		Error("communication error");
+		return 0;
 
 	default:
 		assert(!"Unknown event");
 		return -1;
 	}
+	if (mHelloDone) {
+		Heartbeat();
+	} else if (code != EVENT_INACTIVITY_TIMEOUT) {
+		mLastHeartbeatSent = TimeNow();
+	}
 	return 0;
+}
+
+void
+ChunkServer::ForceDown()
+{
+	if (mDown) {
+		return;
+	}
+	KFS_LOG_STREAM_ERROR <<
+		"forcing chunk server " << ServerID() <<
+		"/" << (mNetConnection ? mNetConnection->GetPeerName() :
+			string("not connected")) <<
+		" down" <<
+	KFS_LOG_EOM;
+	if (mNetConnection) {
+		mNetConnection->Close();
+		mNetConnection.reset();
+	}
+	mDown       = true;
+	// Take out the server from write-allocation
+	mTotalSpace = 0;
+	mAllocSpace = 0;
+	mUsedSpace  = 0;
+	FailDispatchedOps();
+        gNetDispatch.GetChunkServerFactory()->RemoveServer(this);
+}
+
+void
+ChunkServer::Error(const char* errorMsg)
+{
+	const int socketErr = (mNetConnection && mNetConnection->IsGood()) ?
+		mNetConnection->GetSocketError() : 0;
+	KFS_LOG_STREAM_ERROR <<
+		"chunk server " << ServerID() <<
+		"/" << (mNetConnection ? mNetConnection->GetPeerName() :
+			string("not connected")) <<
+		" down" <<
+		(mRestartQueuedFlag ? " restart" : "") <<
+		" reason: " << (errorMsg ? errorMsg : "unspecified") <<
+		" socket error: " << QCUtils::SysError(socketErr) <<
+	KFS_LOG_EOM;
+	if (mNetConnection) {
+		mNetConnection->Close();
+		mNetConnection.reset();
+	}
+	if (mDownReason.empty() && mRestartQueuedFlag) {
+		mDownReason = "restart";
+	}
+	mDown       = true;
+	// Take out the server from write-allocation
+	mTotalSpace = 0;
+	mAllocSpace = 0;
+	mUsedSpace  = 0;
+	FailDispatchedOps();
+	if (mHelloDone) {
+		// force the server down thru the main loop to avoid races
+		MetaBye* const mb = new MetaBye(0, shared_from_this());
+		mb->clnt = this;
+		gNetDispatch.GetChunkServerFactory()->RemoveServer(this);
+		submit_request(mb);
+	} else {
+		gNetDispatch.GetChunkServerFactory()->RemoveServer(this);
+	}
 }
 
 ///
@@ -232,18 +297,38 @@ ChunkServer::HandleRequest(int code, void *data)
 int
 ChunkServer::HandleMsg(IOBuffer *iobuf, int msgLen)
 {
-	char buf[5];
-
 	if (!mHelloDone) {
 		return HandleHelloMsg(iobuf, msgLen);
 	}
-        
-	iobuf->CopyOut(buf, 3);
-	buf[4] = '\0';
-	if (strncmp(buf, "OK", 2) == 0) {
+	char buf[3];
+	if (iobuf->CopyOut(buf, 3) == 3 &&
+			buf[0] == 'O' && buf[1] == 'K' && (buf[2] & 0xFF) <= ' ') {
 		return HandleReply(iobuf, msgLen);
 	}
 	return HandleCmd(iobuf, msgLen);
+}
+
+MetaRequest*
+ChunkServer::GetOp(IOBuffer& iobuf, int msgLen, const char* errMsgPrefix)
+{
+        MetaRequest *op = 0;
+        IOBuffer::IStream is(iobuf, msgLen);
+        if (ParseCommand(is, &op) >= 0) {
+		return op;
+	}
+	const string loc      =
+		ServerID() + "/" + mNetConnection->GetPeerName();
+	int          maxLines = 64;
+	const char*  prefix   = errMsgPrefix ? errMsgPrefix : "";
+        string       line;
+	is.Rewind(msgLen);
+	while (--maxLines >= 0 && getline(is, line)) {
+		KFS_LOG_STREAM_ERROR <<
+			loc << " " << prefix << ": " << line <<
+		KFS_LOG_EOM;
+	}
+	iobuf.Consume(msgLen);
+	return 0;
 }
 
 /// Case #1: Handle Hello message from a chunkserver that
@@ -251,77 +336,130 @@ ChunkServer::HandleMsg(IOBuffer *iobuf, int msgLen)
 int
 ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 {
-	scoped_array<char> buf;
-        MetaRequest *op;
-        MetaHello *helloOp;
-        int i, nAvail;
-
         assert(!mHelloDone);
 
-        buf.reset(new char[msgLen + 1]);
-        iobuf->CopyOut(buf.get(), msgLen);
-        buf[msgLen] = '\0';
-
-        // We should only get a HELLO message here; anything
-        // else is bad.
-        IOBuffer::IStream is(*iobuf, msgLen);
-        if (ParseCommand(is, &op) < 0) {
-            const string loc = mLocation.ToString();
-            is.Rewind(msgLen);
-            char buf[128];
-            while (is.getline(buf, sizeof(buf))) {
-                KFS_LOG_VA_DEBUG("%s: Aye?: %s", loc.c_str(), buf);
-            }
-            iobuf->Consume(msgLen);
-            // we couldn't parse out hello
-            return -1;
-        }
-
-        // we really ought to get only hello here
+        MetaRequest * const op = GetOp(*iobuf, msgLen, "invalid hello");
+	if (! op) {
+		return -1;
+	}
+	if (op->op != META_HELLO ||
+			iobuf->BytesConsumable() >= msgLen +
+			static_cast<const MetaHello*>(op)->contentLength) {
+        	IOBuffer::IStream is(*iobuf, msgLen);
+		const string      loc      = mNetConnection->GetPeerName();
+		int               maxLines = 64;
+        	string            line;
+		while (--maxLines >= 0 && getline(is, line)) {
+			string::iterator last = line.end();
+			if (last != line.begin() && *--last == '\r') {
+				line.erase(last);
+			}
+			KFS_LOG_STREAM((op->op == META_HELLO) ?
+					MsgLogger::kLogLevelINFO :
+					MsgLogger::kLogLevelERROR) <<
+				"new: " << loc << " " << line <<
+			KFS_LOG_EOM;
+		}
+	}
+        // We should only get a HELLO message here; anything else is bad.
         if (op->op != META_HELLO) {
-            KFS_LOG_VA_DEBUG("Only  need hello...but: %s", buf.get());
-            iobuf->Consume(msgLen);
-            delete op;
-            // got a bogus command
-            return -1;
-
+		KFS_LOG_STREAM_ERROR << mNetConnection->GetPeerName() <<
+	    		" unexpected request, expected hello" <<
+		KFS_LOG_EOM;
+		iobuf->Consume(msgLen);
+		delete op;
+		return -1;
         }
 
-        helloOp = static_cast<MetaHello *> (op);
-
-        KFS_LOG_VA_INFO("New server: \n%s", buf.get());
+        MetaHello * const helloOp = static_cast<MetaHello *> (op);
         op->clnt = this;
         helloOp->server = shared_from_this();
         // make sure we have the chunk ids...
         if (helloOp->contentLength > 0) {
-            nAvail = iobuf->BytesConsumable() - msgLen;
+            const int nAvail = iobuf->BytesConsumable() - msgLen;
             if (nAvail < helloOp->contentLength) {
                 // need to wait for data...
+		mNetConnection->SetMaxReadAhead(
+			std::max(kMaxReadAhead, helloOp->contentLength - nAvail));
                 delete op;
                 return 1;
             }
             // we have everything
             iobuf->Consume(msgLen);
-                        
             // get the chunkids
-            is.Rewind(helloOp->contentLength);
-            for (i = 0; i < helloOp->numChunks; ++i) {
-                ChunkInfo c;
-
-                is >> c.fileId;
-                is >> c.chunkId;
-                is >> c.chunkVersion;
-                helloOp->chunks.push_back(c);
-                // KFS_LOG_VA_DEBUG("Server has chunk: %lld", chunkId);
-            }
+            IOBuffer::IStream is(*iobuf, helloOp->contentLength);
+	    helloOp->chunks.clear();
+	    helloOp->notStableChunks.clear();
+            helloOp->notStableAppendChunks.clear();
+            const size_t numStable(max(0, helloOp->numChunks));
+	    helloOp->chunks.reserve(helloOp->numChunks);
+            const size_t nonStableAppendNum(max(0, helloOp->numNotStableAppendChunks));
+	    helloOp->notStableAppendChunks.reserve(nonStableAppendNum);
+            const size_t nonStableNum(max(0, helloOp->numNotStableChunks));
+	    helloOp->notStableChunks.reserve(nonStableNum);
+	    for (int j = 0; j < 3; ++j) {
+	    	vector<ChunkInfo>& chunks = j == 0 ?
+			helloOp->chunks : (j == 1 ?
+			helloOp->notStableAppendChunks :
+			helloOp->notStableChunks);
+		int i = j == 0 ?
+			helloOp->numChunks : (j == 1 ?
+			helloOp->numNotStableAppendChunks :
+			helloOp->numNotStableChunks);
+        	while (i-- > 0) {
+                    ChunkInfo c;
+                    if (! (is >> c.allocFileId >> c.chunkId >> c.chunkVersion)) {
+			    break;
+		    }
+                    chunks.push_back(c);
+        	}
+	    }
             iobuf->Consume(helloOp->contentLength);
+	    if (helloOp->chunks.size() != numStable ||
+	    		helloOp->notStableAppendChunks.size() !=
+			    nonStableAppendNum ||
+	    		helloOp->notStableChunks.size() !=
+			    nonStableNum) {
+		KFS_LOG_STREAM_ERROR << mNetConnection->GetPeerName() <<
+	    		" invalid or short chunk list:"
+			" expected: " << helloOp->numChunks <<
+			"/"           << helloOp->numNotStableAppendChunks <<
+			"/"           << helloOp->numNotStableChunks <<
+			" got: "      << helloOp->chunks.size() <<
+			"/"           << helloOp->notStableAppendChunks.size() <<
+			"/"           << helloOp->notStableChunks.size() <<
+			" last good chunk: "     <<
+				(helloOp->chunks.empty() ? -1 :
+					helloOp->chunks.back().chunkId) <<
+			"/" <<
+				(helloOp->notStableAppendChunks.empty() ? -1 :
+					helloOp->notStableAppendChunks.back().chunkId) <<
+			"/" <<
+				(helloOp->notStableChunks.empty() ? -1 :
+					helloOp->notStableChunks.back().chunkId) <<
+			" content length: " << helloOp->contentLength <<
+		KFS_LOG_EOM;
+		delete op;
+		return -1;
+	    }
         } else {
             // Message is ready to be pushed down.  So remove it.
             iobuf->Consume(msgLen);
         }
+	mNetConnection->SetMaxReadAhead(kMaxReadAhead);
 	// Hello message successfully processed.  Setup to handle RPCs
 	SET_HANDLER(this, &ChunkServer::HandleRequest);
-        // send it on its merry way
+        // Hello done.
+        mHelloDone = true;
+        mLastHeard = TimeNow();
+	helloOp->peerName = mNetConnection->GetPeerName();
+	mUptime = helloOp->uptime;
+	mNumAppendsWithWid = helloOp->numAppendsWithWid;
+        mHeartbeatSent     = true;
+        mLastHeartbeatSent = mLastHeard;
+        Enqueue(new MetaChunkHeartbeat(NextSeq(), this));
+        mNumChunkWrites = (int)(helloOp->notStableAppendChunks.size() +
+            helloOp->notStableChunks.size());
         submit_request(op);
         return 0;
 }
@@ -332,38 +470,20 @@ ChunkServer::HandleHelloMsg(IOBuffer *iobuf, int msgLen)
 int
 ChunkServer::HandleCmd(IOBuffer *iobuf, int msgLen)
 {
-        MetaRequest *op;
-
         assert(mHelloDone);
 
-        IOBuffer::IStream is(*iobuf, msgLen);
-        if (ParseCommand(is, &op) != 0) {
-            const string loc = mLocation.ToString();
-            is.Rewind(msgLen);
-            char buf[128];
-            while (is.getline(buf, sizeof(buf))) {
-                KFS_LOG_VA_DEBUG("%s: Aye?: %s", loc.c_str(), buf);
-            }
-            iobuf->Consume(msgLen);
-            // we couldn't parse out hello
-            return -1;
-        }
-
+        MetaRequest * const op = GetOp(*iobuf, msgLen, "invalid request");
+	if (! op) {
+		return -1;
+	}
         // Message is ready to be pushed down.  So remove it.
         iobuf->Consume(msgLen);
 	if (op->op == META_CHUNK_CORRUPT) {
 		MetaChunkCorrupt *ccop = static_cast<MetaChunkCorrupt *>(op);
-
 		ccop->server = shared_from_this();
 	}
         op->clnt = this;
         submit_request(op);
-
-	/*
-        if (iobuf->BytesConsumable() > 0) {
-                KFS_LOG_VA_DEBUG("More command data likely available: ");
-        }
-	*/
         return 0;
 }
 
@@ -374,133 +494,68 @@ ChunkServer::HandleCmd(IOBuffer *iobuf, int msgLen)
 int
 ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
 {
-	scoped_array<char> buf, contentBuf;
-        MetaRequest *op;
-        int status;
-        seq_t cseq;
-	istringstream ist;
-        Properties prop;
-        MetaChunkRequest *submittedOp;
-
-        buf.reset(new char[msgLen + 1]);
-        iobuf->CopyOut(buf.get(), msgLen);
-        buf[msgLen] = '\0';
-
         assert(mHelloDone);
-    
-        // Message is ready to be pushed down.  So remove it.
-        iobuf->Consume(msgLen);
 
         // We got a response for a command we previously
         // sent.  So, match the response to its request and
         // resume request processing.
-        ParseResponse(buf.get(), msgLen, prop);
-        cseq = prop.getValue("Cseq", (seq_t) -1);
-        status = prop.getValue("Status", -1);
-
-        op = FindMatchingRequest(cseq);
-        if (op == NULL) {
-            // Uh-oh...this can happen if the server restarts between sending
-	    // the message and getting reply back
-            // assert(!"Unable to find command for a response");
-	    KFS_LOG_VA_WARN("Unable to find command for response (cseq = %d)", cseq);
-            return -1;
-        }
-        // KFS_LOG_VA_DEBUG("Got response for cseq=%d", cseq);
-
-        submittedOp = static_cast <MetaChunkRequest *> (op);
-        submittedOp->status = status;
-	mLastHeard = time(NULL);
-        if (submittedOp->op == META_CHUNK_HEARTBEAT) {
-            mTotalSpace = prop.getValue("Total-space", (long long) 0);
-            mUsedSpace = prop.getValue("Used-space", (long long) 0);
-            mNumChunks = prop.getValue("Num-chunks", 0);
-	    mAllocSpace = mUsedSpace + mNumChunkWrites * CHUNKSIZE;
-            mCpuLoadAvg = prop.getValue("CPU-load-avg", 0.0);
-	    mHeartbeatSent = false;
-	} else if (submittedOp->op == META_CHUNK_REPLICATE) {
-	    MetaChunkReplicate *mcr = static_cast <MetaChunkReplicate *> (op);
-	    mcr->fid = prop.getValue("File-handle", (long long) 0);
-	    mcr->chunkVersion = prop.getValue("Chunk-version", (long long) 0);
-	} else if (submittedOp->op == META_CHUNK_SIZE) {
-	    MetaChunkSize *mcs = static_cast <MetaChunkSize *> (op);
-	    mcs->chunkSize = prop.getValue("Size", (off_t) -1);
+        IOBuffer::IStream is(*iobuf, msgLen);
+        Properties        prop;
+        if (! ParseResponse(is, prop)) {
+		return -1;
 	}
-        ResumeOp(op);
-    
-        return 0;
-}
+        // Message is ready to be pushed down.  So remove it.
+        iobuf->Consume(msgLen);
 
-void
-ChunkServer::ResumeOp(MetaRequest *op)
-{
-        MetaChunkRequest *submittedOp;
-        MetaAllocate *allocateOp;
-        MetaRequest *req;
+        const seq_t             cseq = prop.getValue("Cseq", (seq_t) -1);
+        MetaChunkRequest* const op   = FindMatchingRequest(cseq);
+	if (! op) {
+		// Uh-oh...this can happen if the server restarts between sending
+		// the message and getting reply back
+		// assert(!"Unable to find command for a response");
+		KFS_LOG_STREAM_WARN << ServerID() <<
+	    		" unable to find command for response cseq: " << cseq <<
+		KFS_LOG_EOM;
+		return 0;
+	}
 
-        // get the original request and get rid of the
-        // intermediate one we generated for the RPC.
-        submittedOp = static_cast <MetaChunkRequest *> (op);
-        req = submittedOp->req;
-
-        // op types:
-        // - allocate ops have an "original" request; this
-        //    needs to be reactivated, so that a response can
-        //    be sent to the client.
-        // -  delete ops are a fire-n-forget. there is no
-        //    other processing left to be done on them.
-        // -  heartbeat: update the space usage statistics and nuke
-        // it, which is already done (in the caller of this method)
-        // -  stale-chunk notify: we tell the chunk server and that is it.
-        //
-        if (submittedOp->op == META_CHUNK_ALLOCATE) {
-                assert(req && (req->op == META_ALLOCATE));
-
-		// if there is a non-zero status, don't throw it away
-		if (req->status == 0)
-                	req->status = submittedOp->status;
-
-		delete submittedOp;                
-
-                allocateOp = static_cast<MetaAllocate *> (req);
-                allocateOp->numServerReplies++;
-                // wait until we get replies from all servers
-                if (allocateOp->numServerReplies == allocateOp->servers.size()) {
-                    allocateOp->layoutDone = true;
-                    // The op is no longer suspended.
-                    req->suspended = false;
-                    // send it on its merry way
-                    submit_request(req);
+	mLastHeard = TimeNow();
+        op->statusMsg = prop.getValue("Status-message", "");
+        op->status    = prop.getValue("Status",         -1);
+	op->handleReply(prop);
+        if (op->op == META_CHUNK_HEARTBEAT) {
+		mTotalSpace        = prop.getValue("Total-space",     (long long) 0);
+		mUsedSpace         = prop.getValue("Used-space",      (long long) 0);
+		mNumChunks         = prop.getValue("Num-chunks",                  0);
+		mCpuLoadAvg        = prop.getValue("CPU-load-avg",              0.0);
+		mNumDrives         = prop.getValue("Num-drives",                  0);
+                mUptime            = prop.getValue("Uptime",          (long long) 0);
+                mLostChunks        = prop.getValue("Chunk-corrupted", (long long) 0);
+                mNumChunkWrites    = max(0,
+                                     prop.getValue("Num-writable-chunks",         0));
+                mNumAppendsWithWid = prop.getValue("Num-appends-with-wids", (long long)0);
+		mAllocSpace        = mUsedSpace + mNumChunkWrites * CHUNKSIZE;
+		mHeartbeatSent     = false;
+		mHeartbeatSkipped = mLastHeartbeatSent + sHeartbeatInterval < TimeNow();
+                mHeartbeatProperties.swap(prop);
+                if (sHeartbeatLogInterval > 0 &&
+                            mLastHeartBeatLoggedTime +
+                                sHeartbeatLogInterval <= mLastHeard) {
+                        mLastHeartBeatLoggedTime = mLastHeard;
+                        string hbp;
+                        mHeartbeatProperties.getList(hbp, " ", "");
+                        KFS_LOG_STREAM_INFO <<
+                            "===chunk=server: " << mLocation.hostname <<
+                            ":" << mLocation.port <<
+                            " responsive=" << IsResponsiveServer() <<
+                            " retiring="  << IsRetiring() <<
+                            " restarting=" << IsRestartScheduled() <<
+                            hbp <<
+                        KFS_LOG_EOM;
                 }
-        }
-        else if ((submittedOp->op == META_CHUNK_DELETE) ||
-		 (submittedOp->op == META_CHUNK_TRUNCATE) ||
-		 (submittedOp->op == META_CHUNK_HEARTBEAT) ||
-		 (submittedOp->op == META_CHUNK_STALENOTIFY) ||
-		 (submittedOp->op == META_CHUNK_VERSCHANGE) ||
-		 (submittedOp->op == META_CHUNK_RETIRE)) {
-                assert(req == NULL);
-		delete submittedOp;                
-        }
-        else if (submittedOp->op == META_CHUNK_REPLICATE) {
-		// This op is internally generated.  We need to notify
-		// the layout manager of this op's completion.  So, send
-		// it there.
-		MetaChunkReplicate *mcr = static_cast<MetaChunkReplicate *>(submittedOp);
-		KFS_LOG_VA_DEBUG("Meta chunk replicate for chunk %lld finished with version %lld, status: %d",
-				mcr->chunkId, mcr->chunkVersion, submittedOp->status);
-		submit_request(submittedOp);
-		// the op will get nuked after it is processed
 	}
-	else if (submittedOp->op == META_CHUNK_SIZE) {
-		// chunkserver has responded with the chunk's size.  So, update
-		// the meta-tree
-		submit_request(submittedOp);
-	}
-        else {
-                assert(!"Unknown op!");
-        }
-
+        op->resume();
+        return 0;
 }
 
 ///
@@ -514,34 +569,32 @@ ChunkServer::ResumeOp(MetaRequest *op)
 /// @param[in] bufLen length of buf
 /// @param[out] prop  Properties object with the response header/values
 /// 
-void
-ChunkServer::ParseResponse(char *buf, int bufLen,
-                           Properties &prop)
+bool
+ChunkServer::ParseResponse(std::istream& is, Properties &prop)
 {
-        istringstream ist(buf);
-        const char separator = ':';
-        string respOk;
-
-        // KFS_LOG_VA_DEBUG("Got chunk-server-response: %s", buf);
-
-        ist >> respOk;
+        string token;
+        is >> token;
         // Response better start with OK
-        if (respOk.compare("OK") != 0) {
-
-                KFS_LOG_VA_DEBUG("Didn't get an OK: instead, %s",
-                                 respOk.c_str());
-
-                return;
+        if (token.compare("OK") != 0) {
+		int maxLines = 32;
+		do {
+                	KFS_LOG_STREAM_ERROR << ServerID() <<
+				" bad response header: " << token <<
+			KFS_LOG_EOM;
+		} while (--maxLines > 0 && getline(is, token));
+                return false;
         }
-        prop.loadProperties(ist, separator, false);
+        const char separator = ':';
+        prop.loadProperties(is, separator, false);
+	return true;
 }
 
 // Helper functor that matches ops by sequence #'s
 class OpMatch {
-	seq_t myseq;
+	const seq_t myseq;
 public:
 	OpMatch(seq_t s) : myseq(s) { }
-	bool operator() (const MetaRequest *r) {
+	bool operator() (const MetaChunkRequest *r) {
 		return (r->opSeqno == myseq);
 	}
 };
@@ -549,104 +602,93 @@ public:
 ///
 /// Request/responses are matched based on sequence #'s.
 ///
-MetaRequest *
+MetaChunkRequest *
 ChunkServer::FindMatchingRequest(seq_t cseq)
 {
-        list<MetaRequest *>::iterator iter;
-	MetaRequest *op;
-
-	iter = find_if(mDispatchedReqs.begin(), mDispatchedReqs.end(), OpMatch(cseq));
-	if (iter == mDispatchedReqs.end())
-		return NULL;
-	
-	op = *iter;
+        list<MetaChunkRequest *>::iterator const iter = find_if(
+		mDispatchedReqs.begin(), mDispatchedReqs.end(), OpMatch(cseq));
+	if (iter == mDispatchedReqs.end()) {
+		return 0;
+	}
+	MetaChunkRequest* const op = *iter;
 	mDispatchedReqs.erase(iter);
 	return op;
+}
+
+int
+ChunkServer::TimeSinceLastHeartbeat() const
+{
+    return (TimeNow() - mLastHeartbeatSent);
 }
 
 ///
 /// Queue an RPC request
 ///
 void
-ChunkServer::Enqueue(MetaRequest *r) 
+ChunkServer::Enqueue(MetaChunkRequest *r) 
 {
 	if (mDown) {
 		r->status = -EIO;
-		ResumeOp(r);
+		r->resume();
 		return;
 	}
         mPendingReqs.enqueue(r);
-	// globals().netKicker.Kick();
 	Dispatch();
 }
 
 int
 ChunkServer::AllocateChunk(MetaAllocate *r, int64_t leaseId)
 {
-        MetaChunkAllocate *ca;
-
         mAllocSpace += CHUNKSIZE;
-
-	UpdateNumChunkWrites(1);
-
-        ca = new MetaChunkAllocate(NextSeq(), r, this, leaseId);
-
-        // save a pointer to the request so that we can match up the
-        // response whenever we get it.
-	Enqueue(ca);
-
+	mNumChunkWrites++;
+        Enqueue(new MetaChunkAllocate(NextSeq(), r, this, leaseId));
         return 0;
 }
 
 int
 ChunkServer::DeleteChunk(chunkId_t chunkId)
 {
-	MetaChunkDelete *r;
-
-        mAllocSpace -= CHUNKSIZE;
-
+        mAllocSpace = max((int64_t)0, mAllocSpace - (int64_t)CHUNKSIZE);
 	if (IsRetiring()) {
 		EvacuateChunkDone(chunkId);
 	}
-
-	r = new MetaChunkDelete(NextSeq(), this, chunkId);
-
-	// save a pointer to the request so that we can match up the
-	// response whenever we get it.
-	Enqueue(r);
-
+	Enqueue(new MetaChunkDelete(NextSeq(), this, chunkId));
 	return 0;
 }
 
 int
 ChunkServer::TruncateChunk(chunkId_t chunkId, off_t s)
 {
-	MetaChunkTruncate *r;
-
-	mAllocSpace -= (CHUNKSIZE - s);
-
-	// OFF_TYPE_CAST: off_t casted to size_t.
-	// Should be fine though since 's' contains single chunk size.
-	r = new MetaChunkTruncate(NextSeq(), this, chunkId, s);
-
-	// save a pointer to the request so that we can match up the
-	// response whenever we get it.
-	Enqueue(r);
-
+        mAllocSpace = max((int64_t)0, mAllocSpace - ((int64_t)CHUNKSIZE - s));
+	Enqueue(new MetaChunkTruncate(NextSeq(), this, chunkId, s));
 	return 0;
 }
 
 int
 ChunkServer::GetChunkSize(fid_t fid, chunkId_t chunkId, const string &pathname)
 {
-	MetaChunkSize *r;
+	Enqueue(new MetaChunkSize(NextSeq(), this, fid, chunkId, pathname));
+	return 0;
+}
 
-	r = new MetaChunkSize(NextSeq(), this, fid, chunkId, pathname);
+int
+ChunkServer::BeginMakeChunkStable(fid_t fid, chunkId_t chunkId, seq_t chunkVersion)
+{
+	Enqueue(new MetaBeginMakeChunkStable(
+		NextSeq(), this, mLocation, fid, chunkId, chunkVersion
+	));
+	return 0;
+}
 
-	// save a pointer to the request so that we can match up the
-	// response whenever we get it.
-	Enqueue(r);
-
+int
+ChunkServer::MakeChunkStable(fid_t fid, chunkId_t chunkId, seq_t chunkVersion,
+    off_t chunkSize, bool hasChunkChecksum, uint32_t chunkChecksum, bool addPending)
+{
+	Enqueue(new MetaChunkMakeStable(
+		NextSeq(), shared_from_this(),
+		fid, chunkId, chunkVersion,
+		chunkSize, hasChunkChecksum, chunkChecksum, addPending
+	));
 	return 0;
 }
 
@@ -654,68 +696,73 @@ int
 ChunkServer::ReplicateChunk(fid_t fid, chunkId_t chunkId, seq_t chunkVersion,
 				const ServerLocation &loc)
 {
-	MetaChunkReplicate *r;
-
-	r = new MetaChunkReplicate(NextSeq(), this, fid, chunkId, chunkVersion, loc);
+	MetaChunkReplicate * const r = new MetaChunkReplicate(
+		NextSeq(), this, fid, chunkId, chunkVersion, loc);
 	r->server = shared_from_this();
 	mNumChunkWriteReplications++;
-	// save a pointer to the request so that we can match up the
-	// response whenever we get it.
+	mNumChunkWrites++;
+        mAllocSpace += CHUNKSIZE;
 	Enqueue(r);
-
 	return 0;
 }
 
 void
 ChunkServer::Heartbeat()
 {
-	if (!mHelloDone) {
+	if (! mHelloDone || mDown) {
 		return;
 	}
-
+	assert(mNetConnection);
+	const time_t now           = TimeNow();
+	const int    timeSinceSent = (int)(now - mLastHeartbeatSent);
 	if (mHeartbeatSent) {
-		string loc = mLocation.ToString();
-		time_t now = time(0);
-
-		if (now - mLastHeard > INACTIVE_SERVER_TIMEOUT) {
-			KFS_LOG_VA_INFO("Server %s has been non-responsive for too long; taking it down", loc.c_str());
-			// We are executing in the context of the network thread
-			// So, take the server down as though the net connection
-			// broke.
-			HandleRequest(EVENT_NET_ERROR, NULL);
+		if (sHeartbeatTimeout >= 0 &&
+				timeSinceSent >= sHeartbeatTimeout) {
+			ostringstream os;
+			os << "heartbeat timed out, sent: " <<
+				timeSinceSent << " sec. ago";
+			Error(os.str().c_str());
 			return;
 		}
-
 		// If a request is outstanding, don't send one more
-		mHeartbeatSkipped = true;
-		KFS_LOG_VA_INFO("Skipping send of heartbeat to %s", loc.c_str());
+		if (! mHeartbeatSkipped &&
+				mLastHeartbeatSent + sHeartbeatInterval < now) {
+			mHeartbeatSkipped = true;
+			KFS_LOG_STREAM_INFO << ServerID() <<
+				" skipping heartbeat send,"
+				" last sent " << timeSinceSent << " sec. ago" <<
+			KFS_LOG_EOM;
+		}
+		mNetConnection->SetInactivityTimeout(sHeartbeatTimeout < 0 ?
+			sHeartbeatTimeout :
+			sHeartbeatTimeout - timeSinceSent
+		);
 		return;
 	}
-
-	mHeartbeatSent = true;
-	mHeartbeatSkipped = false;
-
-        MetaChunkHeartbeat *r;
-
-        r = new MetaChunkHeartbeat(NextSeq(), this);
-
-        // save a pointer to the request so that we can match up the
-        // response whenever we get it.
-	Enqueue(r);
+	if (timeSinceSent >= sHeartbeatInterval) {
+		KFS_LOG_STREAM_DEBUG << ServerID() <<
+			" sending heartbeat,"
+			" last sent " << timeSinceSent << " sec. ago" <<
+		KFS_LOG_EOM;
+		mHeartbeatSent     = true;
+		mLastHeartbeatSent = now;
+		mNetConnection->SetInactivityTimeout(
+			(sHeartbeatTimeout >= 0 &&
+				sHeartbeatTimeout < sHeartbeatInterval) ?
+			sHeartbeatTimeout : sHeartbeatInterval
+		);
+        	Enqueue(new MetaChunkHeartbeat(NextSeq(), this));
+		return;
+	}
+	mNetConnection->SetInactivityTimeout(sHeartbeatInterval - timeSinceSent);
 }
 
 void
 ChunkServer::NotifyStaleChunks(const vector<chunkId_t> &staleChunkIds)
 {
-	MetaChunkStaleNotify *r;
-
-	mAllocSpace -= (CHUNKSIZE * staleChunkIds.size());
-	r = new MetaChunkStaleNotify(NextSeq(), this);
-
+	mAllocSpace = max((int64_t)0, mAllocSpace - (int64_t)(CHUNKSIZE * staleChunkIds.size()));
+	MetaChunkStaleNotify * const r = new MetaChunkStaleNotify(NextSeq(), this);
 	r->staleChunkIds = staleChunkIds;
-
-	// save a pointer to the request so that we can match up the
-	// response whenever we get it.
 	Enqueue(r);
 
 }
@@ -723,48 +770,39 @@ ChunkServer::NotifyStaleChunks(const vector<chunkId_t> &staleChunkIds)
 void
 ChunkServer::NotifyStaleChunk(chunkId_t staleChunkId)
 {
-	MetaChunkStaleNotify *r;
-
-	mAllocSpace -= CHUNKSIZE;
-	r = new MetaChunkStaleNotify(NextSeq(), this);
-
+	mAllocSpace = max((int64_t)0, mAllocSpace - (int64_t)CHUNKSIZE);
+	MetaChunkStaleNotify * const r = new MetaChunkStaleNotify(NextSeq(), this);
 	r->staleChunkIds.push_back(staleChunkId);
-
-	// save a pointer to the request so that we can match up the
-	// response whenever we get it.
 	Enqueue(r);
 }
 
 void
 ChunkServer::NotifyChunkVersChange(fid_t fid, chunkId_t chunkId, seq_t chunkVers)
 {
-        MetaChunkVersChange *r;
-
-	r = new MetaChunkVersChange(NextSeq(), this, fid, chunkId, chunkVers);
-
-	// save a pointer to the request so that we can match up the
-	// response whenever we get it.
-	Enqueue(r);
+	Enqueue(new MetaChunkVersChange(NextSeq(), this, fid, chunkId, chunkVers));
 }
 
 void
 ChunkServer::SetRetiring()
 {
 	mIsRetiring = true;
-	mRetireStartTime = time(NULL);
-	KFS_LOG_VA_INFO("Initiation of retire for chunks on %s : %d blocks to do",
-			ServerID().c_str(), mNumChunks);
+	mRetireStartTime = TimeNow();
+	KFS_LOG_STREAM_INFO << ServerID() <<
+		" initiation of retire for " << mNumChunks << " chunks" <<
+	KFS_LOG_EOM;
 }
 
 void
 ChunkServer::EvacuateChunkDone(chunkId_t chunkId)
 {
-	if (!mIsRetiring)
+	if (!mIsRetiring) {
 		return;
+	}
 	mEvacuatingChunks.erase(chunkId);
 	if (mEvacuatingChunks.empty()) {
-		KFS_LOG_VA_INFO("Evacuation of chunks on %s is done; retiring",
-				ServerID().c_str());
+		KFS_LOG_STREAM_INFO << ServerID() <<
+			" evacuation of chunks done, retiring" <<
+		KFS_LOG_EOM;
 		Retire();
 	}
 }
@@ -772,176 +810,163 @@ ChunkServer::EvacuateChunkDone(chunkId_t chunkId)
 void
 ChunkServer::Retire()
 {
-	MetaChunkRetire *r;
-
-	r = new MetaChunkRetire(NextSeq(), this);
-	Enqueue(r);
+	Enqueue(new MetaChunkRetire(NextSeq(), this));
 }
 
-//
-// Helper functor that dispatches an RPC request to the server.
-//
-class OpDispatcher {
-	ChunkServer *server;
-	NetConnectionPtr conn;
-public:
-	OpDispatcher(ChunkServer *s, NetConnectionPtr &c) :
-		server(s), conn(c) { }
-	void operator()(MetaRequest *r) {
+void
+ChunkServer::SetProperties(const Properties& props)
+{
+	Enqueue(new MetaChunkSetProperties(NextSeq(), this, props));
+}
 
-        	IOBuffer::OStream os;
-        	MetaChunkRequest *cr = static_cast <MetaChunkRequest *> (r);
-
-        	if (!conn) {
-                	// Server is dead...so, drop the op
-                	r->status = -EIO;
-                	server->ResumeOp(r);
-			return;
-        	}
-        	assert(cr != NULL);
-
-        	// Get the request into string format
-        	cr->request(os);
-
-        	// Send it on its merry way
-        	conn->Write(&os);
-
-		if (cr->op == META_CHUNK_REPLICATE) {
-			MetaChunkReplicate *mcr = static_cast <MetaChunkReplicate *> (cr);
-			KFS_LOG_VA_INFO("Dispatched re-replication request: %s",
-					mcr->Show().c_str());
-		}
-		// Notify the server the op is dispatched
-		server->Dispatched(r);
-	}
-};
+void
+ChunkServer::Restart()
+{
+	mRestartQueuedFlag = true;
+	Enqueue(new MetaChunkServerRestart(NextSeq(), this));
+}
 
 void
 ChunkServer::Dispatch()
 {
-	OpDispatcher dispatcher(this, mNetConnection);
-	list<MetaRequest *> reqs;
-	MetaRequest *r;
-
-	while((r = mPendingReqs.dequeue_nowait())) {
-		reqs.push_back(r);
+	ChunkServerPtr const doNotDelete(shared_from_this());
+	PendingReqs::Queue reqs;
+	mPendingReqs.swap(reqs);
+	IOBuffer::OStream os;
+	for (PendingReqs::Queue::const_iterator it = reqs.begin();
+			it != reqs.end();
+			++it) {
+		MetaChunkRequest& r = **it;
+		if (! mNetConnection) {
+			// Server is dead...so, drop the op
+			r.status = -EIO;
+			r.resume();
+			continue;
+		}
+        	// Get the request into string format
+		r.request(os);
+		// Send it on its merry way
+		if (r.op == META_CHUNK_REPLICATE) {
+			KFS_LOG_STREAM_INFO << ServerID() <<
+				" dispatched re-replication request: "
+				" seq: " << r.opSeqno << " " << r.Show() <<
+			KFS_LOG_EOM;
+		}
+		// Notify the server the op is dispatched
+		Dispatched(&r);
 	}
-	for_each(reqs.begin(), reqs.end(), dispatcher);
-
-	reqs.clear();
+	if (mNetConnection) {
+		mNetConnection->Write(&os);
+		mNetConnection->StartFlush();
+	}
 }
 
 // Helper functor that fails an op with an error code.
 class OpFailer {
-	ChunkServer *server;
-	int errCode;
+	const int errCode;
 public:
-	OpFailer(ChunkServer *s, int c) : server(s), errCode(c) { };
-	void operator() (MetaRequest *op) {
+	OpFailer(int c) : errCode(c) { };
+	void operator() (MetaChunkRequest *op) {
                 op->status = errCode;
-                server->ResumeOp(op);
+                op->resume();
 	}
 };
 
 void
 ChunkServer::FailDispatchedOps()
 {
-	for_each(mDispatchedReqs.begin(), mDispatchedReqs.end(), 	
-			OpFailer(this, -EIO));
-
-	mDispatchedReqs.clear();
+	DispatchedReqs reqs;
+	mDispatchedReqs.swap(reqs);
+	for_each(reqs.begin(), reqs.end(), OpFailer(-EIO));
 }
 
 void
 ChunkServer::FailPendingOps()
 {
-	list<MetaRequest *> reqs;
-	MetaRequest *r;
-
-	while((r = mPendingReqs.dequeue_nowait())) {
-		reqs.push_back(r);
-	}
-	for_each(reqs.begin(), reqs.end(), OpFailer(this, -EIO));
-	reqs.clear();
-}
-
-inline float convertToMB(off_t bytes)
-{
-	return bytes / (1024.0 * 1024.0);
-}
-
-inline float convertToGB(off_t bytes)
-{
-	return bytes / (1024.0 * 1024.0 * 1024.0);
+	PendingReqs::Queue reqs;
+	mPendingReqs.swap(reqs);
+	for_each(reqs.begin(), reqs.end(), OpFailer(-EIO));
 }
 
 void
 ChunkServer::GetRetiringStatus(string &result)
 {
-	if (!mIsRetiring)
+	if (!mIsRetiring) {
 		return;
-
+	}
 	ostringstream ost;
 	char timebuf[64];
 	ctime_r(&mRetireStartTime, timebuf);
-	if (timebuf[24] == '\n')
-		timebuf[24] = '\0';
-
+	char* const cr = strchr(timebuf, '\n');
+	if (cr) {
+		*cr = '\0';
+	}
 	ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
 		<< ", started=" << timebuf 
 		<< ", numLeft=" << mEvacuatingChunks.size() << ", numDone=" 
 		<< mNumChunks - mEvacuatingChunks.size() << '\t';
-
 	result += ost.str();
 }
 
 void
 ChunkServer::Ping(string &result)
 {
-	ostringstream ost;
-	time_t now = time(NULL);
-	bool isOverloaded = false;
-	uint64_t freeSpace = mTotalSpace - mUsedSpace;
-
 	// for nodes taken out of write allocation, send the info back; this allows
 	// the UI to color these nodes differently
-	if (GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD)
-		isOverloaded = true;
-
-	if (mTotalSpace < (1L << 30)) {
-		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
-			<< ", rack=" << mRackId 
-			<< ", used=" << convertToMB(mUsedSpace)
-	    		<< "(MB), free=" << convertToMB(freeSpace) 
-			<< "(MB), util=" << GetSpaceUtilization() * 100.0 
-			<< "%, nblocks=" << mNumChunks 
-			<< ", lastheard=" << now - mLastHeard << " (sec)"
-			<< ", ncorrupt=" << mNumCorruptChunks
-			<< ", nchunksToMove=" << mChunksToMove.size();
-		if (isOverloaded)
-			ost << ", overloaded=1";
-		ost << "\t";
-	} else {
-		ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
-			<< ", rack=" << mRackId 
-			<< ", used=" << convertToGB(mUsedSpace)
-	    		<< "(GB), free=" << convertToGB(freeSpace) 
-			<< "(GB), util=" << GetSpaceUtilization() * 100.0 
-			<< "%, nblocks=" << mNumChunks 
-			<< ", lastheard=" << now - mLastHeard << " (sec)"
-			<< ", ncorrupt=" << mNumCorruptChunks
-			<< ", nchunksToMove=" << mChunksToMove.size();
-		if (isOverloaded)
-			ost << ", overloaded=1";
-		ost << "\t";
-	}
+	const bool     isOverloaded = GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD;
+	const time_t   now          = TimeNow();
+	const uint64_t freeSpace    = mTotalSpace - mUsedSpace;
+        const double   div          = double(1L << ((mTotalSpace < (1L << 30)) ? 20 : 30));
+        const char*    mult         = (mTotalSpace < (1L << 30)) ? "MB" : "GB";
+        ostringstream ost;
+	ost << "s=" << mLocation.hostname << ", p=" << mLocation.port 
+		<< ", rack=" << mRackId 
+		<< ", used=" << (mUsedSpace / div)
+	    	<< "(" << mult << "), free=" << (freeSpace / div)
+		<< "(" << mult << "), util=" << GetSpaceUtilization() * 100.0 
+		<< "%, nblocks=" << mNumChunks 
+		<< ", lastheard=" << now - mLastHeard << " (sec)"
+		<< ", ncorrupt=" << mNumCorruptChunks
+		<< ", nchunksToMove=" << mChunksToMove.size()
+		<< ", numDrives=" << mNumDrives
+                << (isOverloaded ? ", overloaded=1" : "")
+		<< "\t"
+	;
 	result += ost.str();
 }
 
 void
-ChunkServer::SendResponse(MetaRequest *op)
+ChunkServer::SendResponse(MetaChunkRequest *op)
 {
         IOBuffer::OStream os;
         op->response(os);
         mNetConnection->Write(&os);
+        mNetConnection->StartFlush();
+}
+
+bool
+ChunkServer::ScheduleRestart(int64_t gracefulRestartTimeout, int64_t gracefulRestartAppendWithWidTimeout)
+{
+	if (mDown) {
+		return true;
+	}
+	if (! mRestartScheduledFlag) {
+		mRestartScheduledTime = TimeNow();
+		mRestartScheduledFlag = true;
+	}
+	if ((mNumChunkWrites <= 0 &&
+			mNumAppendsWithWid <= 0 &&
+			mDispatchedReqs.empty() &&
+			mPendingReqs.empty()) ||
+			mRestartScheduledTime +
+				(mNumAppendsWithWid <= 0 ?
+					gracefulRestartTimeout :
+					max(gracefulRestartTimeout,
+						gracefulRestartAppendWithWidTimeout))
+				< TimeNow()) {
+                mDownReason = "restarting";
+		Error("reconnect before restart");
+		return true;
+	}
+	return false;
 }

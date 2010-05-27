@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/09/12
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -29,48 +28,103 @@
 
 #include <algorithm>
 #include <vector>
+
+#ifdef USE_INTEL_IPP
+#include <ipp.h>
+#else
 #include <zlib.h>
+#endif
+
 
 using std::min;
 using std::vector;
 using std::list;
 
-using namespace KFS;
+namespace KFS {
+
+#ifdef USE_INTEL_IPP
+static const IppStatus sIppStatus       = ippStaticInit();
+static const uint32_t  kKfsNullChecksum = 1;
+
+static inline uint32_t
+KfsChecksum(uint32_t chksum, const void* buf, size_t len)
+{
+    if (len <= 0) {
+        return kKfsNullChecksum;
+    }
+    Ipp32u       res     = chksum;
+    const size_t kMaxLen = 0x7FFFFFFFu;
+    const Ipp8u* p       = reinterpret_cast<const Ipp8u*>(buf);
+    for (size_t i = len; i > 0; ) {
+        const int l = (int)min(i, kMaxLen);
+        ippsAdler32_8u(p, l, &res);
+        i -= l;
+        p += l;
+    }
+    return res;
+}
+#else
+static const uint32_t kKfsNullChecksum = adler32(0, Z_NULL, 0);
+
+static inline uint32_t
+KfsChecksum(uint32_t chksum, const void* buf, size_t len)
+{
+    return adler32(chksum, reinterpret_cast<const Bytef*>(buf), len);
+}
+#endif
 
 uint32_t
-KFS::OffsetToChecksumBlockNum(off_t offset)
+OffsetToChecksumBlockNum(off_t offset)
 {
     return offset / CHECKSUM_BLOCKSIZE;
 }
 
 uint32_t
-KFS::OffsetToChecksumBlockStart(off_t offset)
+OffsetToChecksumBlockStart(off_t offset)
 {
     return (offset / CHECKSUM_BLOCKSIZE) *
         CHECKSUM_BLOCKSIZE;
 }
 
 uint32_t
-KFS::OffsetToChecksumBlockEnd(off_t offset)
+OffsetToChecksumBlockEnd(off_t offset)
 {
     return ((offset / CHECKSUM_BLOCKSIZE) + 1) *
         CHECKSUM_BLOCKSIZE;
 }
 
 uint32_t
-KFS::ComputeBlockChecksum(const char *buf, size_t len)
+ComputeBlockChecksum(const char *buf, size_t len)
 {
-    uint32_t res = adler32(0L, Z_NULL, 0);
+    return KfsChecksum(kKfsNullChecksum, buf, len);
+}
+
+vector<uint32_t>
+ComputeChecksums(const char *buf, size_t len)
+{
+    vector <uint32_t> cksums;
+
+    if (len <= CHECKSUM_BLOCKSIZE) {
+        uint32_t cks = ComputeBlockChecksum(buf, len);
+        cksums.push_back(cks);
+        return cksums;
+    }
     
-    res = adler32(res, (const Bytef *) buf, len);
-    return res;
+    size_t curr = 0;
+    while (curr < len) {
+        size_t tlen = min((size_t) CHECKSUM_BLOCKSIZE, len - curr);
+        uint32_t cks = ComputeBlockChecksum(buf + curr, tlen);
+
+        cksums.push_back(cks);
+        curr += tlen;
+    }
+    return cksums;
 }
 
 uint32_t
-KFS::ComputeBlockChecksum(const IOBuffer *data, size_t len)
+ComputeBlockChecksum(const IOBuffer *data, size_t len)
 {
-    uint32_t res = adler32(0L, Z_NULL, 0);
-
+    uint32_t res = kKfsNullChecksum;
     for (IOBuffer::iterator iter = data->begin();
          len > 0 && (iter != data->end()); ++iter) {
         size_t tlen = min((size_t) iter->BytesConsumable(), len);
@@ -78,14 +132,14 @@ KFS::ComputeBlockChecksum(const IOBuffer *data, size_t len)
         if (tlen == 0)
             continue;
 
-        res = adler32(res, (const Bytef *) iter->Consumer(), tlen);
+        res = KfsChecksum(res, iter->Consumer(), tlen);
         len -= tlen;
     }
     return res;
 }
 
 vector<uint32_t>
-KFS::ComputeChecksums(const IOBuffer *data, size_t len)
+ComputeChecksums(const IOBuffer *data, size_t len)
 {
     vector<uint32_t> cksums;
     IOBuffer::iterator iter = data->begin();
@@ -104,8 +158,7 @@ KFS::ComputeChecksums(const IOBuffer *data, size_t len)
     /// Compute checksum block by block
     while ((len > 0) && (iter != data->end())) {
         size_t currLen = 0;
-        uint32_t res = adler32(0L, Z_NULL, 0);
-
+        uint32_t res = kKfsNullChecksum;
         while (currLen < CHECKSUM_BLOCKSIZE) {
             unsigned navail = min((size_t) (iter->Producer() - buf), len);
             if (currLen + navail > CHECKSUM_BLOCKSIZE)
@@ -121,10 +174,13 @@ KFS::ComputeChecksums(const IOBuffer *data, size_t len)
 
             currLen += navail;
             len -= navail;
-            res = adler32(res, (const Bytef *) buf, navail);
+            res = KfsChecksum(res, buf, navail);
             buf += navail;
         }
         cksums.push_back(res);
     }
     return cksums;
 }
+
+}
+

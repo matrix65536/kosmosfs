@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/09/13
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corporation.  All rights reserved.
 //
@@ -43,6 +42,7 @@ using namespace KFS;
 #include <algorithm>
 #include <vector>
 #include <fstream>
+#include <iostream>
 
 #include "common/log.h"
 
@@ -69,7 +69,7 @@ int main(int argc, char **argv)
         switch (optchar) {
             case 'l':
                 initedLogger = true;
-                KFS::MsgLogger::Init(optarg, log4cpp::Priority::INFO);
+                KFS::MsgLogger::Init(optarg, MsgLogger::kLogLevelINFO);
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -81,7 +81,7 @@ int main(int argc, char **argv)
     }
 
     if (!initedLogger) {
-        KFS::MsgLogger::Init(NULL, log4cpp::Priority::INFO);
+        KFS::MsgLogger::Init(NULL, MsgLogger::kLogLevelINFO);
     }
 
     if (help || (port < 0)) {

@@ -3,7 +3,6 @@
 //
 // Created 2009/04/17
 //
-// Author: Jakub Schmidtke
 //
 //
 // This file is part of Kosmos File System (KFS).

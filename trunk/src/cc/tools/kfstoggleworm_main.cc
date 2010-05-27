@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/10/06
-// Author: Lohit VijayaRenu
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -36,7 +35,6 @@ extern "C" {
 #include "common/log.h"
 
 #include "MonUtils.h"
-#include "KfsToolsCommon.h"
 
 using std::string;
 using std::cout;
@@ -52,26 +50,24 @@ int main(int argc, char **argv)
 {
     char optchar;
     bool help = false;
-    string serverHost = "";
+    const char *server = NULL;
     int port = -1;
     bool verboseLogging = false;
-    int toggle = -1;
+	int toggle = -1;
 
-    KFS::tools::getEnvServer(serverHost, port);
-    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hs:p:t:v")) != -1) {
         switch (optchar) {
             case 's':
-                KFS::tools::parseServer(optarg, serverHost, port);
+                server = optarg;
                 break;
             case 'p':
                 port = atoi(optarg);
                 break;
-	    case 't':
-		toggle = atoi(optarg);
-		break;
+			case 't':
+				toggle = atoi(optarg);
+				break;
             case 'h':
                 help = true;
                 break;
@@ -86,18 +82,18 @@ int main(int argc, char **argv)
     }
 
     if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelDEBUG);
     } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelINFO);
     } 
 
-    if (help || (serverHost == "") || (port < 0) || 
-		((toggle != 0) && (toggle != 1)) ) {
+    if (help || (server == NULL) || (port < 0) || 
+		((toggle != 0) && (toggle != 1))) {
         cout << "Usage: " << argv[0] << " -s <server name> -p <port> -t [1|0] {-v}\n\t-s : meta server\n\t-p : meta server port\n\t-t : toggle value\n\t-v : verbose" << endl;
         exit(-1);
     }
 
-    ServerLocation loc(serverHost, port);
+    ServerLocation loc(server, port);
 
     ToggleWORM(loc, toggle);
 }

@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/10/02
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -41,7 +40,7 @@ using std::ostringstream;
 using std::istringstream;
 using std::min;
 using std::max;
-
+using std::endl;
 using namespace KFS;
 
 static double ComputeTimeDiff(const struct timeval &startTime, const struct timeval &endTime)
@@ -62,6 +61,7 @@ NeedToRetryRead(int status)
             (status == -EHOSTUNREACH) ||
             (status == -EINVAL) ||
             (status == -EIO) ||
+            (status == -ENOMEM) ||
             (status == -EAGAIN) ||
             (status == -ETIMEDOUT));
 }
@@ -69,7 +69,8 @@ NeedToRetryRead(int status)
 static bool
 NeedToChangeReplica(int errcode)
 {
-    return ((errcode == -EHOSTUNREACH) || (errcode == -ETIMEDOUT) || (errcode == -EIO));
+    return ((errcode == -EHOSTUNREACH) || (errcode == -ETIMEDOUT) || 
+            (errcode == -EIO) || (errcode == -ENOMEM) || (errcode == -EBADF));
 }
 
 inline static bool 
@@ -82,13 +83,10 @@ IsChunkBufferDataValid(
         pos->chunkOffset < (off_t)(cb->start + cb->length));
 }
 
-ssize_t
-KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
+int
+KfsClientImpl::ReadPrefetch(int fd, char *buf, size_t numBytes)
 {
     MutexLock l(&mMutex);
-
-    size_t nread = 0, nleft;
-    ssize_t numIO = 0;
 
     if (!valid_fd(fd) || mFileTable[fd] == NULL || mFileTable[fd]->openMode == O_WRONLY) {
         KFS_LOG_VA_INFO("Read to fd: %d failed---fd is likely closed", fd);        
@@ -100,16 +98,116 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
     if (fa->isDirectory)
 	return -EISDIR;
 
+    if (pos->preferredServer == NULL) {
+        int leaseStatus = -1;
+	if (!IsChunkReadable(fd, leaseStatus)) {
+            return 0;
+        }
+    }
+
+    ChunkAttr *chunk = GetCurrChunk(fd);
+    size_t nbytes = min(numBytes, (size_t) (chunk->chunkSize - pos->chunkOffset));
+
+    if ((pos->prefetchReq != NULL) || (nbytes == 0) || (nbytes > CHUNKSIZE)) {
+        // request is already pending or it doesn't make any sense to do it
+        return 0;
+    }
+
+    TcpSocketPtr sockPtr = pos->GetPreferredChunkServerSockPtr();    
+    pos->prefetchReq = new AsyncReadReq(fd, sockPtr, nextSeq(), 
+                                        chunk->chunkId, chunk->chunkVersion,
+                                        pos->chunkOffset,
+                                        (unsigned char *) buf, nbytes);
+    mAsyncer.Enqueue(pos->prefetchReq);
+    return 0;
+}
+
+ssize_t
+KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
+{
+    MutexLock l(&mMutex);
+
+    size_t nread = 0, nleft;
+    ssize_t numIO = 0;
+    int leaseStatus = -1;
+
+    if (!valid_fd(fd) || mFileTable[fd] == NULL || mFileTable[fd]->openMode == O_WRONLY) {
+        KFS_LOG_VA_INFO("Read to fd: %d failed---fd is likely closed", fd);        
+	return -EBADF;
+    }
+
+    FilePosition *pos = FdPos(fd);
+    FileAttr *fa = FdAttr(fd);
+    if (fa->isDirectory)
+	return -EISDIR;
+
+    if (pos->prefetchReq != NULL) {
+        while (pos->prefetchReq->inQ) {
+            AsyncReadReq *req;
+
+            mAsyncer.Dequeue(&req);
+            req->inQ = false;
+        }
+        // assume we are called back with the same buffer that was done for prefetch
+        numIO = pos->prefetchReq->numDone;
+        delete pos->prefetchReq;
+        pos->prefetchReq = NULL;
+        if (numIO > 0) {
+            Seek(fd, numIO, SEEK_CUR);
+            if (numBytes == (size_t) numIO)
+                // got everything; 
+                return numIO;
+            if (numBytes < (size_t) numIO)
+                // the caller is giving us the same buffer in which prefetch was done, but is saying it wants less data. 
+                return numBytes;
+            // read the remaining: since we didn't get all the data, reset connections and get the rest
+            if (pos->preferredServer)
+                pos->preferredServer->Close();
+            pos->preferredServer = NULL;
+            ClearCurrChunkAttr(fd);
+
+            ssize_t rest = Read(fd, buf + numIO, numBytes - numIO);
+            return rest >= 0 ? numIO + rest : -1;
+        }
+        if (numIO < 0) {
+            ChunkAttr *chunk = GetCurrChunk(fd);
+
+            KFS_LOG_VA_INFO("Prefetch on chunk %lld (fd = %d) failed; falling thru sync path", 
+                            chunk->chunkId, fd);
+            // it is possible that the prefetch failed because the
+            // server closed connection on us.  Close the socket so
+            // that we can do a fast reset on the read.
+            pos->preferredServer->Close();
+            pos->preferredServer = NULL;
+            ClearCurrChunkAttr(fd);
+        }
+        numIO = 0;
+    }
+
     // flush buffer so sizes are updated properly
     ChunkBuffer *cb = FdBuffer(fd);
     if (cb->dirty)
 	FlushBuffer(fd);
 
     cb->allocate();
-    
+
+    if (FdInfo(fd)->eofMark != -1) {
+        if (pos->fileOffset >= FdInfo(fd)->eofMark) 
+            return 0;
+
+        size_t maxAvail = FdInfo(fd)->eofMark - pos->fileOffset;
+        numBytes = min(numBytes, maxAvail);
+    }
+
+
+    int retryCount = 0;
+
     // Loop thru chunk after chunk until we either get the desired #
     // of bytes or we hit EOF.
     while (nread < numBytes) {
+        ChunkAttr *chunk = GetCurrChunk(fd);
+        if (chunk && (!mLeaseClerk.IsLeaseValid(chunk->chunkId)) && pos->pendingChunkRead)
+            pos->pendingChunkRead->Reset();
         //
         // Basic invariant: when we enter this loop, the connections
         // we have to the chunkservers (if any) are correct.  As we
@@ -119,8 +217,30 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
         // to get new ones via a call to OpenChunk().   This same
         // principle holds for write code path as well.
         //
-	if (!IsChunkReadable(fd))
+	if (!IsChunkReadable(fd, leaseStatus)) {
+            if (pos->pendingChunkRead)
+                pos->pendingChunkRead->Reset();
+
+            if (leaseStatus == -EHOSTUNREACH) {
+                // need to retry since we lost connection to the chunkserver we picked
+                if (pos->preferredServer) {
+                    pos->preferredServer->Close();
+                    pos->preferredServer = NULL;
+                }
+                // if we can't to the servers, avoid burning thru all the ports on the box;
+                if (++retryCount >= mMaxNumRetriesPerOp) {
+                    KFS_LOG_STREAM_INFO << "Too many retries " << retryCount 
+                                        << " : Unable to connect to any of the replicas that have the data; "
+                                        << " giving up" << endl << KFS_LOG_EOM;
+                    numIO = -EAGAIN;
+                    break;
+                }
+                continue;
+            }
+            if ((leaseStatus == -EBUSY) && (nread == 0))
+                nread = -EBUSY;
 	    break;
+        }
 
 	if (pos->fileOffset >= (off_t) fa->fileSize) {
 	    KFS_LOG_VA_DEBUG("Current pointer (%lld) is past EOF (%lld) ...so, done",
@@ -135,15 +255,31 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
 
 	nread += numIO;
 	Seek(fd, numIO, SEEK_CUR);
+
+        if ((FdInfo(fd)->eofMark != -1) && (pos->fileOffset >= FdInfo(fd)->eofMark)) { 
+            break;
+        }
+
     }
 
     if (pos->fileOffset < (off_t) fa->fileSize) {
+        // We haven't yet reached EOF: if we didn't read everything
+        // that was asked for, set the error; otherwise queue a
+        // pending read
         if (nread < numBytes) {
             FilePosition *pos = FdPos(fd);
             string s;
 
             if ((pos != NULL) && (pos->preferredServer != NULL)) {
                 s = pos->GetPreferredServerLocation().ToString();
+            }
+
+            if ((nread == 0) && (numIO == 0) &&
+                (!((FdInfo(fd)->eofMark != -1) && (pos->fileOffset >= FdInfo(fd)->eofMark)))) {
+                // if we haven't hit EOF, and we were asked to read some
+                // data, we didn't get data back, that is a problem.
+                // return an error to the caller
+                numIO = -EAGAIN;
             }
 
             KFS_LOG_VA_INFO("Read done from %s on %s: @offset: %lld: asked: %d, returning %d, errorcode = %d",
@@ -158,57 +294,54 @@ KfsClientImpl::Read(int fd, char *buf, size_t numBytes)
             mPendingOp.Start(fd, true);
         }
     }
+    if ((nread == 0) && (((int) numIO) < 0))
+        // pass the error back
+        return (int) numIO;
     return nread;
 }
 
 bool
-KfsClientImpl::IsChunkReadable(int fd)
+KfsClientImpl::IsChunkReadable(int fd, int &leaseStatus)
 {
     FilePosition *pos = FdPos(fd);
     int res = -1;
     ChunkAttr *chunk = NULL;
 
-    for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
+    leaseStatus = -1;
+    for (int retryCount = 0; ; retryCount++) {
         res = LocateChunk(fd, pos->chunkNum);
-
         if (res >= 0) {
             chunk = GetCurrChunk(fd);
             if (pos->preferredServer == NULL && chunk->chunkId != (kfsChunkId_t)-1) {
                 // use nonblocking connect to chunkserver; if one fails to
                 // connect, we switch to another replica. 
                 res = OpenChunk(fd, true);
-                if (res < 0) {
-                    if (pos->preferredServer != NULL)
-                        pos->AvoidServer(pos->preferredServerLocation);
-                    continue;
-                }
+                if (res >= 0)
+                    break;
+                if (pos->preferredServer != NULL)
+                    pos->AvoidServer(pos->preferredServerLocation);
+                if (++retryCount >= mMaxNumRetriesPerOp)
+                    break;
+                continue;
             }
+        }
+        if (res >= 0 || res != -EAGAIN || ++retryCount >= mMaxNumRetriesPerOp)
             break;
-        }
-        if (res == -EAGAIN) {
-            // could be that all 3 servers are temporarily down
-            Sleep(RETRY_DELAY_SECS);
-            continue;
-        } else {
-            // we can't locate the chunk...fail
-            return false;
-        }
-
+        Sleep(RETRY_DELAY_SECS);
     }
 
     if (res < 0)
         return false;
 
-
-    return IsChunkLeaseGood(chunk->chunkId, mFileTable[fd]->pathname);
+    return IsChunkLeaseGood(fd, chunk->chunkId, mFileTable[fd]->pathname, leaseStatus);
 }
 
 bool
-KfsClientImpl::IsChunkLeaseGood(kfsChunkId_t chunkId, const string &pathname)
+KfsClientImpl::IsChunkLeaseGood(int fd, kfsChunkId_t chunkId, const string &pathname, int &leaseStatus)
 {
     if (chunkId > 0) {
-	if ((!mLeaseClerk.IsLeaseValid(chunkId)) &&
-	    (GetLease(chunkId, pathname) < 0)) {
+        if ((!mLeaseClerk.IsLeaseValid(chunkId)) &&
+	    ((leaseStatus = GetLease(fd, chunkId, pathname)) < 0)) {
 	    // couldn't get a valid lease
 	    return false;
 	}
@@ -237,7 +370,7 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
     pos->CancelNonAdjacentPendingRead();
     chunk = GetCurrChunk(fd);
 
-    while (retryCount < NUM_RETRIES_PER_OP) {
+    do {
 	if (pos->preferredServer == NULL) {
             int status;
 
@@ -247,7 +380,8 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
             if (chunk->chunkId < 0) {
                 status = LocateChunk(fd, pos->chunkNum);
                 if (status < 0) {
-                    retryCount++;
+                    if (retryCount + 1 >= mMaxNumRetriesPerOp)
+                        break;
                     Sleep(RETRY_DELAY_SECS);
                     continue;
                 }
@@ -256,7 +390,6 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
             assert(chunk->chunkId != (kfsChunkId_t) -1);
             // we are here because we are handling failover/version #
             // mismatch
-	    retryCount++;
 	    Sleep(RETRY_DELAY_SECS);
 
 	    status = OpenChunk(fd, true);
@@ -272,6 +405,12 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
                 chunk->AvoidServer(pos->preferredServerLocation);
                 pos->AvoidServer(pos->preferredServerLocation);
 
+                // Reset: we couldn't get the data from the servers we tried.
+                // relookup where the data is and do the read
+                if (pos->chunkServers.size() == 0) {
+                    pos->ResetServers();
+                    chunk->chunkId = -1;
+                }
                 continue;
             }
 
@@ -284,6 +423,12 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
 	numIO = ZeroFillBuf(fd, buf, numBytes);
 	if (numIO > 0)
 	    return numIO;
+
+        if ((pos->chunkOffset >= chunk->chunkSize) &&
+            (mFileTable[fd]->skipHoles)) {
+            Seek(fd, KFS::CHUNKSIZE - chunk->chunkSize, SEEK_CUR);
+            return 0;
+        }
 
         ChunkBuffer *cb = FdBuffer(fd);
 	if (numBytes < cb->bufsz) {
@@ -326,7 +471,7 @@ KfsClientImpl::ReadChunk(int fd, char *buf, size_t numBytes)
         // the chunk went and then retry.
         chunk->chunkId = -1;
         pos->ResetServers();
-    }
+    } while (++retryCount < mMaxNumRetriesPerOp);
     return numIO;
 }
 
@@ -374,20 +519,19 @@ PendingChunkRead::Start(int fd, size_t off)
     mReadOp.chunkId       = chunk.chunkId;
     mReadOp.chunkVersion  = chunk.chunkVersion;
     mReadOp.offset        = pos.chunkOffset + off;
-    if ((mReadOp.offset >= chunk.chunkSize) || 
-    	(mReadOp.offset % CHECKSUM_BLOCKSIZE != 0)) {
-	// if the read-ahead isn't aligned, fail it; otherwise, subsequent reads
-	// can get unaligned and cause more perf problems: each read will
-	// require additional reads on the servers to pull in data such that
-	// reads are // aligned for checksum block boundaries
+    mReadOp.status        = 0;
+    if (mReadOp.offset >= chunk.chunkSize) {
         mFd = -1;
         return false;
     }
     mReadOp.numBytes = min(size_t(kMaxReadRequest),
         min(size_t(chunk.chunkSize - mReadOp.offset), mReadAhead));
-    mReadOp.numBytes =
-        OffsetToChecksumBlockStart(mReadOp.offset + mReadOp.numBytes) -
-        mReadOp.offset;
+    const size_t blkOff(mReadOp.offset % KFS::CHECKSUM_BLOCKSIZE);
+    // if the read isn't block aligned, do the minimal read in this call; then,
+    // we try to force subsequent reads to be block aligned.
+    mReadOp.numBytes = blkOff != 0 ?
+        min(mReadOp.numBytes, KFS::CHECKSUM_BLOCKSIZE - blkOff) :
+        mReadOp.numBytes;
     if (mSocket && ((int) mReadOp.numBytes > 0) && 
     		(mReadOp.numBytes < CHUNKSIZE)) {
         if (DoOpSend(&mReadOp, mSocket)) {
@@ -414,26 +558,67 @@ PendingChunkRead::Read(char *buf, size_t numBytes)
     if (attachFlag) {
         mReadOp.AttachContentBuf(buf, numBytes);
     }
+
+    struct timeval readStart, readEnd;
+
+    gettimeofday(&readStart, NULL);
+
     if (DoOpResponse(&mReadOp, mSocket) < 0 || mReadOp.status < 0 ||
             ! mImpl.VerifyChecksum(&mReadOp, mSocket)) {
-        if (attachFlag) {
-            mReadOp.ReleaseContentBuf();
+        if (! attachFlag) {
+            delete [] mReadOp.contentBuf;
         }
+        mReadOp.ReleaseContentBuf();
         mImpl.FdPos(mFd)->ResetServers();
         mFd = -1;
-        return (mReadOp.status < 0 ? mReadOp.status < 0 : -EAGAIN);
+        return (mReadOp.status < 0 ? mReadOp.status : -EAGAIN);
     }
+
     const ssize_t numRd = min(mReadOp.contentLength, numBytes);
+
+    gettimeofday(&readEnd, NULL);
+
     if (! attachFlag) {
         memcpy(buf, mReadOp.contentBuf, numRd);
         delete [] mReadOp.contentBuf;
     }
     mReadOp.ReleaseContentBuf();
     mReadOp.contentLength = 0;
-    mFd = -1;
     KFS_LOG_VA_DEBUG("pending chunk read done chunk: %d offset: %d size: %d ret: %d",
         (int)mReadOp.chunkId, (int)mReadOp.offset, (int)mReadOp.numBytes,
         (int)numRd);
+
+    double timeSpent = ComputeTimeDiff(readStart, readEnd);
+    FilePosition* pos = mImpl.FdPos(mFd);
+
+    if (timeSpent > 5.0) {
+        ostringstream os;
+
+
+        os << pos->GetPreferredServerLocation().ToString().c_str() << ':' 
+           << " c=" << mReadOp.chunkId << " o=" << pos->chunkOffset << " n=" << numBytes
+           << " got=" << numRd << " time=" << timeSpent;
+        KFS_LOG_VA_INFO("Read done from %s", os.str().c_str());
+
+        struct sockaddr_in saddr;
+        if (pos->GetPreferredServerAddr(saddr) == 0) {
+            mImpl.GetTelemetryReporter().publish(saddr.sin_addr, timeSpent, "READ_DRIVE", mReadOp.drivename,
+                                                 1, (double *) &mReadOp.diskIOTime, &timeSpent);
+        }
+        
+        if (timeSpent > 30.0) {
+            // the server is really overloaded or there is a network
+            // issue in getting data from the server.  In either case,
+            // reset the connection and try next read using a
+            // different socket 
+            KFS_LOG_VA_INFO("Read from %s took way too long (%.2lf secs) ; resetting connections",
+                            pos->GetPreferredServerLocation().ToString().c_str(), timeSpent);
+            pos->ResetServers();
+        }
+
+    }
+    mFd = -1;
+
     return numRd;
 }
 
@@ -520,6 +705,8 @@ KfsClientImpl::ZeroFillBuf(int fd, char *buf, size_t numBytes)
     if (mFileTable[fd]->currPos.chunkOffset < (off_t) chunk->chunkSize)
 	return 0;		// more data in chunk
 
+    if (mFileTable[fd]->skipHoles)
+        return 0;
 
     // We've hit End-of-chunk.  There are two cases here:
     // 1. There is more data in the file and that data is in
@@ -546,7 +733,7 @@ KfsClientImpl::ZeroFillBuf(int fd, char *buf, size_t numBytes)
     // Fill in 0's based on space in the buffer....
     numIO = min(numIO, numBytes);
 
-    // KFS_LOG_DEBUG("Zero-filling %d bytes for read @ %lld", numIO, mFileTable[fd]->currPos.chunkOffset);
+    KFS_LOG_VA_INFO("Zero-filling %d bytes for read @ %lld", numIO, mFileTable[fd]->currPos.chunkOffset);
 
     memset(buf, 0, numIO);
     return numIO;
@@ -558,7 +745,7 @@ KfsClientImpl::CopyFromChunkBuf(int fd, char *buf, size_t numBytes)
     size_t numIO;
     FilePosition *pos = FdPos(fd);
     ChunkBuffer *cb = FdBuffer(fd);
-    size_t start = pos->chunkOffset - cb->start;
+    ssize_t offsetInBuf = pos->chunkOffset - cb->start;
 
     // Wrong chunk in buffer or if the starting point in the buffer is
     // "BEYOND" the current location of the file pointer, we don't
@@ -567,15 +754,18 @@ KfsClientImpl::CopyFromChunkBuf(int fd, char *buf, size_t numBytes)
     if (! IsChunkBufferDataValid(pos, cb))
 	return 0;
 
+    if (offsetInBuf < 0)
+        return 0;
+
     // first figure out how much data is available in the buffer
     // to be copied out.
-    numIO = min(cb->length - start, numBytes);
+    numIO = min(cb->length - offsetInBuf, numBytes);
     // chunkBuf[0] corresponds to some offset in the chunk,
     // which is defined by chunkBufStart.
     // chunkOffset corresponds to the position in the chunk
     // where the "filepointer" is currently at.
     // Figure out where the data we want copied out starts
-    memcpy(buf, &cb->buf[start], numIO);
+    memcpy(buf, &cb->buf[offsetInBuf], numIO);
 
     // KFS_LOG_DEBUG("Copying out data from chunk buf...%d bytes", numIO);
 
@@ -632,11 +822,6 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     }
 
     ssize_t numIO = DoPipelinedRead(fd, ops, pos->preferredServer);
-    /*
-    if (numIO < 0) {
-	KFS_LOG_DEBUG("Pipelined read from server failed...");
-    }
-    */
 
     gettimeofday(&readEnd, NULL);
 
@@ -658,13 +843,14 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
                 double diskIOTime[MAX_IO_INFO_PER_PKT];
                 double elapsedTime[MAX_IO_INFO_PER_PKT];
                 vector<KfsOp *>::size_type count = 0;
+                string drivename;
                 for (; (count < ops.size()) && (count < MAX_IO_INFO_PER_PKT); count++) {
                     ReadOp *op = static_cast<ReadOp *> (ops[count]);
-
+                    drivename = op->drivename;
                     diskIOTime[count] = op->diskIOTime;
                     elapsedTime[count] = op->elapsedTime;
                 }
-                mTelemetryReporter.publish(saddr.sin_addr, timeSpent, "READ", 
+                mTelemetryReporter.publish(saddr.sin_addr, timeSpent, "READ_DRIVE", drivename,
                                            count, diskIOTime, elapsedTime);
             }
         }
@@ -672,10 +858,12 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     }
 
     int retryStatus = 0;
+    string drivename;
 
     for (vector<KfsOp *>::size_type i = 0; i < ops.size(); ++i) {
 	ReadOp *op = static_cast<ReadOp *> (ops[i]);
 	if (op->status < 0) {
+            drivename = op->drivename;
             if (NeedToRetryRead(op->status)) {
                 // preserve EIO so that we can avoid that server
                 if (retryStatus != -EIO)
@@ -690,8 +878,18 @@ KfsClientImpl::DoLargeReadFromServer(int fd, char *buf, size_t numBytes)
     }
 
     // If the op needs to be retried, pass that up
-    if (retryStatus != 0)
+    if (retryStatus != 0) {
         numIO = retryStatus;
+        if (retryStatus == -EIO) {
+            // Send telemetry about EIO errors
+            struct sockaddr_in saddr;
+
+            if (pos->GetPreferredServerAddr(saddr) == 0) {
+                mTelemetryReporter.publish(saddr.sin_addr, 10.0, "EIO", drivename,
+                                           0, NULL, NULL);
+            }
+        }
+    }
 
     return numIO;
 }
@@ -715,7 +913,8 @@ KfsClientImpl::DoPipelinedRead(int fd, vector<ReadOp *> &ops, TcpSocket *sock)
     bool leaseExpired = false;
 
     // plumb the pipe with 1MB
-    minOps = min((size_t) (MIN_BYTES_PIPELINE_IO / MAX_BYTES_PER_READ_IO), ops.size());
+    minOps = std::max(size_t(1),
+        min((size_t) (MIN_BYTES_PIPELINE_IO / MAX_BYTES_PER_READ_IO), ops.size()));
     // plumb the pipe with a few ops
     for (next = 0; next < minOps; ++next) {
         op = ops[next];
@@ -730,6 +929,7 @@ KfsClientImpl::DoPipelinedRead(int fd, vector<ReadOp *> &ops, TcpSocket *sock)
     // run the pipe: whenever one op finishes, queue another
     while (next < ops.size()) {
         struct timeval now;
+
 	op = ops[first];
 
 	res = DoOpResponse(op, sock);
@@ -743,11 +943,6 @@ KfsClientImpl::DoPipelinedRead(int fd, vector<ReadOp *> &ops, TcpSocket *sock)
 	++first;
 
 	op = ops[next];
-
-	if (!IsChunkLeaseGood(op->chunkId, mFileTable[fd]->pathname)) {
-	    leaseExpired = true;
-	    break;
-	}
 
         gettimeofday(&op->submitTime, NULL);
 

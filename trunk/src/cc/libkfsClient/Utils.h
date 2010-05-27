@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/08/31
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -37,8 +36,8 @@ namespace KFS {
 
 // we call this function by creating temporaries on the stack. to let
 // that thru, dont' stick in "&"
-extern std::string strip_dots(const std::string & path);
-extern std::string build_path(const std::string & cwd, const std::string & input);
+extern std::string strip_dots(std::string path);
+extern std::string build_path(std::string &cwd, const char *input);
 
 extern void GetTimeval(std::string &s, struct timeval &tv);
 // Introduce a delay for nsecs...i.e., sleep

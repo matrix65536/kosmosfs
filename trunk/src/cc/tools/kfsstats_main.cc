@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/07/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -41,7 +40,6 @@ using std::endl;
 #include "common/log.h"
 
 #include "MonUtils.h"
-#include "KfsToolsCommon.h"
 
 using namespace KFS;
 using namespace KFS_MON;
@@ -76,11 +74,10 @@ int main(int argc, char **argv)
     char optchar;
     bool help = false, meta = false, chunk = false;
     bool rpcStats = false, verboseLogging = false;
-    string serverHost = "";
+    const char *server = NULL;
     int port = -1, numSecs = 10;
 
-    KFS::tools::getEnvServer(serverHost, port);
-    
+
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hcmn:p:s:tv")) != -1) {
@@ -92,7 +89,7 @@ int main(int argc, char **argv)
                 chunk = true;
                 break;
             case 's':
-                KFS::tools::parseServer(optarg, serverHost, port);
+                server = optarg;
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -118,7 +115,7 @@ int main(int argc, char **argv)
 
     help = help || (!meta && !chunk);
 
-    if (help || (serverHost == "") || (port < 0)) {
+    if (help || (server == NULL) || (port < 0)) {
         cout << "Usage: " << argv[0] << " [-m|-c] -s <server name> -p <port>" 
              << " [-n <secs>] [-t] {-v}"  << endl;
         cout << "Use -m for metaserver and -c for chunk server" << endl;
@@ -127,12 +124,12 @@ int main(int argc, char **argv)
     }
 
     if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelDEBUG);
     } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelINFO);
     } 
 
-    ServerLocation location(serverHost, port);
+    ServerLocation location(server, port);
 
     if (meta)
         StatsMetaServer(location, rpcStats, numSecs);
@@ -208,6 +205,8 @@ RpcStatsMetaServer(TcpSocket &metaServerSock, int numSecs)
         PrintRpcStat("Number of Directories", op.stats);
         PrintRpcStat("Number of Files", op.stats);
         PrintRpcStat("Number of Chunks", op.stats);
+	PrintRpcStat("Number of Hits in Path->Fid Cache", op.stats);
+	PrintRpcStat("Number of Misses in Path->Fid Cache", op.stats);
 
         cout << "----------------------------------" << endl;
         if (numSecs == 0)
