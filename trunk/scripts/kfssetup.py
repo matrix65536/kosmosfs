@@ -60,10 +60,25 @@ from ConfigParser import ConfigParser
 #
 
 unitsScale = {'g' : 1 << 30, 'm' : 1 << 20, 'k' : 1 << 10, 'b' : 1}
-tarProg = 'gtar'
 maxConcurrent = 25
 chunkserversOnly = 0
+tarProg = 'gtar'
 md5String = ""
+
+def which(program):
+    import os
+    def is_exe(fpath):
+        return os.path.exists(fpath) and os.access(fpath, os.X_OK)
+    fpath, fname = os.path.split(program)
+    if fpath:
+        if is_exe(program):
+            return program
+    else:
+        for path in os.environ["PATH"].split(os.pathsep):
+            exe_file = os.path.join(path, program)
+            if is_exe(exe_file):
+                return exe_file
+    return None
 
 def setupMeta(section, config, outputFn, packageFn):
     """ Setup the metaserver binaries/config files on a node. """
@@ -444,6 +459,12 @@ if __name__ == '__main__':
             upgrade = 1
         elif o in ("-s", "--serialMode"):
             serialMode = 1
+
+    if not which(tarProg):
+        if (which('gtar')):
+            tarProg = 'gtar'
+        else:
+            tarProg = 'tar'
 
     if not os.path.exists(filename):
         print "%s : directory doesn't exist\n" % filename
