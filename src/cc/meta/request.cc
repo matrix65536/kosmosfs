@@ -1820,6 +1820,13 @@ MetaChunkReplicationCheck::log(ofstream &file) const
 int
 MetaLogMakeChunkStable::log(ofstream &file) const
 {
+	if (chunkVersion < 0) {
+		KFS_LOG_STREAM_WARN << "invalid chunk version ignoring: " <<
+			Show() <<
+		KFS_LOG_EOM;
+		return 0;
+	}
+
 	file << "mkstable"         <<
 			(op == META_LOG_MAKE_CHUNK_STABLE ? "" : "done") <<
 		"/fileId/"         << fid <<
