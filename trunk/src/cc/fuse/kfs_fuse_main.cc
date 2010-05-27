@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/11/01
-// Author: Blake Lewis (Kosmix Corp.)
 //
 // Copyright 2006 Kosmix Corp.
 //

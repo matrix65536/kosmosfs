@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/08/01
-// Author: Blake Lewis (Kosmix Corp.) 
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.

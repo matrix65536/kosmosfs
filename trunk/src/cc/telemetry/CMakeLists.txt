@@ -2,7 +2,6 @@
 # $Id$
 #
 # Created 2008/09/13
-# Author: Sriram Rao (Quantcast Corp)
 #
 # Copyright 2008 Quantcast Corporation.
 #
