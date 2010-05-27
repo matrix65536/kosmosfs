@@ -142,6 +142,17 @@ while true
   shift
 done
 
+# try user's suggestion, then try gtar then tar
+if which $tarProg > /dev/null]; then
+    $tarProg=$tarProg
+else
+  if which "gtar" > /dev/null; then
+    tarProg="gtar"
+  else
+    tarProg="tar"
+  fi
+fi
+
 case $mode in
     "install")
 	installServer

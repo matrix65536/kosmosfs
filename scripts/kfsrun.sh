@@ -51,6 +51,7 @@ startServer()
 	exit -1
     fi
     echo "Starting $server..."
+    export LD_LIBRARY_PATH=`pwd`/lib:$LD_LIBRARY_PATH
     bin/$server $config $SERVER_LOG_FILE > /dev/null 2>&1 &
     echo $! > $SERVER_PID_FILE
 
@@ -86,7 +87,7 @@ startServer()
 
 stopServer()
 {
-    echo -n $"Stopping $PROG: "
+    echo -n "Stopping $PROG: "
 
     if [ ! -e $PID_FILE ]; 
 	then
