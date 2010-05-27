@@ -26,6 +26,7 @@
 #ifndef _LIBIO_NETCONNECTION_H
 #define _LIBIO_NETCONNECTION_H
 
+#include <stdio.h>
 #include "KfsCallbackObj.h"
 #include "Event.h"
 #include "IOBuffer.h"

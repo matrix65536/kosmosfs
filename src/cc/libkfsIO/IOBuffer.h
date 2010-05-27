@@ -26,6 +26,7 @@
 #ifndef _LIBIO_IOBUFFER_H
 #define _LIBIO_IOBUFFER_H
 
+#include <stdio.h>
 #include <cassert>
 #include <list>
 #include <exception>

@@ -27,6 +27,7 @@
 #ifndef COMMON_PROPERTIES_H
 #define COMMON_PROPERTIES_H
   
+#include <stdint.h>
 #include <istream>
 #include <string>
 #include <map>
