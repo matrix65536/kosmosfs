@@ -144,7 +144,7 @@ directories made.  The setup script requires two arguments:
    ii) path to the bin directory containing the metaserver/chunkserver
    binaries, namely, ~/code/kfs/build/bin, type the following:
 
- python kfssetup.py -f machines.cfg -b ../build/bin
+ python kfssetup.py -f machines.cfg -b ../build -w ../webui
 
 The setup script does the following steps:
  - It creates a kfspkg.tgz comprising of the appropriate binary
