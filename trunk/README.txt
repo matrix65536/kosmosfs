@@ -23,7 +23,6 @@
 #
 # Sriram Rao
 # Quantcast Corp.
-# (srao at quantcast dot com)
 
 =================
 
