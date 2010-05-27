@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/11/11
-// Author: Mike Ovsiannikov
 //
 // Copyright 2008,2009 Quantcast Corp.
 //
@@ -1232,6 +1231,8 @@ QCDiskQueue::ToString(
         case kErrorBlockIdxOutOfRange:   return "block index out of range";
         case kErrorBlockCountOutOfRange: return "block count out of range";
         case kErrorOutOfRequests:        return "out of requests";
+        case kErrorOpen:                 return "open";
+        case kErrorClose:                return "close";
         case kErrorHasPendingRequests:   return "has pending requests";
         case kErrorSpaceAlloc:           return "space allocation";
         default:                         return "invalid error code";

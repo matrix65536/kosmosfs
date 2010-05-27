@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/05
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -27,36 +26,154 @@
 //
 //----------------------------------------------------------------------------
 
-
 #include "ClientSM.h"
 #include "ChunkServer.h"
 #include "util.h"
-using namespace KFS;
+#include "common/kfstypes.h"
+#include "libkfsIO/Globals.h"
+#include "common/log.h"
+#include "common/properties.h"
 
 #include <string>
 #include <sstream>
+#include <algorithm>
+#include <sys/resource.h>
+
+using namespace KFS;
+
+using std::max;
 using std::string;
 using std::ostringstream;
 
-#include "common/log.h"
-#include <boost/scoped_array.hpp>
-using boost::scoped_array;
 
-ClientSM::ClientSM(NetConnectionPtr &conn) : mNetConnection(conn), mOp(NULL)
+inline std::string
+PeerName(NetConnectionPtr conn)
 {
-	mClientIP = mNetConnection->GetPeerName();
+    return (conn ? conn->GetPeerName() : string("unknown"));
+}
+
+template<typename LIST> inline static void
+DeleteAll(LIST& list)
+{
+	LIST del;
+	del.swap(list);
+	while (! del.empty()) {
+		typename LIST::value_type const elem = del.front();
+		del.pop_front();
+		delete elem;
+	}
+}
+
+int ClientSM::sMaxPendingLength   = 16;
+int ClientSM::sMaxReadAhead       = 3 << 10;
+int ClientSM::sInactivityTimeout  = 8 * 60;
+int ClientSM::sMaxWriteBehind     = 3 << 10;
+
+/* static */ void
+ClientSM::SetParameters(const Properties& prop)
+{
+	sMaxPendingLength = max(1, prop.getValue(
+		"metaServer.clientSM.maxPendingLength",
+		sMaxPendingLength));
+	sMaxReadAhead = max(1 << 10, prop.getValue(
+		"metaServer.clientSM.maxReadAhead",
+		sMaxReadAhead));
+	sInactivityTimeout = prop.getValue(
+		"metaServer.clientSM.inactivityTimeout",
+		sInactivityTimeout);
+	sMaxWriteBehind = prop.getValue(
+		"metaServer.clientSM.maxWriteBehind",
+		sMaxWriteBehind);
+}
+
+ClientSM::ClientSM(NetConnectionPtr &conn)
+    : mNetConnection(conn),
+      mOp(0),
+      mPending(),
+      mPendingLength(0),
+      mRecursionCnt(0),
+      mClientProtoVers(KFS_CLIENT_PROTO_VERS)
+{
+	mNetConnection->SetInactivityTimeout(sInactivityTimeout);
+        mNetConnection->SetMaxReadAhead(sMaxReadAhead);
 	SET_HANDLER(this, &ClientSM::HandleRequest);
 }
 
 ClientSM::~ClientSM()
 {
 	delete mOp;
-	while (!mPending.empty()) {
-		mOp = mPending.front();
-		mPending.pop_front();
-		delete mOp;
-	}
+	DeleteAll(mPending);
 }
+
+static class RequestStatsGatherer
+{
+public:
+	enum { kStatsIntervalSec = 20 };
+
+	RequestStatsGatherer()
+		: mNextTime(0),
+		  mTotal()
+		{}
+	void OpDone(const MetaRequest& op)
+	{
+		const int idx = (op.op < 0 || op.op >= (int)kOtherReqId) ?
+			(int)kOtherReqId :
+			((op.op == META_ALLOCATE &&
+				! static_cast<const MetaAllocate&>(op).logFlag) ?
+			(int)kReqTypeAllocNoLog : (int)op.op);
+		mTotal.mCnt++;
+		mRequest[idx].mCnt++;
+		if (op.status < 0) {
+			mTotal.mErr++;
+			mRequest[idx].mErr++;
+		}
+		const time_t now = libkfsio::globalNetManager().Now();
+		if (now < mNextTime) {
+			return;
+		}
+		struct rusage ru;
+                if (getrusage(RUSAGE_SELF, &ru)) {
+			ru.ru_utime.tv_sec  = -1;
+			ru.ru_utime.tv_usec = -1;
+			ru.ru_stime.tv_sec  = -1;
+			ru.ru_stime.tv_usec = -1;
+		}
+		mNextTime = now + kStatsIntervalSec;
+		ostringstream os;
+		const char* kDelim = " ";
+		os << "===request=counters:" <<
+			kDelim << MicorSecs(ru.ru_utime) <<
+			kDelim << MicorSecs(ru.ru_stime) <<
+			kDelim << mTotal.mCnt <<
+			kDelim << mTotal.mErr
+		;
+		for (int i = 0; i < kReqTypesCnt; i++) {
+			os << kDelim << mRequest[i].mCnt <<
+				kDelim << mRequest[i].mErr;
+		}
+		KFS_LOG_INFO(os.str().c_str());
+	}
+private:
+        enum
+	{
+		kOtherReqId        = META_NUM_OPS_COUNT + 1,
+		kReqTypeAllocNoLog = kOtherReqId + 1,
+		kReqTypesCnt       = kReqTypeAllocNoLog + 1
+	};
+	struct Counter {
+		Counter()
+			: mCnt(0),
+			  mErr(0)
+			{}
+		int64_t mCnt;
+		int64_t mErr;
+	};
+	static int64_t MicorSecs(const struct timeval& tv)
+		{ return (tv.tv_sec * 1000000 + tv.tv_usec); }
+	time_t  mNextTime;
+	Counter mTotal;
+	Counter mRequest[kReqTypesCnt];
+} sReqStatsGatherer;
 
 ///
 /// Send out the response to the client request.  The response is
@@ -66,28 +183,24 @@ ClientSM::~ClientSM()
 void
 ClientSM::SendResponse(MetaRequest *op)
 {
+	if ((op->op == META_ALLOCATE && (op->status < 0 ||
+			static_cast<const MetaAllocate*>(op)->logFlag)) ||
+			MsgLogger::GetLogger()->IsLogLevelEnabled(
+				MsgLogger::kLogLevelDEBUG)) {
+		// for chunk allocations, for debugging purposes, need to know
+		// where the chunk was placed.
+        	KFS_LOG_STREAM_INFO << PeerName(mNetConnection) <<
+            		" -seq: "   << op->opSeqno <<
+            		" status: " << op->status <<
+            		(op->statusMsg.empty() ? "" : " msg: ") << op->statusMsg <<
+            		" "         << op->Show() <<
+        	KFS_LOG_EOM; 
+	}
+	sReqStatsGatherer.OpDone(*op);
 	IOBuffer::OStream os;
-
 	op->response(os);
-
-	if (op->op == META_ALLOCATE) {
-		MetaAllocate *alloc = static_cast<MetaAllocate *>(op);
-		ostringstream o;
-
-		o << "alloc: " << alloc->chunkId << ' ' << alloc->chunkVersion << ' ';	 
-
-		for (uint32_t i = 0; i < alloc->servers.size(); i++) {
-			o << alloc->servers[i]->ServerID() << ' ';
-		}
-		KFS_LOG_VA_DEBUG("Client = %s, Allocate: %s", mClientIP.c_str(), o.str().c_str());
-	}
-
-	if (op->op != META_LOOKUP) {
-		KFS_LOG_VA_INFO("Client = %s, Command %s, Status: %d", 
-				mClientIP.c_str(), op->Show().c_str(), op->status);
-	}
-
 	mNetConnection->Write(&os);
+        mNetConnection->StartFlush();
 }
 
 ///
@@ -102,9 +215,11 @@ int
 ClientSM::HandleRequest(int code, void *data)
 {
 	IOBuffer *iobuf;
-	MetaRequest *op;
 	int cmdLen;
         int hdrsz;
+
+        assert(mRecursionCnt >= 0);
+        mRecursionCnt++;
 
 	switch (code) {
 	case EVENT_NET_READ:
@@ -115,48 +230,61 @@ ClientSM::HandleRequest(int code, void *data)
                     HandleClientCmd(iobuf, cmdLen);
                 }
                 if ((hdrsz = iobuf->BytesConsumable()) > MAX_RPC_HEADER_LEN) {
-                    KFS_LOG_VA_ERROR("exceeded max request header size: %d > %d,"
-                        " closing connection\n", (int)hdrsz, (int)MAX_RPC_HEADER_LEN);
+                    KFS_LOG_STREAM_ERROR << PeerName(mNetConnection) <<
+                        " exceeded max request header size: " << hdrsz <<
+                        " > " << MAX_RPC_HEADER_LEN <<
+                        " closing connection" <<
+                    KFS_LOG_EOM;
                     iobuf->Clear();
                     HandleRequest(EVENT_NET_ERROR, NULL);
                 }
 		break;
 
-	case EVENT_NET_WROTE:
-		// Something went out on the network.  For now, we don't
-		// track it. Later, we may use it for tracking throttling
-		// and such.
-		break;
-
 	case EVENT_CMD_DONE:
-		op = (MetaRequest *) data;
-		assert(op == mOp);
-		SendResponse(op);
+		assert(data && data == mOp);
+		SendResponse(mOp);
 		delete mOp;
-		mOp = NULL;
-		if (!mPending.empty()) {
+		mOp = 0;
+		// Fall through.
+	case EVENT_NET_WROTE:
+		// Something went out on the network.
+		// Do not start new op if response does not get unloaded by
+		// the client to prevent out of buffers.
+		if (! mOp &&
+			! mPending.empty() &&
+			(! mNetConnection ||
+				mNetConnection->GetNumBytesToWrite() <
+				sMaxWriteBehind)) {
 			mOp = mPending.front();
 			mPending.pop_front();
 			SubmitOp();
 		}
 		break;
 
+	case EVENT_INACTIVITY_TIMEOUT:
 	case EVENT_NET_ERROR:
-		// KFS_LOG_VA_DEBUG("Closing connection");
-
-		if (mNetConnection)
+		KFS_LOG_STREAM_DEBUG << PeerName(mNetConnection) <<
+			" closing connection" <<
+		KFS_LOG_EOM;
+		if (mNetConnection) {
 			mNetConnection->Close();
-
-		SET_HANDLER(this, &ClientSM::HandleTerminate);
-		if (mOp == NULL)
-			delete this;
-
+		}
 		break;
 
 	default:
 		assert(!"Unknown event");
-		return -1;
+		break;
 	}
+
+	assert(mRecursionCnt > 0);
+	if (--mRecursionCnt <= 0 &&
+			(! mNetConnection || ! mNetConnection->IsGood())) {
+		if (mOp) {
+			SET_HANDLER(this, &ClientSM::HandleTerminate);
+		} else {
+			delete this;
+		}
+        }
 	return 0;
 }
 
@@ -199,49 +327,57 @@ void
 ClientSM::HandleClientCmd(IOBuffer *iobuf, int cmdLen)
 {
 	MetaRequest *op;
-
-	if (mClientIP.empty()) {
-            mClientIP = mNetConnection->GetPeerName();
-        }
         IOBuffer::IStream is(*iobuf, cmdLen);
 	if (ParseCommand(is, &op) != 0) {
-            is.Rewind(cmdLen);
-            char buf[128];
-            while (is.getline(buf, sizeof(buf))) {
-		KFS_LOG_VA_DEBUG("client = %s Aye?: %s", mClientIP.c_str(), buf);
-            }
-	    // got a bogus command
-	    iobuf->Consume(cmdLen);
-	    return;
+		is.Rewind(cmdLen);
+		char buf[128];
+		while (is.getline(buf, sizeof(buf))) {
+			KFS_LOG_STREAM_ERROR << PeerName(mNetConnection) <<
+				" invalid request: " << buf <<
+			KFS_LOG_EOM;
+		}
+		iobuf->Clear();
+		HandleRequest(EVENT_NET_ERROR, NULL);
+		return;
 	}
-
+	if (op->clientProtoVers != mClientProtoVers) {
+		mClientProtoVers = op->clientProtoVers;
+		KFS_LOG_STREAM_WARN << PeerName(mNetConnection) <<
+			" Command with old protocol version: " <<
+			op->clientProtoVers << ' ' << op->Show() << KFS_LOG_EOM;
+	}
 	// Command is ready to be pushed down.  So remove the cmd from the buffer.
 	iobuf->Consume(cmdLen);
-
-	if (mOp != NULL) {
+	KFS_LOG_STREAM_DEBUG << PeerName(mNetConnection) <<
+		" "       << mPendingLength <<
+            	" +seq: " << op->opSeqno <<
+		" "       << op->Show() <<
+	KFS_LOG_EOM;
+	mPendingLength++;
+	if (mOp || (mNetConnection &&
+			mNetConnection->GetNumBytesToWrite() >=
+			sMaxWriteBehind)) {
+        	if (mPendingLength >= sMaxPendingLength && mNetConnection) {
+			mNetConnection->SetMaxReadAhead(0);
+        	}
 		mPending.push_back(op);
 		return;
 	}
-
 	mOp = op;
-
 	SubmitOp();
 }
 
 void
 ClientSM::SubmitOp()
 {
-	
-	KFS_LOG_VA_DEBUG("Got command: %s", mOp->Show().c_str());
-
-	if (mOp->op == META_ALLOCATE) {
-		KFS_LOG_VA_INFO("Got allocate: %s", mOp->Show().c_str());
-	}
-	else if (mOp->op == META_GETLAYOUT) {
-		KFS_LOG_VA_INFO("Client = %s, Command %s",
-				mClientIP.c_str(), mOp->Show().c_str());
-	}
-
+	mPendingLength--;
+        if (mPendingLength < sMaxPendingLength && mNetConnection) {
+		mNetConnection->SetMaxReadAhead(sMaxReadAhead);
+        }
+	KFS_LOG_STREAM_DEBUG << PeerName(mNetConnection) <<
+            	" submit: seq: " << mOp->opSeqno <<
+		" pending: "     << mPendingLength <<
+	KFS_LOG_EOM;
 	mOp->clnt = this;
 	// send it on its merry way
 	submit_request(mOp);

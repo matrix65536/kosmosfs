@@ -1,5 +1,5 @@
 #
-# $Id:  $
+# $Id$
 #
 # Created 2008/12/11
 # Author: Mike Ovsiannikov
@@ -45,11 +45,6 @@ set_target_properties (qcdio-shared PROPERTIES OUTPUT_NAME "qcdio")
 set_target_properties (qcdio PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties (qcdio-shared PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-#add_dependencies (qcdio kfsCommon kfsIO)
-# get everthing into one
-#target_link_libraries (qcdio kfsCommon kfsIO)
-#target_link_libraries (qcdio-shared kfsCommon-shared kfsIO-shared)
-#
 install (TARGETS qcdio qcdio-shared
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib/static)

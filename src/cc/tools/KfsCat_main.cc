@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/10/28
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -34,8 +33,6 @@
 #include <fstream>
 #include "libkfsClient/KfsClient.h"
 
-#include "KfsToolsCommon.h"
-
 using std::cout;
 using std::endl;
 using std::ifstream;
@@ -54,8 +51,6 @@ main(int argc, char **argv)
     bool verboseLogging = false;
     char optchar;
 
-    getEnvServer(serverHost, port);
-    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hs:p:v")) != -1) {
@@ -67,7 +62,7 @@ main(int argc, char **argv)
                 verboseLogging = true;
                 break;
             case 's':
-                parseServer(optarg, serverHost, port);
+                serverHost = optarg;
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -86,9 +81,9 @@ main(int argc, char **argv)
     }
 
     if (verboseLogging) {
-	KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+	KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelDEBUG);
     } else {
-	KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+	KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelINFO);
     } 
 
     gKfsClient = KfsClient::Instance();
@@ -116,8 +111,8 @@ DoCat(const char *pathname)
     const int mByte = 1024 * 1024;
     char dataBuf[mByte];
     int res, fd;    
-    kfsOff_t bytesRead = 0;
-    KfsFileStat statBuf;
+    size_t bytesRead = 0;
+    struct stat statBuf;
 
     fd = gKfsClient->Open(pathname, O_RDONLY);
     if (fd < 0) {
@@ -133,7 +128,7 @@ DoCat(const char *pathname)
             break;
         cout << dataBuf;
         bytesRead += res;
-        if (bytesRead >= statBuf.size)
+        if (bytesRead >= (size_t) statBuf.st_size)
             break;
     }
     gKfsClient->Close(fd);

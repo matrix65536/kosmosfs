@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/28
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -36,6 +35,7 @@ ClientManager::StartAcceptor(int port)
 {
     mAcceptor = new Acceptor(port, this);
     if (!mAcceptor->IsAcceptorStarted()) {
-        die("Unable to start acceptor!");
+        KFS_LOG_FATAL("Unable to start acceptor!");
+        exit(-1);
     }
 }

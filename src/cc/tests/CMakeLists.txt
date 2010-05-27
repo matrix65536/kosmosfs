@@ -27,6 +27,7 @@ KfsDataGen
 KfsDirFileTester
 KfsPerfReader
 KfsPerfWriter
+KfsRecordAppend
 KfsReader
 KfsSeekWrite
 KfsTrunc
@@ -34,6 +35,7 @@ KfsWriter
 KfsDirScanTest
 mkfstree
 KfsRW
+KfsLogTest
 )
 
 #

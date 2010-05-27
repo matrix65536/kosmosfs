@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/10/30
-// Author: Mike Ovsiannikov
 //
 // Copyright 2008,2009 Quantcast Corp.
 //
@@ -67,10 +66,6 @@ QCMutex::QCMutex()
     pthread_mutexattr_t theAttr;
     if ((theErr = pthread_mutexattr_init(&theAttr)) != 0) {
         RaiseError("QCMutex: pthread_mutex_attr_init", theErr);
-    }
-    if ((theErr = pthread_mutexattr_settype(
-            &theAttr, PTHREAD_MUTEX_RECURSIVE)) != 0) {
-        RaiseError("QCMutex: pthread_mutexattr_settype", theErr);
     }
     if ((theErr = pthread_mutexattr_settype(
             &theAttr, PTHREAD_MUTEX_RECURSIVE)) != 0) {
@@ -149,6 +144,7 @@ QCCondVar::Wait(
     inMutex.Unlocked();
     theErr = pthread_cond_timedwait(&mCond, &inMutex.mMutex, &theAbsTimeout);
     if (theErr == ETIMEDOUT) {
+        inMutex.Locked(0);
         return false;
     }
     if (theErr != 0) {

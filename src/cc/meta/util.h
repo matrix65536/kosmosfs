@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file util.h
  * \brief miscellaneous metadata server code
@@ -48,7 +48,7 @@ extern void warn(const string s, bool use_perror);
 extern void panic(const string s, bool use_perror);
 
 extern void sendtime(ostream &os, const string &prefix, 
-		     struct timeval &t, const string &suffix);
+		     const struct timeval &t, const string &suffix);
 
 extern string timeToStr(time_t val);
 

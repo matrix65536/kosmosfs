@@ -1,10 +1,9 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // \brief Common declarations of KFS structures
 //
 // Created 2006/10/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -58,6 +57,10 @@ struct ServerLocation {
     }
     bool operator != (const ServerLocation &other) const {
 	return hostname != other.hostname || port != other.port;
+    }
+    bool operator < (const ServerLocation &other) const {
+	const int res = hostname.compare(other.hostname);
+        return (res < 0 || (res == 0 && port < other.port));
     }
     bool IsValid() const {
 	// Hostname better be non-null and port better

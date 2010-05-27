@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2009/03/11
-// Author: Mike Ovsiannikov
 //
 // Copyright 2008,2009 Quantcast Corp.
 //
@@ -23,12 +22,10 @@
 // 
 //----------------------------------------------------------------------------
 
-#ifndef FDPOLL_H
-#define FDPOLL_H
+#ifndef QCFDPOLL_H
+#define QCFDPOLL_H
 
-namespace KFS
-{
-class FdPoll
+class QCFdPoll
 {
 public:
     enum OpType
@@ -42,8 +39,8 @@ public:
     };
     typedef int Fd;
 
-    FdPoll();
-    ~FdPoll();
+    QCFdPoll();
+    ~QCFdPoll();
     int Add(
         Fd    inFd,
         int   inOpType,
@@ -77,8 +74,10 @@ private:
     Impl& mImpl;
 
 private:
-    FdPoll(const FdPoll& inPoll);
-    FdPoll operator=(const FdPoll& inPoll);
+    QCFdPoll(
+        const QCFdPoll& inPoll);
+    QCFdPoll operator=(
+        const QCFdPoll& inPoll);
 };
-}
-#endif /* FDPOLL_H */
+
+#endif /* QCFDPOLL_H */

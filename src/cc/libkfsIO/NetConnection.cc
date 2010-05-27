@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/14
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -24,36 +23,46 @@
 // 
 //----------------------------------------------------------------------------
 
+#include <cerrno>
 #include "Globals.h"
 #include "NetConnection.h"
+#include "common/log.h"
 #include "qcdio/qcutils.h"
 
 using namespace KFS;
 using namespace KFS::libkfsio;
 
+#ifndef NET_CONNECTION_LOG_STREAM_DEBUG
+#define NET_CONNECTION_LOG_STREAM_DEBUG \
+    KFS_LOG_STREAM_DEBUG << "netconn: " << (mSock ? mSock->GetFd() : -1) << " "
+#endif
+
 void NetConnection::HandleReadEvent()
 {
     if (! IsGood()) {
-        KFS_LOG_DEBUG("Read event ignored: socket closed");
+        NET_CONNECTION_LOG_STREAM_DEBUG << "read event ignored: fd closed" <<
+        KFS_LOG_EOM;
     } else if (mListenOnly) {
         TcpSocket* const sock = mSock->Accept();
-#ifdef DEBUG
-        if (sock == NULL) {
-            KFS_LOG_VA_DEBUG("# of open-fd's: disk=%d, net=%d",
-                             globals().ctrOpenDiskFds.GetValue(),
-                             globals().ctrOpenNetFds.GetValue());
-        }
-#endif
         if (sock) {
-            NetConnectionPtr conn(new NetConnection(sock, NULL));
+            NetConnectionPtr conn(new NetConnection(sock, 0));
             conn->mTryWrite = true; // Should be connected, and good to write.
-            mCallbackObj->HandleEvent(EVENT_NEW_CONNECTION, (void *) &conn);
+            mCallbackObj->HandleEvent(EVENT_NEW_CONNECTION, (void*)&conn);
             conn->Update();
+        } else {
+            NET_CONNECTION_LOG_STREAM_DEBUG <<
+                " accept failure: " << QCUtils::SysError(errno) << 
+                " open fd:"
+                " net: "  << globals().ctrOpenDiskFds.GetValue() <<
+                " disk: " << globals().ctrOpenNetFds.GetValue() <<
+            KFS_LOG_EOM;
         }
     } else if (IsReadReady()) {
         const int nread = mInBuffer.Read(mSock->GetFd(), maxReadAhead);
-        if (nread == 0) {
-            KFS_LOG_DEBUG("Read 0 bytes...connection dropped");
+        if (nread <= 0 && nread != -EAGAIN && nread != -EINTR) {
+            NET_CONNECTION_LOG_STREAM_DEBUG <<
+                "read: " << (nread == 0 ? "EOF" : QCUtils::SysError(-nread)) <<
+            KFS_LOG_EOM;
             mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
         } else if (nread > 0) {
             mCallbackObj->HandleEvent(EVENT_NET_READ, (void *)&mInBuffer);
@@ -64,37 +73,45 @@ void NetConnection::HandleReadEvent()
 
 void NetConnection::HandleWriteEvent()
 {
-    if (IsWriteReady() && IsGood()) {
-        const int nwrote = mOutBuffer.Write(mSock->GetFd());
-        if (nwrote <= 0 && nwrote != -EAGAIN && nwrote != -EINTR) {
-            std::string const msg = QCUtils::SysError(-nwrote);
-            KFS_LOG_VA_DEBUG("Wrote 0 bytes...connection dropped, error: %d",
-                -nwrote, msg.c_str());
+    const bool wasConnectPending = mNetManagerEntry.IsConnectPending();
+    mNetManagerEntry.SetConnectPending(false);
+    int nwrote = 0;
+    if (IsGood()) {
+        nwrote = IsWriteReady() ? mOutBuffer.Write(mSock->GetFd()) : 0;
+        if (nwrote < 0 && nwrote != -EAGAIN && nwrote != -EINTR) {
+            NET_CONNECTION_LOG_STREAM_DEBUG <<
+                "write: error: " << QCUtils::SysError(-nwrote) <<
+            KFS_LOG_EOM;
             mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
-        } else if (nwrote > 0) {
+        } else if (nwrote > 0 || wasConnectPending) {
             mCallbackObj->HandleEvent(EVENT_NET_WROTE, (void *)&mOutBuffer);
         }
-        mTryWrite = mOutBuffer.IsEmpty();
     }
-    mNetManagerEntry.SetConnectPending(false);
-    Update();
+    mTryWrite = mOutBuffer.IsEmpty();
+    Update(nwrote != 0);
 }
 
 void NetConnection::HandleErrorEvent()
 {
-    KFS_LOG_DEBUG("Got an error on socket.  Closing connection");
-    Close();
+    NET_CONNECTION_LOG_STREAM_DEBUG << "connection error, closing" <<
+    KFS_LOG_EOM;
     mCallbackObj->HandleEvent(EVENT_NET_ERROR, NULL);
-    Update();
+    Close();
 }
 
 void NetConnection::HandleTimeoutEvent()
 {
     const int timeOut = GetInactivityTimeout();
     if (timeOut < 0) {
-        KFS_LOG_VA_DEBUG("Ignoring timeout event, time out value: %d", timeOut);
+        NET_CONNECTION_LOG_STREAM_DEBUG <<
+            "ignoring timeout event, time out value: " << timeOut <<
+        KFS_LOG_EOM;
     } else {
-        KFS_LOG_DEBUG("No activity on socket...returning error");
+        NET_CONNECTION_LOG_STREAM_DEBUG << "inactivity timeout:" <<
+            " read-ahead: " << maxReadAhead <<
+            " in: "  << mInBuffer.BytesConsumable() <<
+            " out: " << mOutBuffer.BytesConsumable() <<
+        KFS_LOG_EOM;
         mCallbackObj->HandleEvent(EVENT_INACTIVITY_TIMEOUT, NULL);
     }
     Update();
@@ -102,12 +119,6 @@ void NetConnection::HandleTimeoutEvent()
 
 void NetConnection::Update(bool resetTimer)
 {
-    KFS::libkfsio::globals().netManager.Update(mNetManagerEntry,
-        IsGood() ? mSock->GetFd() : -1, resetTimer);
-}
-
-NetConnection::NetManagerEntry* NetConnection::GetNetMangerEntry(NetManager& manager)
-{
-    assert(&manager == &KFS::libkfsio::globals().netManager);
-    return &mNetManagerEntry;
+    NetManager::Update(
+        mNetManagerEntry, IsGood() ? mSock->GetFd() : -1, resetTimer);
 }

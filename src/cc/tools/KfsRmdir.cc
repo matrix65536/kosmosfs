@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/09/21
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -56,5 +55,5 @@ KFS::tools::handleRmdir(const vector<string> &args)
         return 0;
     }
 
-    return doRmdir(args[0]);
+    return doRmdir(args[0].c_str());
 }

@@ -28,7 +28,7 @@
 #define META_CHILDPROCESSTRACKER_H
 
 #include "libkfsIO/ITimeout.h"
-#include <list>
+#include <map>
 #include <utility>
 #include <sys/wait.h>
 
@@ -38,21 +38,19 @@ namespace KFS
 
 	class ChildProcessTrackingTimer : public ITimeout {
 	public:
-		ChildProcessTrackingTimer(int timeout = 60) {
-			// check child process status once a min.
-			SetTimeoutInterval(timeout * 1000);
+		ChildProcessTrackingTimer(int timeoutMilliSec = 500) {
+			SetTimeoutInterval(timeoutMilliSec);
 		};
 		// On a timeout check the child processes for exit status
-		void Timeout();
+		virtual void Timeout();
 		// track the process with pid and return the exit status to MetaRequest
 		void Track(pid_t pid, MetaRequest *r);
 	private:
-		std::list<std::pair<pid_t, MetaRequest *> > mPending;
+		typedef std::multimap<pid_t, MetaRequest *> Pending;
+		Pending mPending;
 	};
 
 	extern ChildProcessTrackingTimer gChildProcessTracker;
-
-	void ChildProcessTrackerInit();
 }
 
 #endif // META_CHILDPROCESSTRACKER_H

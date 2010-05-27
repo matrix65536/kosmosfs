@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/09/14
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corporation.  All rights reserved.
 //
@@ -152,8 +151,10 @@ TelemetryClient::publish(struct in_addr &target, double timetaken, string opname
     int len = std::min(MSG_LEN, (int) msg.size());
 
     tpkt.count = count;
-    memcpy(tpkt.diskIOTime, diskIOTime, sizeof(double) * count);
-    memcpy(tpkt.elapsedTime, elapsedTime, sizeof(double) * count);
+    if (count > 0) {
+        memcpy(tpkt.diskIOTime, diskIOTime, sizeof(double) * count);
+        memcpy(tpkt.elapsedTime, elapsedTime, sizeof(double) * count);
+    }
     if (len > 0)
         strncpy(tpkt.msg, msg.c_str(), len);
     tpkt.msg[len] = '\0';

@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
 // $Id$
 //
-// Created 2006/10/28
-// Author: Sriram Rao
+// Created 2008/12/15
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -48,20 +47,20 @@ using namespace KFS;
 int
 KFS::tools::handleFstat(const vector<string> &args)
 {
-    if ((args.size() == 0) || ((args.size() >= 1) && (args[0] == "--help"))) {
+    if ((args.size() >= 1) && (args[0] == "--help")) {
         cout << "Usage: stat {<path>} " << endl;
         return 0;
     }
 
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
-    KfsFileStat statInfo;
-    kfsClient->Stat(args[0], statInfo);
+    struct stat statInfo;
+    kfsClient->Stat(args[0].c_str(), statInfo);
 
     cout << "File: " << args[0] << endl;
-    cout << "ctime: " << statInfo.ctime << endl;
-    cout << "mtime: " << statInfo.mtime << endl;
-    cout << "Size: " << statInfo.size << endl;
+    cout << "ctime: " << statInfo.st_ctime << endl;
+    cout << "mtime: " << statInfo.st_mtime << endl;
+    cout << "Size: " << statInfo.st_size << endl;
 
     return 0;
 }

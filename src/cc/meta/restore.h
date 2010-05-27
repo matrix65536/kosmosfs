@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file restore.h
  * \brief rebuild metatree from saved checkpoint
@@ -53,6 +53,14 @@ public:
 };
 
 extern bool restore_chunkVersionInc(deque <string> &c);
+
+/* 
+ * Whenever a checkpoint file is loaded in, it takes up a ton of memory.
+ * To prevent logcompactor from stomping over a filechecker or filelister or
+ * vice-versa, all of these tools acquire a lock file before loading the
+ * checkpoint.
+ */
+extern void acquire_lockfile(const string &lockfn, int ntries);
 
 }
 #endif // !defined(KFS_RESTORE_H)

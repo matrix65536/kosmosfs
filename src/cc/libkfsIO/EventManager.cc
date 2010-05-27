@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/31
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -43,6 +42,7 @@ EventManager::~EventManager()
         mSlots[i].clear();
 
     mLongtermEvents.clear();
+    delete mEventManagerTimeoutImpl;
 }
 
 void
@@ -50,7 +50,7 @@ EventManager::Init()
 {
     // The event manager schedules events at 10ms granularity.
     mEventManagerTimeoutImpl->SetTimeoutInterval(EVENT_GRANULARITY_MS);
-    globals().netManager.RegisterTimeoutHandler(mEventManagerTimeoutImpl);
+    globalNetManager().RegisterTimeoutHandler(mEventManagerTimeoutImpl);
 }
 
 void EventManager::Schedule(EventPtr &event, int afterMs)

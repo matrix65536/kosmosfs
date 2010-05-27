@@ -3,7 +3,6 @@
 //
 // Created 2007/09/26
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.
@@ -59,9 +58,10 @@ namespace KFS
         int handlePing(const std::vector<std::string> &args);
         int handleRm(const std::vector<std::string> &args);    
         int handlePwd(const std::vector<std::string> &args);
+        int handleAppend(const std::vector<std::string> &args);
         // utility functions
-        int doMkdirs(const std::string & path);
-        int doRmdir(const std::string & dirname);
+        int doMkdirs(const char *path);
+        int doRmdir(const char *dirname);
         void GetPathComponents(const std::string &path, 
                                std::string &parent, std::string &name);
 

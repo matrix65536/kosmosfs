@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/05
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -44,6 +43,7 @@ using std::ostringstream;
 
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
+#include <boost/pool/pool_alloc.hpp> 
 
 #include <time.h>
 
@@ -67,6 +67,9 @@ namespace KFS
         class ChunkServer : public KfsCallbackObj,
 		public boost::enable_shared_from_this<ChunkServer> {
         public:
+		typedef std::set <chunkId_t, std::less<chunkId_t>,
+        	    boost::fast_pool_allocator<chunkId_t>
+        	> ChunkIdSet;
                 ///
                 /// Sequence:
                 ///  Chunk server connects.
@@ -78,19 +81,17 @@ namespace KFS
                 ChunkServer(NetConnectionPtr &conn);
                 ~ChunkServer();
 
-                /// Handler to handle the HELLO message.  This method
-                /// gets from the net manager when it sees some data
-                /// is available on the socket.
-                int HandleHello(int code, void *data);
+		bool CanBeChunkMaster() const {
+			return mCanBeChunkMaster;
+		}
+                void SetCanBeChunkMaster(bool flag) {
+                    mCanBeChunkMaster = flag;
+                }
 
                 /// Generic event handler to handle network
                 /// events. This method gets from the net manager when
                 /// it sees some data is available on the socket.
                 int HandleRequest(int code, void *data);
-
-		/// Enqueue a request to be dispatched to this server
-		/// @param[in] r  the request to be enqueued.
-		virtual void Enqueue(MetaRequest *r);
 
                 /// Send an RPC to allocate a chunk on this server.
                 /// An RPC request is enqueued and the call returns.
@@ -128,13 +129,23 @@ namespace KFS
 		///
 		void Retire();
 
+                void Restart();
+
 		/// Method to get the size of a chunk from a chunkserver.
 		int GetChunkSize(fid_t fid, chunkId_t chunkId, const std::string &pathname);
 
 		/// Methods to handle (re) replication of a chunk.  If there are
 		/// insufficient copies of a chunk, we replicate it.
-		int ReplicateChunk(fid_t fid, chunkId_t chunkId, seq_t chunkVersion,
+		int ReplicateChunk( fid_t fid, chunkId_t chunkId, seq_t chunkVersion,
                                 const ServerLocation &loc);
+                /// Start write append recovery when chunk master is non operational.
+		int BeginMakeChunkStable(fid_t fid, chunkId_t chunkId, seq_t chunkVersion);
+		/// Notify a chunkserver that the writes to a chunk are done;
+		/// the chunkserver in turn should flush dirty data and make the
+		/// chunk "stable".
+		int MakeChunkStable(fid_t fid, chunkId_t chunkId, seq_t chunkVersion,
+			off_t chunkSize, bool hasChunkChecksum, uint32_t chunkChecksum,
+			bool addPending = false);
 
 		/// Replication of a chunk finished.  Update statistics
 		void ReplicateChunkDone(chunkId_t chunkId) {
@@ -176,7 +187,7 @@ namespace KFS
 		/// write load towards it.  We detect loaded servers to be
 		/// those that don't respond to heartbeat messages.
 		bool IsResponsiveServer() const {
-			return !mHeartbeatSkipped;
+			return (! mDown && ! mHeartbeatSkipped);
 		}
 
 		/// To support scheduled down-time and allow maintenance to be
@@ -204,7 +215,7 @@ namespace KFS
 			mEvacuatingChunks.insert(chunkId);
 		}
 
-		std::set<chunkId_t> GetEvacuatingChunks() {
+		const ChunkIdSet& GetEvacuatingChunks() {
 			return mEvacuatingChunks;
 		}
 
@@ -214,7 +225,7 @@ namespace KFS
 			mChunksToMove.insert(chunkId);
 		}
 
-		std::set<chunkId_t> GetChunksToMove() {
+		const ChunkIdSet& GetChunksToMove() {
 			return mChunksToMove;
 		}
 
@@ -246,30 +257,21 @@ namespace KFS
                 void NotifyChunkVersChange(fid_t fid, chunkId_t chunkId, seq_t chunkVers);
 
 		/// Dispatch all the pending RPCs to the chunk server.
-		virtual void Dispatch();
+		void Dispatch();
 
 		/// An op has been dispatched.  Stash a pointer to that op
 		/// in the list of dispatched ops.
 		/// @param[in] op  The op that was just dispatched
-		void Dispatched(MetaRequest *r) {
+		void Dispatched(MetaChunkRequest *r) {
 			mDispatchedReqs.push_back(r);
 		}
-
-                ///
-                /// We sent a request; we got a reply.  Take the op
-                /// which has the response values filled in and resume
-                /// processing for that op.
-                /// @param[in] op  The op for which we got a reply
-                /// from a chunkserver.
-                ///
-                void ResumeOp(MetaRequest *op);
 
                 /// Accessor method to get the host name/port
                 ServerLocation GetServerLocation() const {
 			return mLocation;
                 }
 
-		string ServerID()
+		string ServerID() const
 		{
 			return mLocation.ToString();
 		}
@@ -288,7 +290,7 @@ namespace KFS
                 }
 
                 /// Setter method to set space
-                void SetSpace(uint64_t total, uint64_t used, uint64_t alloc) {
+                void SetSpace(int64_t total, int64_t used, int64_t alloc) {
 			mTotalSpace = total;
 			mUsedSpace = used;
 			mAllocSpace = alloc; 
@@ -319,37 +321,28 @@ namespace KFS
 		/// to the chunks that have been write-leased.  This
 		/// has the effect of keeping alloc space tied closely
 		/// to used space.
-                uint64_t GetAvailSpace() {
- 			mAllocSpace = mUsedSpace + 
-				(mNumChunkWriteReplications + mNumChunkWrites) * 
-					CHUNKSIZE;
-			if (mAllocSpace >= mTotalSpace)
-				return 0;
-			else
-                        	return mTotalSpace - mAllocSpace;
+                int64_t GetAvailSpace() const {
+			return (mTotalSpace > mAllocSpace ?
+                            mTotalSpace - mAllocSpace : 0
+                        );
                 }
-
-		/// An estimate of the # of writes that are currently
-		/// happening at this server.
-		inline void UpdateNumChunkWrites(int amount) {
-			mNumChunkWrites += amount;
-			if (mNumChunkWrites < 0)
-				mNumChunkWrites = 0;
-
-		}
 
 		/// Accessor to that returns an estimate of the # of
 		/// concurrent writes that are being handled by this server
-		inline int GetNumChunkWrites() const {
+		int GetNumChunkWrites() const {
 			return mNumChunkWrites;
 
 		}
 
-                uint64_t GetTotalSpace() const {
+                int64_t GetNumAppendsWithWid() const {
+			return mNumAppendsWithWid;
+		}
+
+                int64_t GetTotalSpace() const {
                         return mTotalSpace;
                 }
 
-                uint64_t GetUsedSpace() {
+                int64_t GetUsedSpace() const {
                         return mUsedSpace;
                 }
 
@@ -359,14 +352,14 @@ namespace KFS
 
 		/// Return an estimate of disk space utilization on this server.
 		/// The estimate is between [0..1]
-		float GetSpaceUtilization() {
+		float GetSpaceUtilization() const {
 			if (mTotalSpace == 0)
 				return 0.0;
 			return (float) mUsedSpace / (float) mTotalSpace;
 
 		}
 
-		bool IsDown() {
+		bool IsDown() const {
 			return mDown;
 		}
 
@@ -374,7 +367,7 @@ namespace KFS
                 /// The chunk server went down.  So, fail all the
                 /// outstanding ops. 
                 ///
-                virtual void FailPendingOps();
+                void FailPendingOps();
 
 		/// For monitoring purposes, dump out state as a string.
 		/// @param [out] result   The state of this server
@@ -382,8 +375,27 @@ namespace KFS
 		void Ping(string &result);
 
 		seq_t NextSeq() { return mSeqNo++; }
+		int TimeSinceLastHeartbeat() const;
+                void ForceDown();
+		static void SetParameters(const Properties& prop);
+                void SetProperties(const Properties& props);
+                int64_t Uptime() const { return mUptime; }
+                bool ScheduleRestart(int64_t gracefulRestartTimeout, int64_t gracefulRestartAppendWithWidTimeout);
+                bool IsRestartScheduled() const {
+                    return (mRestartScheduledFlag || mRestartQueuedFlag);
+                }
+                string DownReason() const {
+                    return mDownReason;
+                }
+                const Properties& HeartBeatProperties() const {
+                    return mHeartbeatProperties;
+                }
 
         protected:
+		/// Enqueue a request to be dispatched to this server
+		/// @param[in] r  the request to be enqueued.
+		void Enqueue(MetaChunkRequest *r);
+
                 /// A sequence # associated with each RPC we send to
                 /// chunk server.  This variable tracks the seq # that
                 /// we should use in the next RPC.
@@ -399,10 +411,18 @@ namespace KFS
 
                 /// Is there a heartbeat message for which we haven't
 		/// recieved a reply yet?  If yes, dont' send one more
-                bool mHeartbeatSent;
+                bool   mHeartbeatSent;
 
 		/// did we skip the sending of a heartbeat message?
                 bool mHeartbeatSkipped;
+
+                time_t mLastHeartbeatSent;
+                static int sHeartbeatTimeout;
+                static int sHeartbeatInterval;
+                static int sHeartbeatLogInterval;
+
+		/// For record append's, can this node be a chunk master
+		bool mCanBeChunkMaster;
 
 		/// is the server being retired
                 bool mIsRetiring;
@@ -415,11 +435,11 @@ namespace KFS
 		/// Set of chunks on this server that need to be evacuated
 		/// whenever this node is to be retired; when evacuation set is
 		/// empty, the server can be retired.
-		std::set<chunkId_t> mEvacuatingChunks;
+		ChunkIdSet mEvacuatingChunks;
 
 		/// Set of chunks that need to be moved to this server.
 		/// This set was previously computed by the rebalance planner.
-		std::set<chunkId_t> mChunksToMove;
+		ChunkIdSet mChunksToMove;
 
                 /// Location of the server at which clients can
                 /// connect to
@@ -435,9 +455,9 @@ namespace KFS
 		int mNumCorruptChunks;
 
                 /// total space available on this server
-                uint64_t mTotalSpace;
+                int64_t mTotalSpace;
                 /// space that has been used by chunks on this server
-                uint64_t mUsedSpace;
+                int64_t mUsedSpace;
 
                 /// space that has been allocated for chunks: this
                 /// corresponds to the allocations that have been
@@ -445,7 +465,7 @@ namespace KFS
                 /// For instance, when we have partially filled
                 /// chunks, there is space is allocated for a chunk
                 /// but that space hasn't been fully used up.
-                uint64_t mAllocSpace;
+                int64_t mAllocSpace;
 
 		/// # of chunks hosted on this server; useful for
 		/// reporting purposes
@@ -456,6 +476,10 @@ namespace KFS
 		/// can use this info to weed out the most heavily loaded N% of
 		/// the nodes.
 		double mCpuLoadAvg;
+
+		/// Chunkserver returns the # of drives on the node in a
+		/// heartbeat response; we can then show this value on the UI
+		int mNumDrives;
 
 		/// An estimate of the # of writes that are being handled
 		/// by this server.  We use this value to update mAllocSpace
@@ -468,21 +492,32 @@ namespace KFS
 		/// writes are occurring.  So, whenever we get a heartbeat, we
 		/// can update alloc space as a sum of the used space and the # of
 		/// writes that are currently being handled by this server.
-		int mNumChunkWrites;
+		int     mNumChunkWrites;
+                int64_t mNumAppendsWithWid;
 
 
 		/// Track the # of chunk replications (write/read) that are going on this server
 		int mNumChunkWriteReplications;
 		int mNumChunkReadReplications;
 
+		typedef MetaQueue <MetaChunkRequest> PendingReqs;
                 /// list of RPCs that need to be sent to this chunk
                 /// server.  This list is shared between the main
                 /// event processing loop and the network thread.
-                MetaQueue <MetaRequest> mPendingReqs;
+                PendingReqs mPendingReqs;
                 /// list of RPCs that we have sent to this chunk
                 /// server.  This list is operated by the network
                 /// thread.
-                std::list <MetaRequest *> mDispatchedReqs;
+		typedef std::list <MetaChunkRequest *> DispatchedReqs;
+                DispatchedReqs mDispatchedReqs;
+                int64_t    mLostChunks;
+                int64_t    mUptime;
+                Properties mHeartbeatProperties;
+                bool       mRestartScheduledFlag;
+                bool       mRestartQueuedFlag;
+                time_t     mRestartScheduledTime;
+                time_t     mLastHeartBeatLoggedTime;
+                string     mDownReason;
 
                 ///
                 /// We have received a message from the chunk
@@ -505,7 +540,7 @@ namespace KFS
 		int HandleReply(IOBuffer *iobuf, int msgLen);
 
 		/// Send a response message to the MetaRequest we got.
-		void SendResponse(MetaRequest *op);
+		void SendResponse(MetaChunkRequest *op);
 
                 ///
                 /// Given a response from a chunkserver, find the
@@ -518,7 +553,9 @@ namespace KFS
                 /// @retval The matching request if one exists; NULL
                 /// otherwise
                 ///
-                MetaRequest *FindMatchingRequest(seq_t cseq);
+                MetaChunkRequest *FindMatchingRequest(seq_t cseq);
+
+		MetaRequest* GetOp(IOBuffer& iobuf, int msgLen, const char* errMsgPrefix);
 
                 ///
                 /// The response sent by a chunkserver is of the form:
@@ -531,22 +568,21 @@ namespace KFS
                 /// @param[in] bufLen length of buf
                 /// @param[out] prop  Properties object with the response header/values
                 ///
-                void ParseResponse(char *buf, int bufLen, Properties &prop);
-
+                bool ParseResponse(std::istream& is, Properties &prop);
                 ///
                 /// The chunk server went down.  So, stop the network timer event;
 		/// also, fail all the dispatched ops.
                 ///
-		void StopTimer();
+		void Error(const char* errorMsg);
 		void FailDispatchedOps();
         };
 
 	class ChunkServerMatcher {
-		const ChunkServer *target;
+		const ChunkServer * const target;
 
 	public:
 		ChunkServerMatcher(const ChunkServer *t): target(t) { };
-		bool operator() (ChunkServerPtr &c) {
+		bool operator() (const ChunkServerPtr &c) {
 			return c.get() == target;
 		}
 	};

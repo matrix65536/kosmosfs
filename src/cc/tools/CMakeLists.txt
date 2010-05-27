@@ -5,15 +5,15 @@ set (lib_srcs
     KfsCd.cc
     KfsChangeReplication.cc
     KfsCp.cc
+    KfsFstat.cc
     KfsLs.cc
     KfsMkdirs.cc
     KfsMv.cc
     KfsRm.cc
     KfsRmdir.cc
     KfsPwd.cc
-    KfsFstat.cc
+    KfsAppend.cc
     utils.cc
-    KfsToolsCommon.cc
 )
 
 add_library (tools STATIC ${lib_srcs})
@@ -36,8 +36,6 @@ kfsstats
 kfsfileenum
 kfsdataverify
 kfsretire
-kfscp
-kfsls
 )
 
 if (APPLE)

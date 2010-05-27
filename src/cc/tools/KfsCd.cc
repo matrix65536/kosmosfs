@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2007/09/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.
@@ -62,7 +61,7 @@ KFS::tools::handleCd(const vector<string> &args)
 
     int res;
 
-    if ((res = kfsClient->Cd(args[0])) < 0) {
+    if ((res = kfsClient->Cd(args[0].c_str())) < 0) {
 	cout << "cd failed: " << ErrorCodeToStr(res) << endl;
         return res;
     }

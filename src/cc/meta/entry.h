@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file entry.h
  * \brief process entries from the checkpoint and log files

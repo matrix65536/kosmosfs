@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/22
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -191,7 +190,7 @@ DiskManager::DiskManager() : mOverloaded(false), mMaxOutstandingIOs(5000)
 
 DiskManager::~DiskManager()
 {
-    // globals().netManager.UnRegisterTimeoutHandler(mDiskManagerTimeoutImpl);
+    // globalNetManager().UnRegisterTimeoutHandler(mDiskManagerTimeoutImpl);
 
     // delete mDiskManagerTimeoutImpl;
 }
@@ -209,7 +208,7 @@ DiskManager::InitForAIO()
     // create a thread to handle AIO completions
     aioCompletionHandler.Init();
 #endif
-    // globals().netManager.RegisterTimeoutHandler(mDiskManagerTimeoutImpl);
+    // globalNetManager().RegisterTimeoutHandler(mDiskManagerTimeoutImpl);
 }
 
 class DiskEventMatcher {
@@ -391,7 +390,7 @@ DiskManager::IOInitiated()
         KFS_LOG_VA_INFO("Too many disk IOs (%d) outstanding...overloaded", 
                         mDiskEvents.size());
         mOverloaded = true;
-        globals().netManager.ChangeDiskOverloadState(true);
+        globalNetManager().ChangeDiskOverloadState(true);
     }
 }
 
@@ -407,7 +406,7 @@ DiskManager::IOCompleted()
         KFS_LOG_VA_INFO("# of disk I/Os outstanding (%d) is below limit...clearing overloaded",
                         mDiskEvents.size());
         mOverloaded = false;
-        globals().netManager.ChangeDiskOverloadState(false);
+        globalNetManager().ChangeDiskOverloadState(false);
     }
 }
 

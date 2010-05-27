@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/06/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -139,7 +138,7 @@ Logger::MainLoop()
             done.erase(iter);
             mLogged.enqueue(op);
         }
-        globals().netKicker.Kick();
+        globalNetManager().Wakeup();
         KFS_LOG_DEBUG("Kicked the net manager");
     }
 }
@@ -211,7 +210,7 @@ Logger::Start()
         KFS_LOG_VA_WARN("Unable to open: %s", filename.c_str());
     }
     assert(!mFile.fail());
-    globals().netManager.RegisterTimeoutHandler(mLoggerTimeoutImpl);
+    globalNetManager().RegisterTimeoutHandler(mLoggerTimeoutImpl);
     mWorker.start(logger_main, NULL);
 }
 

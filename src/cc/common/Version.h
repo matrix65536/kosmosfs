@@ -4,7 +4,6 @@
 // \brief Header file for getting KFS version #'s related to builds.
 //
 // Created 2008/10/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //

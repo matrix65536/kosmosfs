@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file meta.cc
  * \brief Operations on the various metadata types.

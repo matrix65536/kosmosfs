@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/10
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -83,7 +82,7 @@ int TcpSocket::Listen(int port)
         return -1;
     }
     
-    if (listen(mSockFd, 5) < 0) {
+    if (listen(mSockFd, 1024) < 0) {
         perror("listen: ");
     }
 
@@ -120,8 +119,8 @@ int TcpSocket::Connect(const struct sockaddr_in *remoteAddr, bool nonblockingCon
     Close();
 
     mSockFd = socket(PF_INET, SOCK_STREAM, 0);
-    if (mSockFd == -1) {
-        return -1;
+    if (mSockFd < 0) {
+        return (errno > 0 ? -errno : mSockFd);
     }
 
     if (nonblockingConnect) {
@@ -134,10 +133,11 @@ int TcpSocket::Connect(const struct sockaddr_in *remoteAddr, bool nonblockingCon
 
     res = connect(mSockFd, (struct sockaddr *) remoteAddr, sizeof(struct sockaddr_in));
     if ((res < 0) && (errno != EINPROGRESS)) {
+        res = errno > 0 ? -errno : res;
         perror("Connect: ");
         close(mSockFd);
         mSockFd = -1;
-        return -1;
+        return res;
     }
 
     if ((res < 0) && nonblockingConnect)
@@ -152,29 +152,29 @@ int TcpSocket::Connect(const struct sockaddr_in *remoteAddr, bool nonblockingCon
 
 int TcpSocket::Connect(const ServerLocation &location, bool nonblockingConnect)
 {
-    struct hostent *hostInfo;
-    struct sockaddr_in remoteAddr;
+    struct sockaddr_in remoteAddr = { 0 };
 
-    remoteAddr.sin_addr.s_addr = inet_addr(location.hostname.c_str());
-
-    if (remoteAddr.sin_addr.s_addr == (in_addr_t) -1) {
+    if (! inet_aton(location.hostname.c_str(), &remoteAddr.sin_addr)) {
         // do the conversion if we weren't handed an IP address
-
-        hostInfo = gethostbyname(location.hostname.c_str());
-
-        if (hostInfo == NULL) {
+        struct hostent * const hostInfo = gethostbyname(location.hostname.c_str());
+        if (hostInfo == NULL || hostInfo->h_addrtype != AF_INET ||
+                hostInfo->h_length < (int)sizeof(remoteAddr.sin_addr)) {
+            KFS_LOG_STREAM_ERROR <<
+                "connect: "  << location.ToString() <<
+                " hostent: " << (const void*)hostInfo <<
+                " type: "    << (hostInfo ? hostInfo->h_addrtype : -1) <<
+                " size: "    << (hostInfo ? hostInfo->h_length   : -1) <<
 #if defined __APPLE__
-            KFS_LOG_VA_DEBUG("herrno: %d, errstr = %s", h_errno, hstrerror(h_errno));
+                "herrno: " << h_errno <<
+                ", errstr = " << hstrerror(h_errno) <<
 #endif
-            perror("gethostbyname: ");
+            KFS_LOG_EOM;
             return -1;
         }
-
-        memcpy(&remoteAddr.sin_addr.s_addr, hostInfo->h_addr, sizeof(struct in_addr));
+        memcpy(&remoteAddr.sin_addr, hostInfo->h_addr, sizeof(remoteAddr.sin_addr));
     }
     remoteAddr.sin_port = htons(location.port);
     remoteAddr.sin_family = AF_INET;
-
     return Connect(&remoteAddr, nonblockingConnect);
 }
 
@@ -221,12 +221,29 @@ int TcpSocket::GetPeerName(struct sockaddr *peerAddr, int len) const
 string TcpSocket::GetPeerName() const
 {
     struct sockaddr_in saddr;
-    char ipname[INET_ADDRSTRLEN];
+    char ipname[INET_ADDRSTRLEN + 7];
 
     if (GetPeerName((struct sockaddr*) &saddr, sizeof(struct sockaddr_in)) < 0)
-        return "unknown src";
+        return "unknown";
     if (inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN) == NULL)
-        return "unknown src";        
+        return "unknown";
+    ipname[INET_ADDRSTRLEN] = 0;
+    sprintf(ipname + strlen(ipname), ":%d", (int)htons(saddr.sin_port));
+    return ipname;
+}
+
+string TcpSocket::GetSockName() const
+{
+    struct sockaddr_in saddr;
+    char ipname[INET_ADDRSTRLEN + 7];
+
+    socklen_t len(sizeof(struct sockaddr_in));
+    if (getsockname(mSockFd, (struct sockaddr*) &saddr, &len) < 0)
+        return "unknown";
+    if (inet_ntop(AF_INET, &(saddr.sin_addr), ipname, INET_ADDRSTRLEN) == NULL)
+        return "unknown";
+    ipname[INET_ADDRSTRLEN] = 0;
+    sprintf(ipname + strlen(ipname), ":%d", (int)htons(saddr.sin_port));
     return ipname;
 }
 
@@ -287,7 +304,7 @@ int TcpSocket::DoSynchSend(const char *buf, int bufLen)
             break;
         if (res < 0) {
             pfd.fd = mSockFd;
-            pfd.events = POLLOUT | POLLIN;
+            pfd.events = POLLOUT;
             pfd.revents = 0;
             nfds = poll(&pfd, 1, kTimeout);
             if (nfds == 0)
@@ -303,6 +320,7 @@ int TcpSocket::DoSynchSend(const char *buf, int bufLen)
         if (res < 0)
             break;
         numSent += res;
+        res = -1;
     }
     if (numSent > 0) {
         globals().ctrNetBytesWritten.Update(numSent);
@@ -318,6 +336,9 @@ int TcpSocket::DoSynchRecv(char *buf, int bufLen, struct timeval &timeout)
     int numRecd = 0;
     int res = 0, nfds;
     struct pollfd pfd;
+    struct timeval startTime, now;
+
+    gettimeofday(&startTime, NULL);
 
     while (numRecd < bufLen) {
         if (mSockFd < 0)
@@ -333,6 +354,11 @@ int TcpSocket::DoSynchRecv(char *buf, int bufLen, struct timeval &timeout)
                 KFS_LOG_DEBUG("Timeout in synch recv");
                 return numRecd > 0 ? numRecd : -ETIMEDOUT;
             }
+        }
+
+        gettimeofday(&now, NULL);
+        if (now.tv_sec - startTime.tv_sec >= timeout.tv_sec) {
+            return numRecd > 0 ? numRecd : -ETIMEDOUT;
         }
 
         res = Recv(buf + numRecd, bufLen - numRecd);
@@ -386,7 +412,10 @@ int TcpSocket::DoSynchPeek(char *buf, int bufLen, struct timeval &timeout)
     int numRecd = 0;
     int res, nfds;
     struct pollfd pfd;
+    struct timeval startTime, now;
 
+    gettimeofday(&startTime, NULL);
+    
     while (1) {
         pfd.fd = mSockFd;
         pfd.events = POLLIN;
@@ -394,6 +423,11 @@ int TcpSocket::DoSynchPeek(char *buf, int bufLen, struct timeval &timeout)
         nfds = poll(&pfd, 1, timeout.tv_sec * 1000);
         // get a 0 when timeout expires
         if (nfds == 0) {
+            return -ETIMEDOUT;
+        }
+        
+        gettimeofday(&now, NULL);
+        if (now.tv_sec - startTime.tv_sec >= timeout.tv_sec) {
             return -ETIMEDOUT;
         }
 
@@ -409,4 +443,18 @@ int TcpSocket::DoSynchPeek(char *buf, int bufLen, struct timeval &timeout)
             break;
     }
     return numRecd;
+}
+
+int TcpSocket::GetSocketError() const
+{
+    if (mSockFd < 0) {
+        return -EBADF;
+    }
+    int       err = 0;
+    socklen_t len = sizeof(err);
+    if (getsockopt(mSockFd, SOL_SOCKET, SO_ERROR, &err, &len)) {
+        return (errno != 0 ? errno : -EINVAL);
+    }
+    assert(len == sizeof(err));
+    return err;
 }

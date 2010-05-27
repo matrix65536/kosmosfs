@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/09
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -32,12 +31,10 @@
 
 extern "C" {
 #include <sys/time.h>
-#include <sys/stat.h>
 }
 
 #include <string>
 #include <vector>
-
 using std::string;
 using std::vector;
 
@@ -60,14 +57,26 @@ struct ChunkAttr {
     /// did we request an allocation for this chunk?
     bool didAllocation;
     /// what is the size of this chunk
-    kfsOff_t	chunkSize;
+    off_t	chunkSize;
     ChunkAttr(): chunkId(-1), chunkVersion(-1), didAllocation(false),
                  chunkSize(0) { }
 
     // during reads, if we can't get data from a server, we avoid it
     // and look elsewhere.  when we avoid it, we take the server out
     // of the list of candidates.
-    void AvoidServer(ServerLocation &loc);
+    void AvoidServer(ServerLocation &loc) {
+        std::vector<ServerLocation>::iterator iter;
+
+        iter = std::find(chunkServerLoc.begin(), chunkServerLoc.end(), loc);
+        if (iter != chunkServerLoc.end())
+            chunkServerLoc.erase(iter);
+
+        if (chunkServerLoc.size() == 0) {
+            // all the servers we could talk to are gone; so, we need
+            // to re-figure where the data is.
+            chunkId = -1;
+        }
+    }
 };
 
 ///
@@ -82,7 +91,7 @@ struct KfsServerAttr {
     /// how many chunks does it have
     long long	chunkCount;
     /// server keeps a hint and will tell us....
-    kfsOff_t	fileSize; 
+    off_t	fileSize; 
     /// is this a directory?
     bool	isDirectory;
     /// what is the deg. of replication for this file
@@ -102,7 +111,7 @@ struct FileAttr {
     /// is this a directory?
     bool	isDirectory;
     /// the size of this file in bytes---computed value
-    kfsOff_t	fileSize;
+    off_t	fileSize;
     
     /// how many chunks does it have
     long long	chunkCount;
@@ -158,7 +167,7 @@ struct KfsFileAttr {
     /// is this a directory?
     bool	isDirectory;
     /// the size of this file in bytes
-    kfsOff_t	fileSize;
+    off_t	fileSize;
     /// what is the deg. of replication for this file
     int16_t numReplicas;
 
@@ -212,42 +221,10 @@ struct FileChunkInfo {
     int16_t numReplicas;
 
     /// file-offset corresponding to the last chunk
-    kfsOff_t lastChunkOffset;
+    off_t lastChunkOffset;
 
     /// info about a single chunk: typically the last chunk of the file
     ChunkAttr cattr;
-};
-
-struct KfsFileStat
-{
-    uint32_t mode;
-    kfsOff_t size;
-    time_t atime;
-    time_t mtime;
-    time_t ctime;
-    int16_t replication;
-
-    KfsFileStat(): mode(0), size(0), atime(0), mtime(0), ctime(0), replication(0) {}
-    
-    // This function needs to be in .h file, in case client uses wrong compilation options:
-    void convert(struct stat & std_stat)
-    {
-	// This is done this weird way to get linker errors
-	// if compiling with wrong length of st_size field
-	// on 32 bit architecture!
-	safeConvert(std_stat, std_stat.st_size);
-    }
-    
-    // And second function. If, for any reason, struct stat's 'size' field
-    // has correct length, we want to make sure, that off_t has correct length as well.
-    void fooOffLengthCheck_t(off_t & arg)
-    {
-	struct stat foo;
-	safeConvert(foo, arg);
-    }
-    
-    private:
-	void safeConvert(struct stat & std_stat, kfsOff_t & std_size);
 };
 
 }

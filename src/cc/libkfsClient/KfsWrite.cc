@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/10/02
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -31,6 +30,7 @@
 #include "meta/kfstypes.h"
 #include "libkfsIO/Checksum.h"
 #include "Utils.h"
+#include "KfsProtocolWorker.h"
 
 #include <cerrno>
 #include <iostream>
@@ -41,6 +41,7 @@ using std::ostringstream;
 using std::istringstream;
 using std::min;
 using std::max;
+using std::copy;
 
 using std::cout;
 using std::endl;
@@ -54,14 +55,241 @@ NeedToRetryAllocation(int status)
 	    (status == -ETIMEDOUT) ||
 	    (status == -EBUSY) ||
 	    (status == -EIO) ||
+	    (status == -ENOSPC) ||
             (status == -KFS::EBADVERS) ||
-	    (status == -KFS::EALLOCFAILED));
+	    (status == -KFS::EALLOCFAILED) ||
+            (status == -KFS::EDATAUNAVAIL) ||
+            (status == -KFS::ESERVERBUSY)
+    );
 }
 
 inline size_t GetChecksumBlockTailSize(off_t offset)
 {
     size_t rem(offset % CHECKSUM_BLOCKSIZE);
     return (rem > 0 ? CHECKSUM_BLOCKSIZE - rem : 0);
+}
+
+int
+KfsClientImpl::RecordAppend(int fd, const char *buf, int reclen)
+{
+    MutexLock l(&mMutex);
+
+    if (!valid_fd(fd) || mFileTable[fd]->openMode == O_RDONLY) {
+        KFS_LOG_VA_INFO("Record append to fd: %d failed---fd is likely closed", fd);
+	return -EBADF;
+    }
+    if ((mFileTable[fd]->openMode & O_APPEND) != 0) {
+        return AtomicRecordAppend(fd, buf, reclen, l);
+    }
+
+    FileAttr *fa = FdAttr(fd);
+    if (fa->isDirectory)
+	return -EISDIR;
+
+    FilePosition *pos = FdPos(fd);
+
+    if (pos->chunkOffset + reclen > (off_t) KFS::CHUNKSIZE) {
+	int status = FlushBuffer(fd);
+	if (status < 0)
+	    return status;
+        // Move to the next chunk
+	Seek(fd, KFS::CHUNKSIZE - pos->chunkOffset, SEEK_CUR);
+    }
+    return Write(fd, buf, reclen);
+}
+
+int
+KfsClientImpl::AtomicRecordAppend(int fd, const char *buf, int reclen)
+{
+    if (reclen > (int)KFS::CHUNKSIZE) {
+        return -EFBIG;
+    }
+    if (! buf && reclen > 0) {
+        return -EINVAL;
+    }
+    MutexLock lock(&mMutex);
+    return AtomicRecordAppend(fd, buf, reclen, lock);
+}
+
+int
+KfsClientImpl::AtomicRecordAppend(int fd, const char *buf, int reclen, MutexLock& lock)
+{
+    if (! valid_fd(fd)) {
+	return -EBADF;
+    }
+    FileTableEntry& entry = *mFileTable[fd];
+    if (entry.fattr.isDirectory) {
+	return -EISDIR;
+    }
+    if ((entry.openMode & O_APPEND) == 0) {
+        return -EINVAL;
+    }
+    if (entry.fattr.fileId <= 0) {
+	return -EBADF;
+    }
+    if (reclen <= 0) {
+        return 0;
+    }
+    if (! mProtocolWorker) {
+        mProtocolWorker = new KfsProtocolWorker(
+            mMetaServerLoc.hostname, mMetaServerLoc.port);
+        mProtocolWorker->Start();
+    }
+
+    entry.didAppend = true;
+    entry.appendPending += reclen;
+    const KfsProtocolWorker::FileId       fileId       = entry.fattr.fileId;
+    const KfsProtocolWorker::FileInstance fileInstance = entry.instance;
+    const string                          pathName     = entry.pathname;
+    const int                             bufsz        = (int)entry.buffer.bufsz;
+    const bool                            throttle     = bufsz > 0 && bufsz <= entry.appendPending;
+    const int                             prevPending  = entry.appendPending;
+    if (throttle || bufsz <= 0) {
+        entry.appendPending = 0;
+    }
+    lock.Release();
+
+    const int theStatus = mProtocolWorker->Execute(
+        bufsz <= 0 ? KfsProtocolWorker::kRequestTypeWriteAppend :
+            (throttle ?
+                KfsProtocolWorker::kRequestTypeWriteAppendThrottle :
+                KfsProtocolWorker::kRequestTypeWriteAppendAsync
+            ),
+        fileInstance,
+        fileId,
+        pathName,
+        const_cast<char*>(buf),
+        reclen,
+        throttle ? bufsz : -1
+    );
+    if (theStatus < 0) {
+        return theStatus;
+    }
+    if (throttle && theStatus > 0) {
+        MutexLock l(&mMutex);
+        // File can be closed by other thread, fd entry can be re-used.
+        // In this cases close / sync should have returned the corresponding 
+        // status.
+        // Throttle returns current number of bytes pending.
+        if (valid_fd(fd)) {
+            FileTableEntry& entry = *mFileTable[fd];
+            if (entry.instance == fileInstance) {
+                KFS_LOG_STREAM_DEBUG << "append throttle:"
+                    " " << fileId <<
+                    "," << fileInstance <<
+                    "," << pathName <<
+                    " fd: "     << fd <<
+                    " pending:"
+                    " prev: "   << prevPending <<
+                    " cur: "    << entry.appendPending <<
+                    " add: "    << theStatus <<
+                KFS_LOG_EOM;
+                entry.appendPending += theStatus;
+            }
+        }
+    }
+    return reclen;
+}
+
+int
+KfsClientImpl::WriteAsync(int fd, const char *buf, size_t numBytes)
+{
+    // do the allocation if needed and drop the request into a queue
+    MutexLock l(&mMutex);
+
+    if (!valid_fd(fd) || mFileTable[fd] == NULL || mFileTable[fd]->openMode == O_RDONLY) {
+        KFS_LOG_VA_INFO("Write to fd: %d failed---fd is likely closed", fd);
+	return -EBADF;
+    }
+    FileAttr *fa = FdAttr(fd);
+    if (fa->isDirectory)
+	return -EISDIR;
+
+    size_t ndone = 0;
+    while (ndone < numBytes) {
+        FilePosition *pos = FdPos(fd);
+        int res;
+
+        pos->CancelPendingRead();
+
+        if ((res = DoAllocation(fd)) < 0) {
+            KFS_LOG_VA_INFO("Allocation failed with code: %d", res);
+            return -1;
+        }
+
+        if (pos->preferredServer == NULL) {
+            res = OpenChunk(fd);
+            if (res < 0) {
+                KFS_LOG_VA_INFO("Unable to open chunk, code: %d", res);
+                return -1;
+            }
+        }
+        ChunkAttr *chunk = GetCurrChunk(fd);
+        size_t nbytes = min(numBytes - ndone, (size_t) (CHUNKSIZE - pos->chunkOffset));
+
+        TcpSocketPtr sockPtr = pos->GetPreferredChunkServerSockPtr();
+        AsyncWriteReq *asyncWriteReq = new AsyncWriteReq(fd, sockPtr, nextSeq(),
+                                                         chunk->chunkId, chunk->chunkVersion,
+                                                         pos->chunkOffset,
+                                                         (unsigned char *) buf + ndone, nbytes,
+                                                         chunk->chunkServerLoc);
+        // stash the position so we can redo if the async op fails
+        asyncWriteReq->filePosition = Tell(fd);
+        mAsyncer.Enqueue(asyncWriteReq);
+        mAsyncWrites.push_back(asyncWriteReq);
+
+        Seek(fd, nbytes, SEEK_CUR);
+        ndone += nbytes;
+    }
+    return 0;
+    
+}
+
+int
+KfsClientImpl::WriteAsyncCompletionHandler(int fd)
+{
+    // pull responses from the queue and do whatever ops failed
+    MutexLock l(&mMutex);
+
+    int res = 0;
+    for (uint32_t i = 0; i < mAsyncWrites.size(); i++) {
+        while (mAsyncWrites[i]->inQ) {
+            AsyncWriteReq *req;
+
+            mAsyncer.Dequeue(&req);
+            req->inQ = false;
+        }
+        if (mAsyncWrites[i]->numDone == (ssize_t) mAsyncWrites[i]->length) {
+            // close the chunk; if we have to append to it, the code path will re-open the chunk.
+            Seek(fd, mAsyncWrites[i]->filePosition, SEEK_SET);
+
+            FilePosition *pos = FdPos(fd);
+
+            pos->preferredServer = mAsyncWrites[i]->sock.get();
+            CloseChunk(fd);
+
+            pos->preferredServer = NULL;
+            Seek(fd, mAsyncWrites[i]->length, SEEK_CUR);
+            continue;
+        }
+        // async failed.  re-do
+        KFS_LOG_VA_INFO("Re-doing write for fd = %d, pos = %ld, len = %d",
+                        fd, mAsyncWrites[i]->filePosition,
+                        (int) mAsyncWrites[i]->length);
+        Seek(fd, mAsyncWrites[i]->filePosition, SEEK_SET);
+        res = Write(fd, (const char *) mAsyncWrites[i]->buf, mAsyncWrites[i]->length);
+        if (res < 0) {
+            KFS_LOG_VA_INFO("Failure when re-doing write for fd = %d, pos = %ld, len = %d",
+                            fd, mAsyncWrites[i]->filePosition,
+                            (int) mAsyncWrites[i]->length);
+            return -1;
+        }
+        CloseChunk(fd);
+        delete mAsyncWrites[i];
+        mAsyncWrites[i] = NULL;
+    }
+    mAsyncWrites.clear();
+    return 0;
 }
     
 ssize_t
@@ -71,7 +299,6 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 
     size_t nwrote = 0;
     ssize_t numIO = 0;
-    int res;
 
     if (!valid_fd(fd) || mFileTable[fd] == NULL || mFileTable[fd]->openMode == O_RDONLY) {
         KFS_LOG_VA_INFO("Write to fd: %d failed---fd is likely closed", fd);
@@ -83,6 +310,9 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 
     FilePosition *pos = FdPos(fd);
     pos->CancelPendingRead();
+    if ((mFileTable[fd]->openMode & O_APPEND) != 0) {
+        return AtomicRecordAppend(fd, buf, numBytes, l);
+    }
     //
     // Loop thru chunk after chunk until we write the desired #
     // of bytes.
@@ -96,7 +326,7 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	// LocateChunk(fd, pos->chunkNum);
 
 	// need to retry here...
-	if ((res = DoAllocation(fd)) < 0) {
+	if ((numIO = DoAllocation(fd)) < 0) {
 	    // allocation failed...bail
 	    break;
 	}
@@ -121,7 +351,7 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	}
 
 	if (numIO < 0) {
-            if (numIO == -KFS::ELEASEEXPIRED) {
+            if ((numIO == -KFS::ELEASEEXPIRED) || (numIO == -EAGAIN)) {
                 KFS_LOG_VA_INFO("Continuing to retry write for errorcode = %d", numIO);
                 continue;
             }
@@ -132,11 +362,9 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
 	}
 
 	nwrote += numIO;
-	
-	off_t newPos = Seek(fd, numIO, SEEK_CUR);
-
-	if (newPos < 0) {
-	    // KFS_LOG_VA_DEBUG("Seek(%lld)", newPos);
+	numIO = Seek(fd, numIO, SEEK_CUR);
+	if (numIO < 0) {
+	    // KFS_LOG_VA_DEBUG("Seek(%lld)", numIO);
 	    break;
 	}
     }
@@ -147,8 +375,7 @@ KfsClientImpl::Write(int fd, const char *buf, size_t numBytes)
     if (nwrote != numBytes) {
 	KFS_LOG_VA_DEBUG("----Write done: asked: %llu, got: %llu-----",
 			  numBytes, nwrote);
-    } else if (false && // turn off for now.
-            cb->dirty &&
+    } else if (cb->dirty &&
             cb->length >= max(
                 CHECKSUM_BLOCKSIZE + GetChecksumBlockTailSize(cb->start),
                 min(cb->bufsz >> 1, size_t(1) << 20))) {
@@ -258,7 +485,7 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
     size_t numAvail = min(numBytes, (size_t) (KFS::CHUNKSIZE - offset));
     int res = 0;
 
-    for (int retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
+    for (int retryCount = 0; ; ) {
 	// Same as read: align writes to checksum block boundaries
 	if (offset + numAvail <= OffsetToChecksumBlockEnd(offset))
 	    res = DoSmallWriteToServer(fd, offset, buf, numBytes);
@@ -279,11 +506,12 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
                 ostringstream os;
                 ChunkAttr *chunk = GetCurrChunk(fd);
 
+                os << "Writes thru chain ";
                 for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++)
                     os << chunk->chunkServerLoc[i].ToString().c_str() << ' ';
-
-                KFS_LOG_VA_INFO("Writes thru chain %s for chunk %lld are taking: %.3f secs", 
-                                os.str().c_str(), GetCurrChunk(fd)->chunkId, timeTaken);
+                os << " for chunk " << GetCurrChunk(fd)->chunkId <<
+                    " are taking: " << timeTaken << " secs";
+                KFS_LOG_INFO(os.str().c_str());
             }
             
             KFS_LOG_VA_DEBUG("Total Time to write data to server(s): %.4f secs", timeTaken);
@@ -295,32 +523,43 @@ KfsClientImpl::WriteToServer(int fd, off_t offset, const char *buf, size_t numBy
         // write failure...retry
         ostringstream os;
         ChunkAttr *chunk = GetCurrChunk(fd);
-            
+
+        os << "Daisy-chain: ";
         for (uint32_t i = 0; i < chunk->chunkServerLoc.size(); i++)
             os << chunk->chunkServerLoc[i].ToString().c_str() << ' ';
-
+        os << "Will retry allocation/write on chunk " << GetCurrChunk(fd)->chunkId <<
+            " due to error code: " << res;
         // whatever be the error, wait a bit and retry...
-        KFS_LOG_VA_INFO("Daisy-chain: %s; Will retry allocation/write on chunk %lld due to error code: %d", 
-                        os.str().c_str(), GetCurrChunk(fd)->chunkId, res);
-        Sleep(LEASE_RETRY_DELAY_SECS);
+        KFS_LOG_INFO(os.str().c_str());
+        if (++retryCount >= mMaxNumRetriesPerOp)
+            break;
+        if ((res == -EAGAIN) || (res == -EINVAL))
+            Sleep(RETRY_DELAY_SECS);
+        else
+            Sleep(LEASE_RETRY_DELAY_SECS);
 
         // save the value of res; in case we tried too many times
         // and are giving up, we need the error to propogate
         int r;
         if ((r = DoAllocation(fd, true)) < 0) {
-            KFS_LOG_VA_INFO("Re-allocation on chunk %lld failed because of error code = %d", 
-                            GetCurrChunk(fd)->chunkId, r);
-            return r;
+            KFS_LOG_STREAM_INFO <<
+                "Re-allocation on chunk " << GetCurrChunk(fd)->chunkId <<
+                " failed because of error code = " << r <<
+            KFS_LOG_EOM;
         }
+        if (r < 0)
+            break;
     }
 
     if (res < 0) {
         // any other error
-        string errstr = ErrorCodeToStr(res);
-        ChunkAttr *chunk = GetCurrChunk(fd);
-
-        KFS_LOG_VA_INFO("Retries failed: Write on chunk %lld failed because of error: (code = %d) %s", 
-                        chunk->chunkId, res, errstr.c_str());
+        const ChunkAttr * const chunk = GetCurrChunk(fd);
+        KFS_LOG_STREAM_INFO <<
+            "Retries failed: Write on chunk " <<
+                (chunk ? chunk->chunkId : (chunkId_t)-1) <<
+            " failed because of error: (code = " << res << " ) " <<
+            ErrorCodeToStr(res) <<
+        KFS_LOG_EOM;
     }
 
     return res;
@@ -345,20 +584,19 @@ KfsClientImpl::DoAllocation(int fd, bool force)
 	// also, if it is an existing chunk, force an allocation
 	// if needed (which'll cause version # bumps, lease
 	// handouts etc).
-	for (uint8_t retryCount = 0; retryCount < NUM_RETRIES_PER_OP; retryCount++) {
-	    if (retryCount) {
-		if (res == -EBUSY)
-		    // the metaserver says it can't get us a lease for
-		    // the chunk.  so, wait for a bit for the lease to
-		    // expire and then retry
-		    Sleep(LEASE_RETRY_DELAY_SECS);
-		else
-		    Sleep(RETRY_DELAY_SECS);
-	    }
+	for (int retryCount = 0; ; ) {
 	    res = AllocChunk(fd);
-	    if ((res >= 0) || (!NeedToRetryAllocation(res))) {
+	    if ((res >= 0) ||
+                    (!NeedToRetryAllocation(res)) ||
+                    (++retryCount >= mMaxNumRetriesPerOp))
 		break;
-	    }
+	    if (res == -EBUSY)
+		// the metaserver says it can't get us a lease for
+		// the chunk.  so, wait for a bit for the lease to
+		// expire and then retry
+		Sleep(LEASE_RETRY_DELAY_SECS);
+	    else
+		Sleep(RETRY_DELAY_SECS);
 	    // allocation failed...retry
 	}
 	if (res < 0)
@@ -404,7 +642,7 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
     // cout << "Pushing to server: " << offset << ' ' << numBytes << endl;
 
     // get the write id
-    numIO = AllocateWriteId(fd, offset, numBytes, writeId, masterSock);
+    numIO = AllocateWriteId(fd, offset, numBytes, false, writeId, masterSock);
     if (numIO < 0)
         return numIO;
 
@@ -443,14 +681,11 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	op->AttachContentBuf(buf + numWrote, op->numBytes);
 	op->contentLength = op->numBytes;
         op->checksum = ComputeBlockChecksum(op->contentBuf, op->contentLength);
+        op->checksums = ComputeChecksums(op->contentBuf, op->contentLength);
 
-        {
-            ostringstream os;
-
-            os << "@offset: " << op->offset << " nbytes: " << op->numBytes
-               << " cksum: " << op->checksum;
-            KFS_LOG_VA_DEBUG("%s", os.str().c_str());
-        }
+        KFS_LOG_STREAM_DEBUG << "@offset: " << op->offset << " nbytes: " << op->numBytes
+           << " cksum: " << op->checksum << " # of entries: " << op->checksums.size() <<
+        KFS_LOG_EOM;
 
 	numWrote += op->numBytes;
 	ops.push_back(op);
@@ -467,9 +702,12 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
         //
         // the write failed; caller will do the retry
         //
-        KFS_LOG_VA_INFO("Write failed...chunk = %lld, version = %lld, offset = %lld, error = %d",
-                        ops[0]->chunkId, ops[0]->chunkVersion, ops[0]->offset,
-                        numIO);
+        KFS_LOG_STREAM_INFO <<
+            "Write failed...chunk = " << ops[0]->chunkId <<
+            ", version = " << ops[0]->chunkVersion <<
+            ", offset = "  << ops[0]->offset <<
+            ", error = "   << numIO <<
+        KFS_LOG_EOM;
     }
 
     // figure out how much was committed
@@ -497,25 +735,24 @@ KfsClientImpl::DoLargeWriteToServer(int fd, off_t offset, const char *buf, size_
 	fa->fileSize = max(fa->fileSize, eow);
     }
 
-    if (numIO != (ssize_t) numBytes) {
-	KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes, was asked %lld bytes",
-	                 fd, numIO, numBytes);
-    } else {
-        KFS_LOG_VA_DEBUG("Wrote to server (fd = %d), %lld bytes",
-                         fd, numIO);
-    }
+    KFS_LOG_STREAM_DEBUG <<
+        "Wrote to server (fd = " << fd << "), " << numIO <<
+        " bytes, was asked " << numBytes << " bytes" <<
+    KFS_LOG_EOM;
 
     return numIO;
 }
 
 int
 KfsClientImpl::AllocateWriteId(int fd, off_t offset, size_t numBytes,
+                               bool isForRecordAppend,
                                vector<WriteInfo> &writeId, TcpSocket *masterSock)
 {
     ChunkAttr *chunk = GetCurrChunk(fd);
     WriteIdAllocOp op(nextSeq(), chunk->chunkId, chunk->chunkVersion, offset, numBytes);
     int res;
 
+    op.isForRecordAppend = isForRecordAppend;
     op.chunkServerLoc = chunk->chunkServerLoc;
     res = DoOpSend(&op, masterSock);
     if ((res < 0) || (op.status < 0)) {
@@ -549,12 +786,15 @@ KfsClientImpl::AllocateWriteId(int fd, off_t offset, size_t numBytes,
 
 int
 KfsClientImpl::PushData(int fd, vector<WritePrepareOp *> &ops, 
-                        uint32_t start, uint32_t count, TcpSocket *masterSock)
+                        uint32_t start, uint32_t count, 
+                        size_t &numBytes, TcpSocket *masterSock)
 {
     uint32_t last = min((size_t) (start + count), ops.size());
     int res = 0;
+    numBytes = 0;
 
     for (uint32_t i = start; i < last; i++) {        
+        numBytes += ops[i]->numBytes;
         res = DoOpSend(ops[i], masterSock);
         if (res < 0)
             break;
@@ -563,15 +803,18 @@ KfsClientImpl::PushData(int fd, vector<WritePrepareOp *> &ops,
 }
 
 int
-KfsClientImpl::SendCommit(int fd, vector<WriteInfo> &writeId, TcpSocket *masterSock,
+KfsClientImpl::SendCommit(int fd, off_t offset, size_t numBytes, 
+                          vector<uint32_t> &checksums,
+                          vector<WriteInfo> &writeId, TcpSocket *masterSock,
                           WriteSyncOp &sop)
 {
     ChunkAttr *chunk = GetCurrChunk(fd);
     int res = 0;
 
-    sop.Init(nextSeq(), chunk->chunkId, chunk->chunkVersion, writeId);
+    sop.Init(nextSeq(), chunk->chunkId, chunk->chunkVersion, offset, numBytes, checksums, writeId);
 
     res = DoOpSend(&sop, masterSock);
+
     if (res < 0)
         return sop.status;
 
@@ -585,6 +828,11 @@ KfsClientImpl::GetCommitReply(WriteSyncOp &sop, TcpSocket *masterSock)
     int res;
 
     res = DoOpResponse(&sop, masterSock);
+
+    if (sop.status != 0)
+        KFS_LOG_STREAM_INFO << "sync status: " << sop.status << " offset = " << sop.offset 
+                            << " numBytes = " << sop.numBytes << KFS_LOG_EOM;
+
     if (res < 0)
         return sop.status;
     return sop.status;
@@ -594,48 +842,41 @@ KfsClientImpl::GetCommitReply(WriteSyncOp &sop, TcpSocket *masterSock)
 int
 KfsClientImpl::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops, TcpSocket *masterSock)
 {
-    int res;
-    vector<WritePrepareOp *>::size_type next, minOps;
-    WriteSyncOp syncOp[2];
-
     if (ops.size() == 0)
         return 0;
 
-    // push the data to the server; to avoid bursting the server with
-    // a full chunk, do it in a pipelined fashion:
-    //  -- send 512K of data; do a flush; send another 512K; do another flush
-    //  -- every time we get an ack back, we send another 512K
-    //
-  
-    // we got 2 commits: current is the one we just sent; previous is
-    // the one for which we are expecting a reply
-    int prevCommit = 0;
-    int currCommit = 1;
-  
-    minOps = min((size_t) (MIN_BYTES_PIPELINE_IO / MAX_BYTES_PER_WRITE_IO) / 2, ops.size());
+    int commitSent = 0;
+    int commitRecv = 0;
+    const size_t minOps = 1;
+    // std::max(size_t(1),
+    //    min((size_t) (MIN_BYTES_PIPELINE_IO / MAX_BYTES_PER_WRITE_IO) / 2, ops.size()));
 
-    res = PushData(fd, ops, 0, minOps, masterSock);
-    if (res < 0)
-        goto error_out;
-
-    res = SendCommit(fd, ops[0]->writeInfo, masterSock, syncOp[0]);
-
-    if (res < 0)
-        goto error_out;
-  
-    for (next = minOps; next < ops.size(); next += minOps) {
-        res = PushData(fd, ops, next, minOps, masterSock);
+    vector<WriteSyncOp> syncOp(ops.size() / minOps + 1);
+    int res = 0;
+    for (size_t next = 0; next < ops.size(); next += minOps) {
+        size_t numBytes = 0;
+        res = PushData(fd, ops, next, minOps, numBytes, masterSock);
         if (res < 0)
             goto error_out;
 
-        res = SendCommit(fd, ops[next]->writeInfo, masterSock, syncOp[currCommit]);
+        vector<uint32_t>& syncChecksums = syncOp[commitSent].checksums;
+        for (uint32_t i = 0; i < minOps; i++) {
+            if (next + i < ops.size()) {
+                const vector<uint32_t>& opChecksums = ops[next + i]->checksums;
+                syncChecksums.resize(opChecksums.size());
+                copy(opChecksums.begin(), opChecksums.end(), syncChecksums.begin());
+            }
+        }
+
+        res = SendCommit(fd, ops[next]->offset, numBytes, syncChecksums,
+                         ops[next]->writeInfo, masterSock, syncOp[commitSent++]);
         if (res < 0)
             goto error_out;
 
-        res = GetCommitReply(syncOp[prevCommit], masterSock);
-        prevCommit = currCommit;
-        currCommit++;
-        currCommit %= 2;
+        char byte[1];
+        while (res >= 0 && masterSock->Peek(byte, sizeof(byte)) > 0) {
+            res = GetCommitReply(syncOp[commitRecv++], masterSock);
+        }
         if (res < 0)
             // the commit for previous failed; there is still the
             // business of getting the reply for the "current" one
@@ -643,9 +884,14 @@ KfsClientImpl::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops, TcpSocket
             break;
     }
 
-    res = GetCommitReply(syncOp[prevCommit], masterSock);
+    while (commitRecv < commitSent) {
+        const int status = GetCommitReply(syncOp[commitRecv++], masterSock);
+        if (res >= 0) {
+            res = status;
+        }
+    }
 
-  error_out:
+error_out:
     if (res < 0) {
         // res will be -1; we need to pick out the error from the op that failed
         for (uint32_t i = 0; i < ops.size(); i++) {
@@ -666,6 +912,7 @@ KfsClientImpl::DoPipelinedWrite(int fd, vector<WritePrepareOp *> &ops, TcpSocket
     return res;
 }
 
+/*
 int
 KfsClientImpl::IssueCommit(int fd, vector<WriteInfo> &writeId, TcpSocket *masterSock)
 {
@@ -682,6 +929,5 @@ KfsClientImpl::IssueCommit(int fd, vector<WriteInfo> &writeId, TcpSocket *master
         return sop.status;
     return sop.status;
 }
-
-
+*/
 

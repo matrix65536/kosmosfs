@@ -1,5 +1,5 @@
 /*
- * $Id$ 
+ * $Id$
  *
  * \file restore.cc
  * \brief rebuild metatree from saved checkpoint
@@ -23,6 +23,7 @@
  * permissions and limitations under the License.
  */
 
+#include <fcntl.h>
 #include <map>
 #include <cerrno>
 #include <cstring>
@@ -39,6 +40,12 @@
 
 using namespace KFS;
 int16_t minReplicasPerFile;
+
+// The chunks of a file are stored next to each other in the tree and are
+// written out contigously.  Use this property when restoring the chunkinfo:
+// stash the fileattr for the the file we are currently working on; as long as
+// this doesn't change, we avoid tree lookups.
+MetaFattr *gCurrFa = NULL;
 
 static bool
 checkpoint_seq(deque <string> &c)
@@ -195,14 +202,51 @@ restore_chunkinfo(deque <string> &c)
 
 	MetaChunkInfo *ch = new MetaChunkInfo(fid, offset, cid, chunkVersion);
 	if (metatree.insert(ch) == 0) {
-		MetaFattr *fa = metatree.getFattr(fid);
+		MetaFattr *fa = gCurrFa;
+
+		if ((fa == NULL) || (fa->id() != fid)) {
+			fa = metatree.getFattr(fid);
+			gCurrFa = fa;
+		}
 
 		assert(fa != NULL);
+                const chunkOff_t boundary = chunkStartOffset(offset);
+	        if (boundary >= fa->nextChunkOffset) {
+		        fa->nextChunkOffset = boundary + CHUNKSIZE;
+	        }
 		fa->chunkcount++;
-		gLayoutManager.AddChunkToServerMapping(cid, fid, NULL);
+		gLayoutManager.AddChunkToServerMapping(cid, fid, offset, NULL);
 		return true;
 	}
 	return false;
+}
+
+static bool
+restore_makestable(deque <string> &c)
+{
+	chunkId_t chunkId;
+	seq_t     chunkVersion;
+	off_t     chunkSize;
+        string    str;
+	fid_t     tmp;
+	uint32_t  checksum;
+	bool      hasChecksum;
+
+	c.pop_front();
+	bool ok = pop_fid(chunkId, "chunkId", c, true);
+	ok = pop_fid(chunkVersion, "chunkVersion", c, ok);
+	ok = pop_name(str, "size", c, ok);
+        chunkSize = toNumber(str);
+	ok = pop_fid(tmp, "checksum", c, ok);
+	checksum = (uint32_t)tmp;
+	ok = pop_fid(tmp, "hasChecksum", c, ok);
+	hasChecksum = tmp != 0;
+	if (ok) {
+		gLayoutManager.ReplayPendingMakeStable(
+			chunkId, chunkVersion, chunkSize,
+			hasChecksum, checksum, true);
+	}
+	return ok;
 }
 
 static void
@@ -218,6 +262,7 @@ init_map(DiskEntry &e)
 	e.add_parser("dentry", restore_dentry);
 	e.add_parser("fattr", restore_fattr);
 	e.add_parser("chunkinfo", restore_chunkinfo);
+	e.add_parser("mkstable", restore_makestable);
 }
 
 /*!
@@ -254,4 +299,33 @@ Restorer::rebuild(const string cpname, int16_t minReplicas)
 
 	file.close();
 	return is_ok;
+}
+
+void
+KFS::acquire_lockfile(const string &lockfn, int ntries)
+{
+	struct flock fl;
+	int fd;
+
+	memset(&fl, 0, sizeof(struct flock));
+	fl.l_type = F_WRLCK;
+	fl.l_whence = SEEK_SET;
+
+	fd = open(lockfn.c_str(), O_APPEND|O_CREAT|O_RDWR, 0644);
+	if (fd < 0) {
+		std::cerr << "Unable to open lock file: " << lockfn << " exiting...\n";
+		exit(-1);
+	}
+	for (int i = 0; i < ntries; i++) {
+		int ret = fcntl(fd, F_SETLK, &fl);
+		if (ret == 0) {
+			std::cerr << "Acquired lock file: " << lockfn << " yipeee...\n";
+			return;
+		}
+		std::cerr << "Lock file: " << lockfn << " is busy; waiting...\n";
+		sleep(60);
+	}
+	std::cerr << "Unable to open lock file: " << lockfn << " after " 
+		<< ntries << " so, exiting...\n";
+	exit(-1);
 }

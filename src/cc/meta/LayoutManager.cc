@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/06
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -30,10 +29,13 @@
 #include <functional>
 #include <sstream>
 #include <boost/lexical_cast.hpp>
+#include <openssl/rand.h>
 
 #include "LayoutManager.h"
 #include "kfstree.h"
 #include "libkfsIO/Globals.h"
+#include "common/log.h"
+#include "common/properties.h"
 
 using std::for_each;
 using std::find;
@@ -48,22 +50,33 @@ using std::set;
 using std::vector;
 using std::map;
 using std::min;
+using std::max;
 using std::endl;
 using std::istringstream;
+using std::make_pair;
+using std::pair;
+using std::make_heap;
+using std::pop_heap;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
 
 LayoutManager KFS::gLayoutManager;
+
 /// Max # of concurrent read/write replications per node
 ///  -- write: is the # of chunks that the node can pull in from outside
 ///  -- read: is the # of chunks that the node is allowed to send out
 ///
-const int MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE = 5;
-const int MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE = 10;
-
-/// Take out the highest 30% loaded nodes (say, CPU) from the write allocator.
-static double gPercentLoadedNodesToAvoidForWrites = 0.3;
+int MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE = 5;
+int MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE = 10;
+/// When a chunkserver says it is done replicating a chunk, how much time do we
+/// spend looking for a new block to re-replicate for that server
+const float MAX_TIME_TO_FIND_ADDL_REPLICATION_WORK = 0.005;
+/// How much do we spend on each internal RPC in chunk-replication-check to handout
+/// replication work.
+const float MAX_TIME_FOR_CHUNK_REPLICATION_CHECK = 0.5;
+/// Once a month, check the replication of all blocks in the system
+int NDAYS_PER_FULL_REPLICATION_CHECK = 30;
 
 ///
 /// When placing chunks, we see the space available on the node as well as
@@ -77,6 +90,31 @@ const uint32_t CONCURRENT_WRITES_PER_NODE_WATERMARK = 10;
 /// Helper functor that can be used to find a chunkid from a vector
 /// of meta chunk info's.
 
+static inline time_t TimeNow() {
+	return libkfsio::globalNetManager().Now();
+}
+
+
+static inline seq_t RandomSeqNo() {
+    seq_t ret = 0;
+    RAND_pseudo_bytes(
+        reinterpret_cast<unsigned char*>(&ret), int(sizeof(ret)));
+    return ((ret < 0 ? -ret : ret) >> 1);
+}
+
+template<typename T> static T& ReallocIfNeeded(T& vec) {
+	if (vec.size() <= (vec.capacity() >> 1)) {
+		T n(vec);
+		vec.swap(n);
+	}
+	return vec;
+}
+
+template<typename T, typename I> static T& EraseReallocIfNeeded(T& vec, I b, I e) {
+	vec.erase(b, e);
+	return ReallocIfNeeded(vec);
+}
+
 class ChunkIdMatcher {
 	chunkId_t myid;
 public:
@@ -86,46 +124,191 @@ public:
 	}
 };
 
-
-/// On a startup, the # of secs to wait before we are open for reads/writes
-void
-KFS::SetRecoveryInterval(int secs)
+inline bool LayoutManager::InRecoveryPeriod() const
 {
-	gLayoutManager.SetRecoveryInterval(secs);
+	return (TimeNow() < mRecoveryStartTime + mRecoveryIntervalSecs);
 }
 
-/// Set the %-age of nodes we want to take out write allocation because they are
-/// heavily loaded.
-void
-KFS::SetPercentLoadedNodesToAvoidForWrites(double percent)
+inline bool LayoutManager::InRecovery() const
 {
-	gPercentLoadedNodesToAvoidForWrites = std::min(percent, 1.0);
-	KFS_LOG_VA_INFO("Setting the percent loaded nodes to avoid for writes to: %.3lf", 
-			gPercentLoadedNodesToAvoidForWrites);
+	return (
+		mChunkServers.size() < mMinChunkserversToExitRecovery ||
+		InRecoveryPeriod()
+	);
+}
+
+inline bool LayoutManager::IsChunkServerRestartAllowed() const
+{
+	return (
+		! InRecovery() &&
+		mChunkServers.size() > mMinChunkserversToExitRecovery &&
+		mHibernatingServers.empty()
+	);
+}
+
+inline bool
+ARAChunkCache::Invalidate(iterator it)
+{
+	assert(it != mMap.end() && ! mMap.empty());
+	mMap.erase(it);
+	return true;
+}
+
+inline bool
+ARAChunkCache::Invalidate(fid_t fid)
+{
+	iterator const it = mMap.find(fid);
+	if (it == mMap.end()) {
+		return false;
+	}
+	mMap.erase(it);
+	return true;
+}
+
+inline bool
+ARAChunkCache::Invalidate(fid_t fid, chunkId_t chunkId)
+{
+	iterator const it = mMap.find(fid);
+	if (it == mMap.end() || it->second.chunkId != chunkId) {
+		return false;
+	}
+	mMap.erase(it);
+	return true;
+}
+
+void
+ARAChunkCache::RequestNew(MetaAllocate& req)
+{
+	if (req.offset < 0 || (req.offset % CHUNKSIZE) != 0 ||
+			! req.appendChunk) {
+		assert(! "invalid parameters");
+		return;
+	}
+	// Find the end of the list, normally list should have only one element.
+	MetaAllocate* last = &req;
+	while (last->next) {
+		last = last->next;
+	}
+	mMap[req.fid] = Entry(
+		req.chunkId,
+		req.chunkVersion,
+		req.offset,
+		TimeNow(),
+		last
+	);
+}
+
+bool
+ARAChunkCache::Entry::AddPending(MetaAllocate& req)
+{
+	assert(req.appendChunk);
+
+	if (! lastPendingRequest || ! req.appendChunk) {
+		return false;
+	}
+	assert(lastPendingRequest->suspended);
+	MetaAllocate* last = &req;
+	last->suspended = true;
+	while (last->next) {
+		last = last->next;
+		last->suspended = true;
+	}
+	// Put request to the end of the queue.
+	// Make sure that the last pointer is correct.
+	while (lastPendingRequest->next) {
+		lastPendingRequest = lastPendingRequest->next;
+	}
+	lastPendingRequest->next = last;
+	lastPendingRequest = last;
+	return true;
+}
+
+void
+ARAChunkCache::RequestDone(const MetaAllocate& req)
+{
+	assert(req.appendChunk);
+
+	iterator const it = mMap.find(req.fid);
+	if (it == mMap.end()) {
+		return;
+	}
+	Entry& entry = it->second;
+	if (entry.chunkId != req.chunkId) {
+		return;
+	}
+	if (req.status != 0) {
+		// Failure, invalidate the cache.
+		mMap.erase(it);
+		return;
+	}
+	entry.offset             = req.offset;
+	entry.lastPendingRequest = 0;
+	entry.lastAccessedTime   = TimeNow();
+}
+
+void
+ARAChunkCache::Timeout(time_t minTime)
+{
+	for (iterator it = mMap.begin(); it != mMap.end(); ) {
+		const Entry& entry = it->second;
+		if (entry.lastAccessedTime >= minTime ||
+				entry.lastPendingRequest) {
+			++it; // valid entry; keep going
+		} else {
+			mMap.erase(it++);
+		}
+	}
 }
 
 /// The rebalancing thresholds should be set in the emulator to get desired
 /// behavior.
 
 LayoutManager::LayoutManager() :
-	mLeaseId(1), mNumOngoingReplications(0),
-	mIsRebalancingEnabled(false), 
+	mLeaseId(RandomSeqNo()),
+	mNumOngoingReplications(0),
+	mIsRebalancingEnabled(false),
 	mMaxRebalanceSpaceUtilThreshold(0.0),
 	mMinRebalanceSpaceUtilThreshold(0.0),
 	mIsExecutingRebalancePlan(false),
-	mLastChunkRebalanced(1), mLastChunkReplicated(1),
-	mRecoveryStartTime(0), mRecoveryIntervalSecs(KFS::LEASE_INTERVAL_SECS),
-	mMinChunkserversToExitRecovery(1)
+	mLastChunkRebalanced(1),
+	mLastChunkReplicated(1),
+	mRecoveryStartTime(0),
+	mStartTime(time(0)),
+	mRecoveryIntervalSecs(KFS::LEASE_INTERVAL_SECS),
+	mMinChunkserversToExitRecovery(1),
+        mMastersCount(0),
+        mSlavesCount(0),
+	mAssignMasterByIpFlag(false),
+	mLeaseOwnerDownExpireDelay(30),
+	mPercentLoadedNodesToAvoidForWrites(0.3),
+	mMaxReservationSize(4 << 20),
+	mReservationDecayStep(4), // decrease by factor of 2 every 4 sec
+	mChunkReservationThreshold(KFS::CHUNKSIZE),
+	mReservationOvercommitFactor(.25),
+	mServerDownReplicationDelay(10 * 60),
+	mMaxDownServersHistorySize(4 << 10),
+        mChunkServersProps(),
+	mCSToRestartCount(0),
+	mMastersToRestartCount(0),
+	mMaxCSRestarting(0),
+	mMaxCSUptime(24 * 60 * 60),
+	mCSGracefulRestartTimeout(15 * 60),
+	mCSGracefulRestartAppendWithWidTimeout(40 * 60),
+	mLastReplicationCheckTime(TimeNow()),
+	mLastRecomputeDirsizeTime(TimeNow())
 {
-	pthread_mutex_init(&mChunkServersMutex, NULL);
+	// pthread_mutex_init(&mChunkServersMutex, NULL);
 
 	mReplicationTodoStats = new Counter("Num Replications Todo");
+	mChunksWithOneReplicaStats = new Counter("Chunks with one replica");
 	mOngoingReplicationStats = new Counter("Num Ongoing Replications");
 	mTotalReplicationStats = new Counter("Total Num Replications");
 	mFailedReplicationStats = new Counter("Num Failed Replications");
 	mStaleChunkCount = new Counter("Num Stale Chunks");
 	// how much to be done before we are done
 	globals().counterManager.AddCounter(mReplicationTodoStats);
+	// how many chunks are "endangered"
+	globals().counterManager.AddCounter(mChunksWithOneReplicaStats);
 	// how much are we doing right now
 	globals().counterManager.AddCounter(mOngoingReplicationStats);
 	globals().counterManager.AddCounter(mTotalReplicationStats);
@@ -133,11 +316,167 @@ LayoutManager::LayoutManager() :
 	globals().counterManager.AddCounter(mStaleChunkCount);
 }
 
+void
+LayoutManager::SetParameters(const Properties& props)
+{
+	MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE = props.getValue(
+		"metaServer.maxConcurrentReadReplicationsPerNode",
+		MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE);
+
+	MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE = props.getValue(
+		"metaServer.maxConcurrentWriteReplicationsPerNode",
+		MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE);
+
+	NDAYS_PER_FULL_REPLICATION_CHECK = props.getValue(
+		"metaServer.ndaysPerFullReplicationCheck",
+		NDAYS_PER_FULL_REPLICATION_CHECK);
+
+	mAssignMasterByIpFlag = props.getValue(
+		"metaServer.assignMasterByIp",
+		mAssignMasterByIpFlag ? 1 : 0) != 0;
+	mLeaseOwnerDownExpireDelay = max(0, props.getValue(
+		"metaServer.leaseOwnerDownExpireDelay",
+		mLeaseOwnerDownExpireDelay));
+	mMaxReservationSize = max(0, props.getValue(
+		"metaServer.wappend.maxReservationSize",
+		mMaxReservationSize));
+	mReservationDecayStep = props.getValue(
+		"metaServer.reservationDecayStep",
+		mReservationDecayStep);
+	mChunkReservationThreshold = props.getValue(
+		"metaServer.reservationThreshold",
+		mChunkReservationThreshold);
+	mReservationOvercommitFactor = max(0., props.getValue(
+		"metaServer.wappend.reservationOvercommitFactor",
+		mReservationOvercommitFactor));
+	/// On a startup, the # of secs to wait before we are open for reads/writes
+	mRecoveryIntervalSecs = props.getValue(
+		"metaServer.recoveryInterval", mRecoveryIntervalSecs);
+	mServerDownReplicationDelay = props.getValue(
+		"metaServer.serverDownReplicationDelay",
+		 mServerDownReplicationDelay);
+	mMaxDownServersHistorySize = props.getValue(
+		"metaServer.maxDownServersHistorySize",
+		 mMaxDownServersHistorySize);
+
+	mMaxCSRestarting = props.getValue(
+		"metaServer.maxCSRestarting",
+		 mMaxCSRestarting);
+	mMaxCSUptime = props.getValue(
+		"metaServer.maxCSUptime",
+		 mMaxCSUptime);
+	mCSGracefulRestartTimeout = max((int64_t)0, props.getValue(
+		"metaServer.CSGracefulRestartTimeout",
+		 mCSGracefulRestartTimeout));
+	mCSGracefulRestartAppendWithWidTimeout = max((int64_t)0, props.getValue(
+		"metaServer.CSGracefulRestartAppendWithWidTimeout",
+		mCSGracefulRestartAppendWithWidTimeout));
+
+	const double percent = min(1.0, props.getValue(
+		"metaServer.percentLoadedNodesToAvoidForWrites",
+		mPercentLoadedNodesToAvoidForWrites));
+	if (percent != mPercentLoadedNodesToAvoidForWrites) {
+		KFS_LOG_STREAM_INFO <<
+			"Setting the percent loaded nodes to avoid for writes to: " <<
+			mPercentLoadedNodesToAvoidForWrites <<
+		KFS_LOG_EOM;
+        }
+
+	SetChunkServersProperties(props);
+}
+
+void
+LayoutManager::SetChunkServersProperties(const Properties& props)
+{
+	if (props.empty()) {
+		return;
+	}
+	props.copyWithPrefix("chunkServer.", mChunkServersProps);
+	if (mChunkServersProps.empty()) {
+		return;
+	}
+	string display;
+	mChunkServersProps.getList(display, "", ";");
+	KFS_LOG_STREAM_INFO << "setting properties for " <<
+		mChunkServers.size() << " chunk servers: " << display <<
+	KFS_LOG_EOM;
+	vector<ChunkServerPtr> const chunkServers(mChunkServers);
+	for (vector<ChunkServerPtr>::const_iterator i = chunkServers.begin();
+			i != chunkServers.end();
+			++i) {
+		(*i)->SetProperties(mChunkServersProps);
+	}
+}
+
+CSCounters
+LayoutManager::GetChunkServerCounters() const
+{
+	CSCounters ret;
+	int i = 0;
+	const size_t srvCount = mChunkServers.size();
+	for (vector<ChunkServerPtr>::const_iterator it = mChunkServers.begin();
+			it != mChunkServers.end();
+			++it, ++i) {
+		const Properties& props = (*it)->HeartBeatProperties();
+		for (Properties::iterator pi = props.begin();
+				pi != props.end();
+				++pi) {
+			if (pi->first == "CSeq") {
+				continue;
+			}
+			ret[pi->first].resize(srvCount);
+			ret[pi->first][i] = pi->second;
+		}
+		ostringstream os;
+		os << (*it)->GetServerLocation().hostname << ":" <<
+			(*it)->GetServerLocation().port;
+		ret["XMeta-server-location"  ].push_back(os.str());
+		ret["XMeta-server-retiring"  ].push_back(
+			(*it)->IsRetiring()         ? "1" : "0");
+		ret["XMeta-server-restarting"].push_back(
+			(*it)->IsRestartScheduled() ? "1" : "0");
+		ret["XMeta-server-responsive"].push_back(
+			(*it)->IsResponsiveServer() ? "1" : "0");
+		os.str(string());
+		os << (*it)->GetAvailSpace();
+		ret["XMeta-server-space-avail"].push_back(os.str());
+		os.str(string());
+		os << (TimeNow() - (*it)->TimeSinceLastHeartbeat());
+		ret["XMeta-server-heartbeat-time"].push_back(os.str());
+	}
+	return ret;
+}
+
+string
+KFS::ToString(const CSCounters& cntrs, string rowDelim)
+{
+	string ret;
+	const char* prefix = "";
+	size_t size = 1u << 20;
+	for (CSCounters::const_iterator it = cntrs.begin();
+			it != cntrs.end(); ++it) {
+		ret += prefix + it->first;
+		prefix = ",";
+		size = min(size, it->second.size());
+	}
+	ret += rowDelim;
+	for (size_t i = 0; i < size; i++) {
+		const char* prefix = "";
+		for (CSCounters::const_iterator it = cntrs.begin();
+				it != cntrs.end(); ++it) {
+			ret += prefix + it->second[i];
+			prefix = ",";
+		}
+		ret += rowDelim;
+	}
+	return ret;
+}
+
 class MatchingServer {
-	ServerLocation loc;
+	const ServerLocation loc;
 public:
 	MatchingServer(const ServerLocation &l) : loc(l) { }
-	bool operator() (ChunkServerPtr &s) {
+	bool operator() (const ChunkServerPtr &s) {
 		return s->MatchingServer(loc);
 	}
 };
@@ -163,175 +502,494 @@ public:
 void
 LayoutManager::AddNewServer(MetaHello *r)
 {
-        ChunkServerPtr s;
-        vector <chunkId_t> staleChunkIds;
-        vector <ChunkInfo>::size_type i;
-	vector <ChunkServerPtr>::iterator j;
-	uint64_t allocSpace = r->chunks.size() * CHUNKSIZE;
-
-	if (r->server->IsDown())
+	if (r->server->IsDown()) {
 		return;
+	}
+	const uint64_t allocSpace = r->chunks.size() * CHUNKSIZE;
+        ChunkServer& srv = *r->server.get();
+        srv.SetServerLocation(r->location);
+        srv.SetSpace(r->totalSpace, r->usedSpace, allocSpace);
+	srv.SetRack(r->rackId);
 
-        s = r->server;
-        s->SetServerLocation(r->location);
-        s->SetSpace(r->totalSpace, r->usedSpace, allocSpace);
-	s->SetRack(r->rackId);
-
-        // If a previously dead server reconnects, reuse the server's
-        // position in the list of chunk servers.  This is because in
-        // the chunk->server mapping table, we use the chunkserver's
-        // position in the list of connected servers to find it.
-        //
-	j = find_if(mChunkServers.begin(), mChunkServers.end(), MatchingServer(r->location));
-	if (j != mChunkServers.end()) {
-		KFS_LOG_VA_DEBUG("Duplicate server: %s, %d",
-				 r->location.hostname.c_str(), r->location.port);
-		return;
+	const string srvId = r->location.ToString();
+	vector <ChunkServerPtr>::iterator const existing = find_if(
+		mChunkServers.begin(), mChunkServers.end(),
+		MatchingServer(r->location));
+	if (existing != mChunkServers.end()) {
+		KFS_LOG_STREAM_DEBUG << "duplicate server: " << srvId <<
+			" possible reconnect, taking: " <<
+				(const void*)existing->get() << " down " <<
+			" replacing with: " << (const void*)&srv <<
+		KFS_LOG_EOM;
+		ServerDown(existing->get());
+		if (srv.IsDown()) {
+			return;
+		}
         }
 
-	for (i = 0; i < r->chunks.size(); ++i) {
-		vector<MetaChunkInfo *> v;
-		vector<MetaChunkInfo *>::iterator chunk;
-		int res = -1;
+	// Add server first, then add chunks, otherwise if/when the server goes
+	// down in the process of adding chunks, taking out server from chunk
+	// info will not work in ServerDown().
+	//
+	// prevent the network thread from wandering this list while we change it.
+	// XXX: single threaded system now
+	// pthread_mutex_lock(&mChunkServersMutex);
+	mChunkServers.push_back(r->server);
+	if (mAssignMasterByIpFlag) {
+		// if the server node # is odd, it is master; else slave
+		string ipaddr = r->peerName;
+		string::size_type delimPos = ipaddr.rfind(':');
+		if (delimPos != string::npos) {
+			ipaddr.erase(delimPos);
+		}
+		delimPos = ipaddr.rfind('.');
+		if (delimPos == string::npos) {
+			srv.SetCanBeChunkMaster((rand() % 2) != 0);
+		} else {
+			string nodeNumStr = ipaddr.substr(delimPos + 1);
+			int nodeNum = boost::lexical_cast<int>(nodeNumStr);
+			srv.SetCanBeChunkMaster((nodeNum % 2) != 0);
+		}
+	} else {
+		srv.SetCanBeChunkMaster(mSlavesCount >= mMastersCount);
+	}
+	if (srv.CanBeChunkMaster()) {
+		mMastersCount++;
+	} else {
+		mSlavesCount++;
+	}
+	// pthread_mutex_unlock(&mChunkServersMutex);
 
-		metatree.getalloc(r->chunks[i].fileId, v);
+        vector <chunkId_t> staleChunkIds;
+	for (vector<ChunkInfo>::const_iterator it = r->chunks.begin();
+			it != r->chunks.end() && ! srv.IsDown();
+			++it) {
+		const chunkId_t chunkId     = it->chunkId;
+		const char*     staleReason = 0;
+		CSMapIter const cmi         = mChunkToServerMap.find(chunkId);
+		if (cmi == mChunkToServerMap.end()) {
+			staleReason = "no chunk mapping exists";
+                } else {
+			const ChunkPlacementInfo& c      = cmi->second;
+			const fid_t               fileId = c.fid;
+			vector<ChunkServerPtr>::const_iterator const cs = find_if(
+				c.chunkServers.begin(), c.chunkServers.end(),
+				MatchingServer(srv.GetServerLocation())
+			);
+			if (cs != c.chunkServers.end()) {
+				KFS_LOG_STREAM_ERROR << srvId <<
+					" stable chunk: <" <<
+						fileId << "/" <<
+						it->allocFileId << "," <<
+						chunkId << ">" <<
+					" already hosted on: " <<
+						(const void*)cs->get() <<
+					" new server: " <<
+						(const void*)&srv <<
+					" has the same location: " <<
+						srv.GetServerLocation().ToString() <<
+					(cs->get() == &srv ?
+						" duplicate chunk entry" :
+						" possible stale chunk to"
+						" server mapping entry"
+					) <<
+				KFS_LOG_EOM;
+				if (cs->get() == &srv) {
+					// Ignore duplicate chunk inventory entries.
+					continue;
+				}
+			}
+			vector<MetaChunkInfo *> v;
+			metatree.getalloc(fileId, v);
+			vector<MetaChunkInfo *>::const_iterator const ci = find_if(
+				v.begin(), v.end(), ChunkIdMatcher(chunkId));
+			if (ci == v.end()) {
+				staleReason = "no chunk in file";
+			} else {
+				const seq_t chunkVersion = (*ci)->chunkVersion;
+				if (chunkVersion > it->chunkVersion) {
+					staleReason = "old chunk version";
+				} else {
+					// This chunk is non-stale.  Verify that there are
+					// sufficient copies; if there are too many, nuke some.
+					ChangeChunkReplication(chunkId);
+					const int res = UpdateChunkToServerMapping(chunkId, &srv);
+					assert(res >= 0);
+					// get the chunksize for the last chunk of fid
+					// stored on this server
+					const MetaFattr * const fa = metatree.getFattr(fileId);
+					// if ((fa->filesize < 0) || (fa->filesize < (off_t) (fa->chunkcount * CHUNKSIZE))) {
+					if (fa && ((fa->filesize < 0) || ((fa->chunkcount > 0) &&
+						(fa->filesize <= (off_t) ((fa->chunkcount - 1 ) * CHUNKSIZE))))) {
+						// either we don't know the file's size
+						// or our view of the file's size does
+						// not include the last chunk, then ask
+						// the chunkserver for the size.
+						MetaChunkInfo *lastChunk = v.back();
+						if (lastChunk->chunkId == chunkId) {
+							KFS_LOG_STREAM_DEBUG << srvId <<
+								" asking size of f=" << fileId <<
+								", c=" << chunkId <<
+							KFS_LOG_EOM;
+							srv.GetChunkSize(fileId, chunkId, "");
+						}
+					}
+					if (chunkVersion < it->chunkVersion) {
+						// version #'s differ.  have the chunkserver reset
+						// to what the metaserver has.
+						// XXX: This is all due to the issue with not logging
+						// the version # that the metaserver is issuing.  What is going
+						// on here is that,
+						//  -- client made a request
+						//  -- metaserver bumped the version; notified the chunkservers
+						//  -- the chunkservers write out the version bump on disk
+						//  -- the metaserver gets ack; writes out the version bump on disk
+						//  -- and then notifies the client
+						// Now, if the metaserver crashes before it writes out the
+						// version bump, it is possible that some chunkservers did the
+						// bump, but not the metaserver.  So, fix up.  To avoid other whacky
+						// scenarios, we increment the chunk version # by the incarnation stuff
+						// to avoid reissuing the same version # multiple times.
+						srv.NotifyChunkVersChange(fileId, chunkId, chunkVersion);
 
-		chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(r->chunks[i].chunkId));
-		if (chunk != v.end()) {
-			MetaChunkInfo *mci = *chunk;
-			if (mci->chunkVersion <= r->chunks[i].chunkVersion) {
-				// This chunk is non-stale.  Verify that there are
-				// sufficient copies; if there are too many, nuke some.
-				ChangeChunkReplication(r->chunks[i].chunkId);
-
-				res = UpdateChunkToServerMapping(r->chunks[i].chunkId,
-								s.get());
-				assert(res >= 0);
-
-				// get the chunksize for the last chunk of fid
-				// stored on this server
-				MetaFattr *fa = metatree.getFattr(r->chunks[i].fileId);
-				// if ((fa->filesize < 0) || (fa->filesize < (off_t) (fa->chunkcount * CHUNKSIZE))) {
-				if ((fa->filesize < 0) || ((fa->chunkcount > 0) &&
-					(fa->filesize <= (off_t) ((fa->chunkcount - 1 ) * CHUNKSIZE)))) {
-					// either we don't know the file's size
-					// or our view of the file's size does
-					// not include the last chunk, then ask
-					// the chunkserver for the size.
-					MetaChunkInfo *lastChunk = v.back();
-					if (lastChunk->chunkId == r->chunks[i].chunkId) {
-						KFS_LOG_VA_DEBUG("Asking size of f=%lld, c=%lld",
-								r->chunks[i].fileId,
-								r->chunks[i].chunkId);
-						s->GetChunkSize(r->chunks[i].fileId,
-								r->chunks[i].chunkId,
-								"");
+					}
+					if (fa && fa->numReplicas <= (int)c.chunkServers.size() && ! srv.IsDown()) {
+						CancelPendingMakeStable(fileId, chunkId);
 					}
 				}
-
-				if (mci->chunkVersion < r->chunks[i].chunkVersion) {
-					// version #'s differ.  have the chunkserver reset
-					// to what the metaserver has.
-					// XXX: This is all due to the issue with not logging
-					// the version # that the metaserver is issuing.  What is going
-					// on here is that,
-					//  -- client made a request
-					//  -- metaserver bumped the version; notified the chunkservers
-					//  -- the chunkservers write out the version bump on disk
-					//  -- the metaserver gets ack; writes out the version bump on disk
-					//  -- and then notifies the client
-					// Now, if the metaserver crashes before it writes out the
-					// version bump, it is possible that some chunkservers did the
-					// bump, but not the metaserver.  So, fix up.  To avoid other whacky
-					// scenarios, we increment the chunk version # by the incarnation stuff
-					// to avoid reissuing the same version # multiple times.
-					s->NotifyChunkVersChange(r->chunks[i].fileId,
-							r->chunks[i].chunkId,
-							mci->chunkVersion);
-
-				}
 			}
-			else {
-                        	KFS_LOG_VA_INFO("Old version for chunk id = %lld => stale",
-                                         r->chunks[i].chunkId);
-			}
-		}
-
-                if (res < 0) {
-                        /// stale chunk
-                        KFS_LOG_VA_INFO("Non-existent chunk id = %lld => stale",
-                                         r->chunks[i].chunkId);
-                        staleChunkIds.push_back(r->chunks[i].chunkId);
-			mStaleChunkCount->Update(1);
                 }
-	}
-
-        if (staleChunkIds.size() > 0) {
-                s->NotifyStaleChunks(staleChunkIds);
+		if (staleReason) {
+		        KFS_LOG_STREAM_INFO << srvId <<
+				" stable chunk: <" <<
+				it->allocFileId << "," << chunkId << ">"
+				" " << staleReason <<
+				" => stale" <<
+			KFS_LOG_EOM;
+                        staleChunkIds.push_back(it->chunkId);
+			mStaleChunkCount->Update(1);
+		}
         }
 
-	// prevent the network thread from wandering this list while we change it.
-	pthread_mutex_lock(&mChunkServersMutex);
+	for (int i = 0; i < 2; i++) {
+		const vector<ChunkInfo>& chunks = i == 0 ?
+			r->notStableAppendChunks : r->notStableChunks;
+		for (vector<ChunkInfo>::const_iterator it = chunks.begin();
+				it != chunks.end() && ! srv.IsDown();
+				++it) {
+			const char* const staleReason = AddNotStableChunk(
+				r->server,
+				it->allocFileId,
+				it->chunkId,
+				it->chunkVersion,
+				i == 0,
+				srvId
+			);
+			KFS_LOG_STREAM_INFO << srvId <<
+				" not stable chunk:" <<
+				(i == 0 ? " append" : "") <<
+				" <" <<
+					it->allocFileId << "," << it->chunkId << ">"
+				" " << (staleReason ? staleReason : "") <<
+				(staleReason ? " => stale" : "added back") <<
+			KFS_LOG_EOM;
+			if (staleReason) {
+                        	staleChunkIds.push_back(it->chunkId);
+				mStaleChunkCount->Update(1);
+			}
+		}
+	}
+        if (! staleChunkIds.empty() && ! srv.IsDown()) {
+                srv.NotifyStaleChunks(staleChunkIds);
+        }
+	if (! mChunkServersProps.empty() && ! srv.IsDown()) {
+		srv.SetProperties(mChunkServersProps);
+	}
+	// All ops are queued at this point, make sure that the server is still up.
+	if (srv.IsDown()) {
+		KFS_LOG_STREAM_ERROR << srvId <<
+			": went down in the process of adding it" <<
+		KFS_LOG_EOM;
+		return;
+	}
 
-	mChunkServers.push_back(s);
-
-	pthread_mutex_unlock(&mChunkServersMutex);
-
-	vector<RackInfo>::iterator rackIter;
-
-	rackIter = find_if(mRacks.begin(), mRacks.end(), RackMatcher(r->rackId));
+	vector<RackInfo>::iterator const rackIter = find_if(
+		mRacks.begin(), mRacks.end(), RackMatcher(r->rackId));
 	if (rackIter != mRacks.end()) {
-		rackIter->addServer(s);
+		rackIter->addServer(r->server);
 	} else {
 		RackInfo ri(r->rackId);
-		ri.addServer(s);
+		ri.addServer(r->server);
 		mRacks.push_back(ri);
 	}
 
 	// Update the list since a new server is in
 	CheckHibernatingServersStatus();
+
+	const char* msg = "added";
+	if (IsChunkServerRestartAllowed() &&
+			mCSToRestartCount < mMaxCSRestarting) {
+		if (srv.Uptime() >= mMaxCSUptime &&
+			! srv.IsDown() &&
+			! srv.IsRestartScheduled()) {
+			mCSToRestartCount++;
+			if (srv.GetNumChunkWrites() <= 0 &&
+					srv.GetNumAppendsWithWid() <= 0) {
+				srv.Restart();
+				msg = "restarted";
+			} else {
+				srv.ScheduleRestart(
+					mCSGracefulRestartTimeout,
+					mCSGracefulRestartAppendWithWidTimeout);
+			}
+		} else {
+			ScheduleChunkServersRestart();
+		}
+	}
+	KFS_LOG_STREAM_INFO <<
+		msg << " chunk server: " << r->peerName << "/" << srv.ServerID() <<
+		(srv.CanBeChunkMaster() ? " master" : " slave") <<
+		" chunks: stable: " << r->chunks.size() <<
+		" not stable: "     << r->notStableChunks.size() <<
+		" append: "         << r->notStableAppendChunks.size() <<
+		" +wid: "           << r->numAppendsWithWid <<
+		" writes: "         << srv.GetNumChunkWrites() <<
+		" +wid: "           << srv.GetNumAppendsWithWid() <<
+		" masters: "        << mMastersCount <<
+		" slaves: "         << mSlavesCount <<
+		" total: "          << mChunkServers.size() <<
+		" uptime: "         << srv.Uptime() <<
+		" restart: "        << srv.IsRestartScheduled() <<
+	KFS_LOG_EOM;
 }
 
-class MapPurger {
-	CSMap &cmap;
-	CRCandidateSet &crset;
-	const ChunkServer *target;
-public:
-	MapPurger(CSMap &m, CRCandidateSet &c, const ChunkServer *t):
-		cmap(m), crset(c), target(t) { }
-	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
-		ChunkPlacementInfo c = p.second;
-        	vector <ChunkServerPtr>::iterator i;
+const char*
+LayoutManager::AddNotStableChunk(
+	ChunkServerPtr server,
+	fid_t          allocFileId,
+	chunkId_t      chunkId,
+	seq_t          chunkVersion,
+	bool           appendFlag,
+	const string&  logPrefix)
+{
+	CSMapIter const cmi = mChunkToServerMap.find(chunkId);
+	if (cmi == mChunkToServerMap.end()) {
+		return "no chunk mapping exists";
+	}
+	ChunkPlacementInfo& pinfo  = cmi->second;
+	const fid_t         fileId = pinfo.fid;
+	vector<ChunkServerPtr>::const_iterator const cs = find_if(
+		pinfo.chunkServers.begin(), pinfo.chunkServers.end(),
+		MatchingServer(server->GetServerLocation())
+	);
+	if (cs != pinfo.chunkServers.end()) {
+		KFS_LOG_STREAM_ERROR << logPrefix <<
+			" not stable chunk:" <<
+				(appendFlag ? " append " : "") <<
+			" <"                   << fileId <<
+			"/"                    << allocFileId <<
+			","                    << chunkId << ">" <<
+			" already hosted on: " << (const void*)cs->get() <<
+			" new server: "        << (const void*)server.get() <<
+			(cs->get() == server.get() ?
+			" duplicate chunk entry" :
+			" possible stale chunk to server mapping entry") <<
+		KFS_LOG_EOM;
+		return 0;
+	}
+	const char* staleReason = 0;
+	if (AddServerToMakeStable(cmi->second, server,
+			chunkId, chunkVersion, staleReason) || staleReason) {
+		return staleReason;
+	}
+	// At this point it is known that no make chunk stable is in progress:
+	// AddServerToMakeStable() invoked already.
+	// Delete the replica if sufficient number of replicas already exists.
+	const MetaFattr * const fa = metatree.getFattr(fileId);
+	if (fa && fa->numReplicas <= (int)pinfo.chunkServers.size()) {
+		CancelPendingMakeStable(fileId, chunkId);
+		return "sufficient number of replicas exists";
+	}
+	// See if it is possible to add the chunk back before "[Begin] Make
+	// Chunk Stable" ([B]MCS) starts. Expired lease cleanup lags behind. If
+	// expired lease exists, and [B]MCS is not in progress, then add the
+	// chunk back.
+	vector<LeaseInfo>::const_iterator const li = find_if(
+		pinfo.chunkLeases.begin(), pinfo.chunkLeases.end(),
+		ptr_fun(&LeaseInfo::IsWriteLease)
+	);
+	const bool leaseExistsFlag = li != pinfo.chunkLeases.end();
+	if (leaseExistsFlag && appendFlag != li->appendFlag) {
+		return (appendFlag ? "not append lease" : "append lease");
+	}
+	if (! leaseExistsFlag && appendFlag) {
+		PendingMakeStableMap::iterator const msi =
+				mPendingMakeStable.find(chunkId);
+		if (msi == mPendingMakeStable.end()) {
+			return "no make stable info";
+		}
+		if (chunkVersion != msi->second.mChunkVersion) {
+			return "pending make stable chunk version mismatch";
+		}
+		const bool beginMakeStableFlag = msi->second.mSize < 0;
+		if (beginMakeStableFlag) {
+			pinfo.chunkServers.push_back(server);
+			if (InRecoveryPeriod() ||
+					! mPendingBeginMakeStable.empty()) {
+				// Allow chunk servers to connect back.
+				mPendingBeginMakeStable.insert(chunkId);
+				return 0;
+			}
+			MakeChunkStableInit(
+				fileId, chunkId, pinfo.chunkOffsetIndex * CHUNKSIZE,
+				"", // metatree.getPathname(fileId),
+				pinfo.chunkServers, beginMakeStableFlag,
+				-1, false, 0
+			);
+			return 0;
+		}
+		const bool kPendingAddFlag = true;
+		server->MakeChunkStable(
+			fileId, chunkId, chunkVersion,
+			msi->second.mSize,
+			msi->second.mHasChecksum,
+			msi->second.mChecksum,
+			kPendingAddFlag
+		);
+		return 0;
+	}
+	if (! leaseExistsFlag && ! appendFlag &&
+			mPendingMakeStable.find(chunkId) !=
+			mPendingMakeStable.end()) {
+		return "chunk was open for append";
+	}
+	seq_t curChunkVersion = -1;
+	if (metatree.getChunkVersion(fileId, chunkId, &curChunkVersion) != 0) {
+		return "no such chunk";
+	}
+	if (chunkVersion < curChunkVersion) {
+		return "chunk version mismatch";
+	}
+	if (curChunkVersion != chunkVersion) {
+		server->NotifyChunkVersChange(fileId, chunkId, curChunkVersion);
+		if (server->IsDown()) {
+			return 0; // Went down while sending notification.
+		}
+	}
+	// Adding server back can change replication chain (order) -- invalidate
+	// record appender cache to prevent futher appends to this chunk.
+	if (leaseExistsFlag) {
+		if (appendFlag) {
+			mARAChunkCache.Invalidate(fileId, chunkId);
+		}
+		pinfo.chunkServers.push_back(server);
+	} else if (! appendFlag) {
+		const bool kPendingAddFlag = true;
+		server->MakeChunkStable(
+			fileId, chunkId, curChunkVersion,
+			-1, false, 0, kPendingAddFlag
+		);
+	}
+	return 0;
+}
 
+void
+LayoutManager::ProcessPendingBeginMakeStable()
+{
+	if (mPendingBeginMakeStable.empty()) {
+		return;
+	}
+	ChunkIdSet pendingBeginMakeStable;
+	pendingBeginMakeStable.swap(mPendingBeginMakeStable);
+	// If there are too many pending entries, do not try to get path name,
+	// since getPathname has exponential complexity.
+	const bool getPathNameFlag = mPendingBeginMakeStable.size() <= 4;
+	const bool kBeginMakeStableFlag = true;
+	for (ChunkIdSet::const_iterator it = pendingBeginMakeStable.begin();
+			it != pendingBeginMakeStable.end();
+			++it) {
+		chunkId_t const chunkId = *it;
+		CSMapIter const cmi     = mChunkToServerMap.find(chunkId);
+		if (cmi == mChunkToServerMap.end()) {
+			continue;
+		}
+		ChunkPlacementInfo& pinfo  = cmi->second;
+		const fid_t         fileId = pinfo.fid;
+		MakeChunkStableInit(
+			fileId, chunkId, pinfo.chunkOffsetIndex * CHUNKSIZE,
+			getPathNameFlag ?
+				metatree.getPathname(fileId) : string(),
+			pinfo.chunkServers, kBeginMakeStableFlag,
+			-1, false, 0
+		);
+	}
+}
+
+struct ExpireLeaseIfOwner
+{
+	const ChunkServer * const target;
+	const time_t              expire;
+	ExpireLeaseIfOwner(const ChunkServer *t)
+		: target(t), expire(TimeNow() - 1)
+	{}
+	void operator () (LeaseInfo& li) {
+		if (li.chunkServer.get() == target) {
+			li.expires = expire;
+			li.ownerWasDownFlag = li.ownerWasDownFlag ||
+				(target && target->IsDown());
+		}
+	}
+};
+
+class MapPurger {
+	ReplicationCandidates&   crset;
+        ARAChunkCache&           araChunkCache;
+	const ChunkServer* const target;
+public:
+	MapPurger(ReplicationCandidates &c, ARAChunkCache& ac, const ChunkServer *t)
+		: crset(c), araChunkCache(ac), target(t)
+		{}
+	void operator () (CSMap::value_type& p) {
+		ChunkPlacementInfo& c = p.second;
 		//
 		// only chunks hosted on the target need to be checked for
 		// replication level
 		//
-		i = find_if(c.chunkServers.begin(), c.chunkServers.end(),
-			ChunkServerMatcher(target));
-
-		if (i == c.chunkServers.end())
+		vector <ChunkServerPtr>::iterator const i = remove_if(
+			c.chunkServers.begin(), c.chunkServers.end(),
+			ChunkServerMatcher(target)
+		);
+		if (i == c.chunkServers.end()) {
 			return;
-
-		c.chunkServers.erase(remove_if(c.chunkServers.begin(), c.chunkServers.end(),
-					ChunkServerMatcher(target)),
-					c.chunkServers.end());
-		cmap[p.first] = c;
+		}
+		for_each(c.chunkLeases.begin(), c.chunkLeases.end(),
+			ExpireLeaseIfOwner(target));
+		EraseReallocIfNeeded(c.chunkServers, i, c.chunkServers.end());
+                // Chunk replication chain has changed: invalidate write append
+                // cache entry, if any. It is an error to attempt to append to
+                // after replication chain has changed. New chunk has to be
+                // allocated.
+                // Another way to handle this is to expire lease here, even in
+                // the case if slave went offline.
+                // For now let chunk master decide what to do, if it is
+                // transient communication outage, the slave might come back,
+                // and this will not affect other appenders if master can still
+                // talk to it.
+		araChunkCache.Invalidate(c.fid, p.first);
 		// we need to check the replication level of this chunk
 		crset.insert(p.first);
 	}
 };
 
 class MapRetirer {
-	CSMap &cmap;
-	CRCandidateSet &crset;
+	ReplicationCandidates &crset;
 	ChunkServer *retiringServer;
 public:
-	MapRetirer(CSMap &m, CRCandidateSet &c, ChunkServer *t):
-		cmap(m), crset(c), retiringServer(t) { }
-	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
-		ChunkPlacementInfo c = p.second;
-        	vector <ChunkServerPtr>::iterator i;
+	MapRetirer(ReplicationCandidates &c, ChunkServer *t):
+		crset(c), retiringServer(t) { }
+	void operator () (const CSMap::value_type& p) {
+		const ChunkPlacementInfo& c = p.second;
+        	vector <ChunkServerPtr>::const_iterator i;
 
 		i = find_if(c.chunkServers.begin(), c.chunkServers.end(),
 			ChunkServerMatcher(retiringServer));
@@ -349,9 +1007,9 @@ class MapDumper {
 	ofstream &ofs;
 public:
 	MapDumper(ofstream &o) : ofs(o) { }
-	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
+	void operator () (const CSMap::value_type& p) {
 		chunkId_t cid = p.first;
-		ChunkPlacementInfo c = p.second;
+		const ChunkPlacementInfo& c = p.second;
 
 		ofs << cid << ' ' << c.fid << ' ' << c.chunkServers.size() << ' ';
 		for (uint32_t i = 0; i < c.chunkServers.size(); i++) {
@@ -366,9 +1024,9 @@ class MapDumperStream {
 	ostringstream &ofs;
 public:
 	MapDumperStream(ostringstream &o) : ofs(o) { }
-	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
+	void operator () (const CSMap::value_type& p) {
 		chunkId_t cid = p.first;
-		ChunkPlacementInfo c = p.second;
+		const ChunkPlacementInfo& c = p.second;
 
 		ofs << cid << ' ' << c.fid << ' ' << c.chunkServers.size() << ' ';
 		for (uint32_t i = 0; i < c.chunkServers.size(); i++) {
@@ -422,12 +1080,34 @@ LayoutManager::DumpChunkToServerMap(const string &dirToUse)
 void
 LayoutManager::DumpChunkReplicationCandidates(ostringstream &os)
 {
-	chunkId_t chunkId;
-	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin();
+	for (ReplicationCandidates::const_iterator citer = mChunkReplicationCandidates.begin();
 		citer != mChunkReplicationCandidates.end(); ++citer) {
-		chunkId = *citer;
+		const chunkId_t chunkId = *citer;
 		os << chunkId << ' ';
 	}
+}
+
+void
+LayoutManager::Fsck(ostringstream &os)
+{
+	ostringstream lost;
+	ostringstream endangered;
+	int lostBlocks = 0, endangeredBlocks = 0;
+	for (CSMapConstIter citer = mChunkToServerMap.begin(); 	
+			citer != mChunkToServerMap.end(); ++citer) {
+		if (citer->second.chunkServers.size() == 0) {
+			lost << citer->second.fid << ' ';
+			lostBlocks++;
+		}
+		if (citer->second.chunkServers.size() == 1) {
+			endangered << citer->second.fid << ' ';
+			endangeredBlocks++;
+		}
+	}
+	os << "Num endangered blocks: " << endangeredBlocks << endl;
+	os << "Num lost blocks: " << lostBlocks << endl;
+	os << "Endangered files: " << endangered.str() << endl;
+	os << "Lost files: " << lost.str() << endl;
 }
 
 // Dump chunk block map to response stream
@@ -436,6 +1116,23 @@ LayoutManager::DumpChunkToServerMap(ostringstream &os)
 {
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
 			 MapDumperStream(os));
+}
+
+// Give preference to chunks at replication level of 1
+void
+LayoutManager::RebuildPriorityReplicationList()
+{
+	mPriorityChunkReplicationCandidates.clear();
+	for (ReplicationCandidates::const_iterator citer = mChunkReplicationCandidates.begin();
+		citer != mChunkReplicationCandidates.end(); ++citer) {
+		const chunkId_t chunkId = *citer;
+		CSMapIter iter = mChunkToServerMap.find(chunkId);
+
+		if (iter == mChunkToServerMap.end())
+			continue;
+		if (iter->second.chunkServers.size() == 1)
+			mPriorityChunkReplicationCandidates.insert(chunkId);
+	}
 }
 
 void
@@ -448,6 +1145,9 @@ LayoutManager::ServerDown(ChunkServer *server)
 	if (i == mChunkServers.end())
 		return;
 
+	if (! server->IsDown()) {
+		server->ForceDown();
+	}
 	vector<RackInfo>::iterator rackIter;
 
 	rackIter = find_if(mRacks.begin(), mRacks.end(), RackMatcher(server->GetRack()));
@@ -456,14 +1156,16 @@ LayoutManager::ServerDown(ChunkServer *server)
 		if (rackIter->getServers().size() == 0) {
 			// the entire rack of servers is gone
 			// so, take the rack out
-			KFS_LOG_VA_INFO("All servers in rack %d are down; taking out the rack", 
-					server->GetRack());
+			KFS_LOG_STREAM_INFO << "All servers in rack " <<
+				server->GetRack() << " are down; taking out the rack" <<
+			KFS_LOG_EOM;
 			mRacks.erase(rackIter);
 		}
 	}
 
 	/// Fail all the ops that were sent/waiting for response from
 	/// this server.
+        const bool canBeMaster = server->CanBeChunkMaster();
 	server->FailPendingOps();
 
 	// check if this server was sent to hibernation
@@ -472,8 +1174,7 @@ LayoutManager::ServerDown(ChunkServer *server)
 		if (mHibernatingServers[j].location == server->GetServerLocation()) {
 			// record all the blocks that need to be checked for
 			// re-replication later
-			MapPurger purge(mChunkToServerMap, mHibernatingServers[j].blocks, server);
-
+			MapPurger purge(mHibernatingServers[j].blocks, mARAChunkCache, server);
 			for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
 			isHibernating = true;
 			break;
@@ -481,27 +1182,74 @@ LayoutManager::ServerDown(ChunkServer *server)
 	}
 
 	if (!isHibernating) {
-		MapPurger purge(mChunkToServerMap, mChunkReplicationCandidates, server);
-		for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+		const int kMinReplicationDelay = 15;
+		const int replicationDelay =
+			mServerDownReplicationDelay - server->TimeSinceLastHeartbeat();
+		if (replicationDelay > kMinReplicationDelay) {
+			// Delay replication in case if the server reconnects back.
+			HibernatingServerInfo_t hsi;
+			hsi.location     = server->GetServerLocation();
+			hsi.sleepEndTime = TimeNow() + replicationDelay;
+			mHibernatingServers.push_back(hsi);
+			MapPurger purge(mHibernatingServers.back().blocks, mARAChunkCache, server);
+			for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+		} else {
+			MapPurger purge(mChunkReplicationCandidates, mARAChunkCache, server);
+			for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), purge);
+		}
+		RebuildPriorityReplicationList();
 	}
 
 	// for reporting purposes, record when it went down
-	time_t now = time(NULL);
-	string downSince = timeToStr(now);
-	ServerLocation loc = server->GetServerLocation();
+	const time_t now = TimeNow();
+	const ServerLocation loc = server->GetServerLocation();
 
-	const char *reason;
-	if (isHibernating)
+	string reason = server->DownReason();
+	if (isHibernating) {
 		reason = "Hibernated";
-	else if (server->IsRetiring())
+	} else if (server->IsRetiring()) {
 		reason = "Retired";
-	else
-		reason= "Unreachable";
+	} else if (reason.empty()) {
+		reason = "Unreachable";
+	}
 
-	mDownServers << "s=" << loc.hostname << ", p=" << loc.port << ", down="
-			<< downSince << ", reason=" << reason << "\t";
+	ostringstream os;
+	os <<
+		"s="        << loc.hostname <<
+		", p="      << loc.port <<
+		", down="   << timeToStr(now) <<
+		", reason=" << reason <<
+	"\t";
+	while (mDownServers.size() >= mMaxDownServersHistorySize) {
+		mDownServers.pop_front();
+	}
+	mDownServers.push_back(os.str());
 
+        if (canBeMaster) {
+            if (mMastersCount > 0) {
+                mMastersCount--;
+            }
+        } else if (mSlavesCount > 0) {
+            mSlavesCount--;
+        }
+	if (server->IsRestartScheduled()) {
+		if (mCSToRestartCount > 0) {
+			mCSToRestartCount--;
+		}
+		if (mMastersToRestartCount > 0 && server->CanBeChunkMaster()) {
+			mMastersToRestartCount--;
+		}
+	}
 	mChunkServers.erase(i);
+	if (! mAssignMasterByIpFlag &&
+			mMastersCount == 0 && ! mChunkServers.empty()) {
+		assert(mSlavesCount > 0 &&
+			! mChunkServers.front()->CanBeChunkMaster());
+		mSlavesCount--;
+		mMastersCount++;
+		mChunkServers.front()->SetCanBeChunkMaster(true);
+	}
+	
 }
 
 int
@@ -521,7 +1269,7 @@ LayoutManager::RetireServer(const ServerLocation &loc, int downtime)
 		HibernatingServerInfo_t hsi;
 
 		hsi.location = retiringServer->GetServerLocation();
-		hsi.sleepEndTime = time(0) + downtime;
+		hsi.sleepEndTime = TimeNow() + downtime;
 		mHibernatingServers.push_back(hsi);
 
 		retiringServer->Retire();
@@ -529,7 +1277,7 @@ LayoutManager::RetireServer(const ServerLocation &loc, int downtime)
 		return 0;
 	}
 
-	MapRetirer retirer(mChunkToServerMap, mChunkReplicationCandidates, retiringServer.get());
+	MapRetirer retirer(mChunkReplicationCandidates, retiringServer.get());
 	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(), retirer);
 
 	return 0;
@@ -588,7 +1336,7 @@ LayoutManager::FindCandidateRacks(vector<int> &result, const set<int> &excludes)
 
 	if (numRacksToChoose == 0)
 		return;
-	
+
 	for (uint32_t i = 0; i < mRacks.size(); i++) {
 		// paranoia: each candidate rack better have at least one node
 		if (!excludes.empty()) {
@@ -608,7 +1356,7 @@ LayoutManager::FindCandidateRacks(vector<int> &result, const set<int> &excludes)
 	count = 0;
 	// choose a rack proportional to the # of nodes that rack
 	while (count < numRacksToChoose) {
-		nodeId = rand() % mChunkServers.size(); 
+		nodeId = rand() % mChunkServers.size();
 		rackId = mChunkServers[nodeId]->GetRack();
 		if (!excludes.empty()) {
 			iter = excludes.find(rackId);
@@ -683,10 +1431,10 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 }
 
 static bool
-IsCandidateServer(ChunkServerPtr &c)
+IsCandidateServer(const ChunkServerPtr &c)
 {
-	if ((c->GetAvailSpace() < ((uint64_t) CHUNKSIZE)) || (!c->IsResponsiveServer())
-		|| (c->IsRetiring())) {
+	if ((c->GetAvailSpace() < ((int64_t) CHUNKSIZE)) || (!c->IsResponsiveServer())
+		|| (c->IsRetiring()) || (c->IsRestartScheduled())) {
 		// one of: no space, non-responsive, retiring...we leave
 		// the server alone
 		return false;
@@ -694,6 +1442,7 @@ IsCandidateServer(ChunkServerPtr &c)
 	return true;
 }
 
+#if 0
 static void
 SortServersByCPULoad(vector<ChunkServerPtr> &servers)
 {
@@ -716,6 +1465,7 @@ SortServersByCPULoad(vector<ChunkServerPtr> &servers)
 		servers[i] = temp[ss[i].serverIdx];
 	}
 }
+#endif
 
 void
 LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
@@ -753,13 +1503,16 @@ LayoutManager::FindCandidateServers(vector<ChunkServerPtr> &result,
 	}
 	if (candidates.size() == 0)
 		return;
+#if 0
+	// do this on a heartbeat; not here
 	SortServersByCPULoad(candidates);
 	// drop the nodes which are in the bottom N%
 	int32_t maxNodesToUse = candidates.size();
-	maxNodesToUse -= (int32_t)(maxNodesToUse * gPercentLoadedNodesToAvoidForWrites);
+	maxNodesToUse -= int32_t(maxNodesToUse * mPercentLoadedNodesToAvoidForWrites);
 	if ((maxNodesToUse > 0) && (maxNodesToUse < (int) candidates.size())) {
 		candidates.resize(maxNodesToUse);
 	}
+#endif
 	random_shuffle(candidates.begin(), candidates.end());
 	for (i = 0; i < candidates.size(); i++) {
 		result.push_back(candidates[i]);
@@ -863,72 +1616,164 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 	vector<ChunkServerPtr>::size_type i;
 	vector<int> racks;
 
+	r->servers.clear();
 	if (r->numReplicas == 0) {
 		// huh? allocate a chunk with 0 replicas???
-		return -EINVAL;
+            KFS_LOG_STREAM_DEBUG << "allocate chunk reaplicas: " << r->numReplicas <<
+                " request: " << r->Show() <<
+            KFS_LOG_EOM;
+	    r->statusMsg = "0 replicas";
+            return -EINVAL;
 	}
 
 	FindCandidateRacks(racks);
-	if (racks.size() == 0)
-		return -ENOSPC;
+        const size_t numRacks = racks.size();
+	if (numRacks <= 0) {
+            KFS_LOG_STREAM_INFO << "allocate chunk no racks: " << numRacks <<
+                " request: " << r->Show() <<
+            KFS_LOG_EOM;
+	    r->statusMsg = "no racks";
+            return -ENOSPC;
+        }
 
 	r->servers.reserve(r->numReplicas);
 
-	uint32_t numServersPerRack = r->numReplicas / racks.size();
-	if (r->numReplicas % racks.size())
+	uint32_t numServersPerRack = r->numReplicas / numRacks;
+	if (r->numReplicas % numRacks)
 		numServersPerRack++;
 
-	// take the server local to the machine on which the client is on
-	// make that the master; this avoids a network transfer
+	// for non-record append case, take the server local to the machine on
+	// which the client is on make that the master; this avoids a network transfer.
+	// for the record append case, to avoid deadlocks when writing out large
+	// records, we are doing hierarchical allocation: a chunkserver that is
+	// a chunk master is never made a slave.
 	ChunkServerPtr localserver;
-	vector <ChunkServerPtr>::iterator j;
-
-	j = find_if(mChunkServers.begin(), mChunkServers.end(),
-			MatchServerByHost(r->clientHost));
-	if ((j !=  mChunkServers.end())  && (IsCandidateServer(*j)))
-		localserver = *j;
-
-	if (localserver)
+	int replicaCnt = 0;
+	vector <ChunkServerPtr>::iterator const li = find_if(
+            mChunkServers.begin(), mChunkServers.end(), MatchServerByHost(r->clientHost));
+	if ((li != mChunkServers.end()) && (IsCandidateServer(*li)) &&
+			(! r->appendChunk || (*li)->CanBeChunkMaster())) {
+		localserver = *li;
+		replicaCnt++;
+	}
+	if (r->appendChunk || localserver) {
 		r->servers.push_back(localserver);
-
-	for (uint32_t idx = 0; idx < racks.size(); idx++) {
+	}
+	int    mastersSkipped = 0;
+	int    slavesSkipped  = 0;
+	size_t numCandidates = 0;
+	for (uint32_t idx = 0;
+			replicaCnt < r->numReplicas && idx < numRacks;
+			idx++) {
 		vector<ChunkServerPtr> candidates, dummy;
-
-		if (r->servers.size() >= (uint32_t) r->numReplicas)
-			break;
 		FindCandidateServers(candidates, dummy, racks[idx]);
-		if (candidates.size() == 0)
-			continue;
+		numCandidates += candidates.size();
 		// take as many as we can from this rack
-		uint32_t n = 0;
-		if (localserver && (racks[idx] == localserver->GetRack()))
-			n = 1;
-		for (uint32_t i = 0; i < candidates.size() && n < numServersPerRack; i++) {
-			if (r->servers.size() >= (uint32_t) r->numReplicas)
-				break;
-			if (candidates[i] != localserver) {
-				r->servers.push_back(candidates[i]);
-				n++;
+		uint32_t n = (localserver && (racks[idx] == localserver->GetRack())) ? 1 : 0;
+		for (vector<ChunkServerPtr>::const_iterator i = candidates.begin();
+				i != candidates.end() && n < numServersPerRack &&
+				replicaCnt < r->numReplicas;
+                                ++i) {
+			const ChunkServerPtr& cs = *i;
+			if (r->appendChunk) {
+				// for record appends, to avoid deadlocks for
+				// buffer allocation during atomic record
+				// appends, use hierarchical chunkserver
+				// selection
+				if (cs->CanBeChunkMaster()) {
+					if (r->servers.front()) {
+						mastersSkipped++;
+						continue;
+					}
+					r->servers.front() = cs;
+				} else {
+					if (r->servers.size() >= (size_t)r->numReplicas) {
+						slavesSkipped++;
+						continue;
+					}
+					r->servers.push_back(cs);
+				}
+			} else {
+				if (cs == localserver) {
+					continue;
+				}
+				r->servers.push_back(cs);
 			}
+			n++;
+			replicaCnt++;
 		}
 	}
-
-	if (r->servers.size() == 0)
+	bool noMaster = false;
+	if (r->servers.empty() || (noMaster = ! r->servers.front())) {
+		int dontLikeCount[2]      = { 0, 0 };
+		int outOfSpaceCount[2]    = { 0, 0 };
+		int notResponsiveCount[2] = { 0, 0 };
+		int retiringCount[2]      = { 0, 0 };
+		int restartingCount[2]    = { 0, 0 };
+		for (vector<ChunkServerPtr>::const_iterator it =
+				mChunkServers.begin();
+				it != mChunkServers.end();
+				++it) {
+			const int i = (*it)->CanBeChunkMaster() ? 0 : 1;
+			if (! IsCandidateServer(*it)) {
+				dontLikeCount[i]++;
+			}
+			if ((*it)->GetAvailSpace() < int64_t(CHUNKSIZE)) {
+				outOfSpaceCount[i]++;
+			}
+			if (! (*it)->IsResponsiveServer()) {
+				notResponsiveCount[i]++;
+			}
+			if ((*it)->IsRetiring()) {
+				retiringCount[i]++;
+			}
+			if ((*it)->IsRestartScheduled()) {
+				restartingCount[i]++;
+			}
+		}
+		const size_t numFound = r->servers.size();
+		r->servers.clear();
+		KFS_LOG_STREAM_INFO << "allocate chunk no " <<
+			(noMaster ? "master" : "servers") <<
+			" repl: "       << r->numReplicas <<
+				"/" << replicaCnt <<
+			" servers: "    << numFound <<
+				"/" << mChunkServers.size() <<
+			" dont like: "  << dontLikeCount[0] <<
+				"/" << dontLikeCount[1] <<
+			" no space: "   << outOfSpaceCount[0] <<
+				"/" << outOfSpaceCount[1] <<
+			" slow: "   <<  notResponsiveCount[0] <<
+				"/" << notResponsiveCount[1] <<
+			" retire: "     << retiringCount[0] <<
+				"/" << retiringCount[1] <<
+			" restart: "    << restartingCount[0] <<
+				"/" << restartingCount[1] <<
+                        " racks: "      << numRacks <<
+			" candidates: " << numCandidates <<
+			" masters: "    << mastersSkipped <<
+				"/" << mMastersCount <<
+			" slaves: "     << slavesSkipped <<
+				"/" << mSlavesCount <<
+			" to restart: " << mCSToRestartCount <<
+				"/"    << mMastersToRestartCount <<
+			" request: "    << r->Show() <<
+		KFS_LOG_EOM;
+	    	r->statusMsg = noMaster ? "no master" : "no servers";
 		return -ENOSPC;
+	}
 
-	LeaseInfo l(WRITE_LEASE, mLeaseId, r->servers[0], r->pathname);
+	const LeaseInfo l(WRITE_LEASE, mLeaseId, r->servers[0], r->pathname, r->appendChunk);
 	mLeaseId++;
 
 	r->master = r->servers[0];
-	r->servers[0]->AllocateChunk(r, l.leaseId);
-
-	for (i = 1; i < r->servers.size(); i++) {
-		r->servers[i]->AllocateChunk(r, -1);
-	}
 
 	ChunkPlacementInfo v;
 
 	v.fid = r->fid;
+	// r->offset is a multiple of CHUNKSIZE
+	assert((r->offset % CHUNKSIZE) == 0);
+	v.chunkOffsetIndex = (r->offset / CHUNKSIZE);
 	v.chunkServers = r->servers;
 	v.chunkLeases.push_back(l);
 
@@ -939,13 +1784,18 @@ LayoutManager::AllocateChunk(MetaAllocate *r)
 	if (r->servers.size() < (uint32_t) r->numReplicas)
 		ChangeChunkReplication(r->chunkId);
 
+	for (i = r->servers.size(); i-- > 0; ) {
+		r->servers[i]->AllocateChunk(r, i == 0 ? l.leaseId : -1);
+	}
+	if (! r->servers.empty() && r->appendChunk) {
+		mARAChunkCache.RequestNew(*r);
+	}
 	return 0;
 }
 
 int
 LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 {
-	ChunkPlacementInfo v;
 	vector<ChunkServerPtr>::size_type i;
 	vector<LeaseInfo>::iterator l;
 
@@ -955,7 +1805,9 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 	// issuing the lease during recovery---because there could
 	// be some server who has a lease and hasn't told us yet.
 	if (InRecovery()) {
-		KFS_LOG_INFO("GetChunkWriteLease: InRecovery() => EBUSY");
+		KFS_LOG_STREAM_INFO <<
+			"GetChunkWriteLease: InRecovery() => EBUSY" <<
+		KFS_LOG_EOM;
 		return -EBUSY;
 	}
 
@@ -964,8 +1816,8 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
         if (iter == mChunkToServerMap.end())
                 return -EINVAL;
 
-	v = iter->second;
-	if (v.chunkServers.size() == 0)
+	ChunkPlacementInfo& v = iter->second;
+	if (v.chunkServers.empty())
 		// all the associated servers are dead...so, fail
 		// the allocation request.
 		return -KFS::EDATAUNAVAIL;
@@ -973,68 +1825,224 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 	if (v.ongoingReplications > 0) {
 		// don't issue a write lease to a chunk that is being
 		// re-replicated; this prevents replicas from diverging
-		KFS_LOG_VA_INFO("Write lease: %lld is being re-replicated => EBUSY", r->chunkId);
+		KFS_LOG_STREAM_INFO << "Write lease: " << r->chunkId <<
+			" is being re-replicated => EBUSY" <<
+		KFS_LOG_EOM;
 		return -EBUSY;
 	}
 
 	l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
 			ptr_fun(LeaseInfo::IsValidWriteLease));
 	if (l != v.chunkLeases.end()) {
-		LeaseInfo lease = *l;
-		string s = timeToStr(lease.expires);
 #ifdef DEBUG
-		time_t now = time(0);
-		assert(now <= lease.expires);
-		KFS_LOG_DEBUG("write lease exists...no version bump");
+		const time_t now = TimeNow();
+		assert(now <= l->expires);
+		KFS_LOG_STREAM_DEBUG << "write lease exists, no version bump" <<
+		KFS_LOG_EOM;
 #endif
 		// valid write lease; so, tell the client where to go
-		KFS_LOG_VA_INFO("Valid write lease exists for %lld (expires = %s)", r->chunkId, s.c_str());
+		KFS_LOG_STREAM_INFO << "Valid write lease exists for " << r->chunkId <<
+			" expires=" << timeToStr(l->expires) <<
+		KFS_LOG_EOM;
 		isNewLease = false;
 		r->servers = v.chunkServers;
-		r->master = lease.chunkServer;
+		r->master = l->chunkServer;
 		return 0;
 	}
 	// there is no valid write lease; to issue a new write lease, we
 	// need to do a version # bump.  do that only if we haven't yet
 	// handed out valid read leases
-	l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
-			ptr_fun(LeaseInfo::IsValidLease));
-	if (l != v.chunkLeases.end()) {
-		KFS_LOG_DEBUG("GetChunkWriteLease: read lease => EBUSY");
+	if (! ExpiredLeaseCleanup(r->chunkId, TimeNow())) {
+		KFS_LOG_STREAM_DEBUG <<
+			"GetChunkWriteLease: read lease for chunk " <<
+				r->chunkId << " => EBUSY" <<
+		KFS_LOG_EOM;
 		return -EBUSY;
 	}
-	// no one has a valid lease
-	LeaseCleanup(r->chunkId, v);
+	// Check if make stable is in progress.
+	// It is crucial to check the after invoking ExpiredLeaseCleanup()
+	// Expired lease cleanup the above can start make chunk stable.
+	if (! IsChunkStable(r->chunkId)) {
+		KFS_LOG_STREAM_INFO <<
+			"Chunk " << r->chunkId << " isn't yet stable => EBUSY" <<
+		KFS_LOG_EOM;
+		return -EBUSY;
+	}
+        // Check if servers vector has changed:
+        // chunk servers can go down in ExpiredLeaseCleanup()
+	if (v.chunkServers.empty())
+		// all the associated servers are dead...so, fail
+		// the allocation request.
+		return -KFS::EDATAUNAVAIL;
 
 	// Need space on the servers..otherwise, fail it
 	r->servers = v.chunkServers;
 	for (i = 0; i < r->servers.size(); i++) {
-		if (r->servers[i]->GetAvailSpace() < CHUNKSIZE)
+		if (r->servers[i]->GetAvailSpace() < (int64_t)CHUNKSIZE)
 			return -ENOSPC;
 	}
 
 	isNewLease = true;
 
-	LeaseInfo lease(WRITE_LEASE, mLeaseId, r->servers[0], r->pathname);
+	// when issuing a new lease, bump the version # by the increment
+	r->chunkVersion += chunkVersionInc;
+	const LeaseInfo lease(WRITE_LEASE, mLeaseId, r->servers[0], r->pathname, r->appendChunk);
 	mLeaseId++;
 
 	v.chunkLeases.push_back(lease);
-	mChunkToServerMap[r->chunkId] = v;
 
 	mChunksWithLeases.insert(r->chunkId);
 
-	// when issuing a new lease, bump the version # by the increment
-	r->chunkVersion += chunkVersionInc;
 	r->master = r->servers[0];
-	r->master->AllocateChunk(r, lease.leaseId);
+	KFS_LOG_STREAM_INFO <<
+		"New write lease issued for " << r->chunkId <<
+		"; version=" << r->chunkVersion <<
+	KFS_LOG_EOM;
 
-	for (i = 1; i < r->servers.size(); i++) {
-		r->servers[i]->AllocateChunk(r, -1);
+	for (i = r->servers.size(); i-- > 0; ) {
+		r->servers[i]->AllocateChunk(r, i == 0 ? lease.leaseId : -1);
+	}
+	return 0;
+}
+
+/*
+ * \brief During atomic record appends, a client tries to allocate a block.
+ * Since the client doesn't know the file size, the client notifies the
+ * metaserver it is trying to append.  Simply allocating a new chunk for each
+ * such request will cause too many chunks.  Instead, the metaserver picks one
+ * of the existing chunks of the file which has a valid write lease (presumably,
+ * that chunk is not full), and returns that info.  When the client gets the
+ * info, it is possible that the chunk became full. In such a scenario, the client may have to try
+ * multiple times until it finds a chunk that it can write to.
+ */
+int
+LayoutManager::AllocateChunkForAppend(MetaAllocate *req)
+{
+	ARAChunkCache::Entry* const entry = mARAChunkCache.Get(req->fid);
+	if (! entry) {
+		return -1;
 	}
 
-	KFS_LOG_VA_INFO("New write lease issued for %lld; version = %lld", r->chunkId, r->chunkVersion);
+	KFS_LOG_STREAM_DEBUG << "Append on file " << req->fid <<
+		" with offset " << req->offset <<
+                " max offset  " << entry->offset <<
+		(entry->IsAllocationPending() ?
+			" allocation in progress" : "") <<
+	KFS_LOG_EOM;
 
+	if (entry->offset < 0 || (entry->offset % CHUNKSIZE) != 0) {
+		assert(! "invalid offset");
+		mARAChunkCache.Invalidate(req->fid);
+		return -1;
+	}
+	// The client is providing an offset hint in the case when it needs a
+	// new chunk: space allocation failed because chunk is full, or it can
+	// not talk to the chunk server.
+	// 
+	// If allocation has already finished, then cache entry offset is valid,
+	// otherwise the offset is equal to EOF at the time the initial request
+	// has started. The client specifies offset just to indicate that it
+	// wants a new chunk, and when the allocation finishes it will get the
+	// new chunk.
+	if (entry->offset < req->offset && ! entry->IsAllocationPending()) {
+		return -1;
+	}
+
+       	CSMapConstIter const iter = mChunkToServerMap.find(entry->chunkId);
+       	if (iter == mChunkToServerMap.end()) {
+		return -1;
+	}
+	const ChunkPlacementInfo& v = iter->second;
+	if ((v.chunkServers.empty()) || (v.ongoingReplications > 0)) {
+		return -1;
+	}
+	vector<LeaseInfo>::const_iterator const l =
+		find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
+			ptr_fun(LeaseInfo::IsValidWriteLease));
+	if (l == v.chunkLeases.end()) {
+		return -1;
+	}
+	// Since there is no un-reservation mechanism, decay reservation by
+	// factor of 2 every mReservationDecayStep sec.
+	// The goal is primarily to decrease # or rtt and meta server cpu
+	// consumption due to chunk space reservation contention between
+	// multiple concurrent appenders, while keeping chunk size as large as
+	// possible.
+	const time_t now = TimeNow();
+	if (mReservationDecayStep > 0 &&
+			entry->lastDecayTime +
+			mReservationDecayStep <= now) {
+		const size_t exp = (now - entry->lastDecayTime) /
+			mReservationDecayStep;
+		if (exp >= sizeof(entry->spaceReservationSize) * 8) {
+			entry->spaceReservationSize = 0;
+		} else {
+			entry->spaceReservationSize >>= exp;
+		}
+		entry->lastDecayTime = now;
+	}
+	const int reservationSize = (int)(min(double(mMaxReservationSize),
+		mReservationOvercommitFactor *
+		max(1, req->spaceReservationSize)));
+	if (entry->spaceReservationSize + reservationSize >
+			mChunkReservationThreshold) {
+		return -1;
+	}
+	// valid write lease; so, tell the client where to go
+	req->chunkId = entry->chunkId;
+	req->offset = entry->offset;
+	req->chunkVersion = entry->chunkVersion;
+	req->servers = v.chunkServers;
+	req->master = l->chunkServer;
+	entry->numAppendersInChunk++;
+	entry->lastAccessedTime = now;
+	entry->spaceReservationSize += reservationSize;
+	const bool pending = entry->AddPending(*req);
+	KFS_LOG_STREAM_DEBUG <<
+		"Valid write lease exists for " << req->chunkId <<
+		" expires in " << (l->expires - TimeNow()) << " sec" <<
+		" space: " << entry->spaceReservationSize <<
+		" (+" << reservationSize <<
+		"," << req->spaceReservationSize << ")" <<
+		" num appenders: " << entry->numAppendersInChunk <<
+		(pending ? " allocation in progress" : "") <<
+	KFS_LOG_EOM;
 	return 0;
+}
+
+/*
+ * The chunk files are named <fid, chunkid, version>. The fid is now ignored by
+ * the meta server.
+*/
+void
+LayoutManager::CoalesceBlocks(const vector<chunkId_t>& srcChunks, fid_t srcFid,
+				fid_t dstFid, const off_t dstStartOffset)
+{
+	mARAChunkCache.Invalidate(srcFid);
+
+	// All src chunks moved to the the of dst file -- update offset indexes.
+	assert(dstStartOffset >= 0);
+	const uint32_t chunkOffsetIndexAdd =
+		(uint32_t)(dstStartOffset / CHUNKSIZE);
+	for (vector<chunkId_t>::const_iterator it = srcChunks.begin();
+			it != srcChunks.end(); ++it) {
+		CSMapIter const cs = mChunkToServerMap.find(*it);
+		if (cs == mChunkToServerMap.end()) {
+			KFS_LOG_STREAM_ERROR <<
+				"Coalesce blocks: unknown chunk: " << *it <<
+			KFS_LOG_EOM;
+		} else {
+			if (cs->second.fid != srcFid) {
+				KFS_LOG_STREAM_ERROR <<
+					"Coalesce blocks: chunk: " << *it <<
+					" undexpected file id: " << cs->second.fid <<
+					" expect: " << srcFid <<
+				KFS_LOG_EOM;
+			}
+			cs->second.fid = dstFid;
+			cs->second.chunkOffsetIndex += chunkOffsetIndexAdd;
+		}
+	}
 }
 
 /*
@@ -1043,10 +2051,9 @@ LayoutManager::GetChunkWriteLease(MetaAllocate *r, bool &isNewLease)
 int
 LayoutManager::GetChunkReadLease(MetaLeaseAcquire *req)
 {
-	ChunkPlacementInfo v;
-
 	if (InRecovery()) {
-		KFS_LOG_INFO("GetChunkReadLease: inRecovery() => EBUSY");
+		KFS_LOG_STREAM_INFO << "GetChunkReadLease: inRecovery() => EBUSY" <<
+		KFS_LOG_EOM;
 		return -EBUSY;
 	}
 
@@ -1054,13 +2061,36 @@ LayoutManager::GetChunkReadLease(MetaLeaseAcquire *req)
         if (iter == mChunkToServerMap.end())
                 return -EINVAL;
 
+	ChunkPlacementInfo& v = iter->second;
+	vector<LeaseInfo>::iterator l;
+	l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
+			ptr_fun(&LeaseInfo::IsWriteLease));
+	if (l != v.chunkLeases.end()) {
+		KFS_LOG_STREAM_DEBUG <<
+			(LeaseInfo::IsValidWriteLease(*l) ? "Valid" : "Expired") <<
+			" write lease exists for chunk " << req->chunkId <<
+			" => EBUSY" <<
+		KFS_LOG_EOM;
+		return -EBUSY;
+	}
+	//
+	// Even if there is no write lease, wait until the chunk is stable
+	// before the client can read the data.  We could optimize by letting
+	// the client read from servers where the data is stable, but that
+	// requires more book-keeping; so, we'll defer for now.
+	//
+	if (!IsChunkStable(req->chunkId)) {
+		KFS_LOG_STREAM_INFO << "Chunk " << req->chunkId <<
+			" isn't yet stable => EBUSY" <<
+		KFS_LOG_EOM;
+		return -EBUSY;
+	}
+
 	// issue a read lease
-	LeaseInfo lease(READ_LEASE, mLeaseId);
+	const LeaseInfo lease(READ_LEASE, mLeaseId, false);
 	mLeaseId++;
 
-	v = iter->second;
 	v.chunkLeases.push_back(lease);
-	mChunkToServerMap[req->chunkId] = v;
 	req->leaseId = lease.leaseId;
 
 	mChunksWithLeases.insert(req->chunkId);
@@ -1069,20 +2099,19 @@ LayoutManager::GetChunkReadLease(MetaLeaseAcquire *req)
 }
 
 class ValidLeaseIssued {
-	CSMap &chunkToServerMap;
+	const CSMap &chunkToServerMap;
 public:
-	ValidLeaseIssued(CSMap &m) : chunkToServerMap(m) { }
+	ValidLeaseIssued(const CSMap &m) : chunkToServerMap(m) { }
 	bool operator() (MetaChunkInfo *c) {
-		ChunkPlacementInfo v;
-		vector<LeaseInfo>::iterator l;
-
-		CSMapIter iter = chunkToServerMap.find(c->chunkId);
+		CSMapConstIter const iter = chunkToServerMap.find(c->chunkId);
 		if (iter == chunkToServerMap.end())
 			return false;
-		v = iter->second;
-		l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
-				ptr_fun(LeaseInfo::IsValidLease));
-		return (l != v.chunkLeases.end());
+		const ChunkPlacementInfo& v = iter->second;
+		return (
+			find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
+				ptr_fun(LeaseInfo::IsValidLease)) !=
+			v.chunkLeases.end()
+		);
 	}
 };
 
@@ -1094,13 +2123,13 @@ LayoutManager::IsValidLeaseIssued(const vector <MetaChunkInfo *> &c)
 	i = find_if(c.begin(), c.end(), ValidLeaseIssued(mChunkToServerMap));
 	if (i == c.end())
 		return false;
-	KFS_LOG_VA_DEBUG("Valid lease issued on chunk: %lld",
-			(*i)->chunkId);
+	KFS_LOG_STREAM_DEBUG << "Valid lease issued on chunk: " <<
+			(*i)->chunkId << KFS_LOG_EOM;
 	return true;
 }
 
 class LeaseIdMatcher {
-	int64_t myid;
+	const int64_t myid;
 public:
 	LeaseIdMatcher(int64_t id) : myid(id) { }
 	bool operator() (const LeaseInfo &l) {
@@ -1111,58 +2140,29 @@ public:
 int
 LayoutManager::LeaseRenew(MetaLeaseRenew *req)
 {
-	ChunkPlacementInfo v;
 	vector<LeaseInfo>::iterator l;
 
         CSMapIter iter = mChunkToServerMap.find(req->chunkId);
         if (iter == mChunkToServerMap.end()) {
-		if (InRecovery()) {
-			// Allow lease renewals during recovery
-			LeaseInfo lease(req->leaseType, req->leaseId);
-			if (req->leaseId > mLeaseId)
-				mLeaseId = req->leaseId + 1;
-			v.chunkLeases.push_back(lease);
-			mChunkToServerMap[req->chunkId] = v;
-			return 0;
+		if (InRecovery() && req->leaseId >= mLeaseId) {
+			mLeaseId = req->leaseId + 1;
 		}
                 return -EINVAL;
 
 	}
-	v = iter->second;
+	ChunkPlacementInfo& v = iter->second;
 	l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
 			LeaseIdMatcher(req->leaseId));
-	if (l == v.chunkLeases.end())
+	if (l == v.chunkLeases.end()) {
 		return -EINVAL;
-	time_t now = time(0);
+	}
+	const time_t now = TimeNow();
 	if (now > l->expires) {
 		// can't renew dead leases; get a new one
-		v.chunkLeases.erase(l);
 		return -ELEASEEXPIRED;
 	}
 	l->expires = now + LEASE_INTERVAL_SECS;
-	mChunkToServerMap[req->chunkId] = v;
 	mChunksWithLeases.insert(req->chunkId);
-	return 0;
-}
-
-int
-LayoutManager::LeaseRelinquish(MetaLeaseRelinquish *req)
-{
-	ChunkPlacementInfo v;
-	vector<LeaseInfo>::iterator l;
-
-        CSMapIter iter = mChunkToServerMap.find(req->chunkId);
-	if (iter == mChunkToServerMap.end())
-		return -ELEASEEXPIRED;
-	
-	v = iter->second;
-	l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
-			LeaseIdMatcher(req->leaseId));
-	if (l == v.chunkLeases.end())
-		return -EINVAL;
-	// the owner of the lease is giving up the lease; so, remove the lease
-	v.chunkLeases.erase(l);
-	mChunkToServerMap[req->chunkId] = v;
 	return 0;
 }
 
@@ -1173,28 +2173,32 @@ LayoutManager::LeaseRelinquish(MetaLeaseRelinquish *req)
 void
 LayoutManager::ChunkCorrupt(MetaChunkCorrupt *r)
 {
-	ChunkPlacementInfo v;
-
-	r->server->IncCorruptChunks();
+	if (! r->isChunkLost)
+		r->server->IncCorruptChunks();
 
         CSMapIter iter = mChunkToServerMap.find(r->chunkId);
 	if (iter == mChunkToServerMap.end())
 		return;
 
-	v = iter->second;
-	if(v.fid != r->fid) {
-		KFS_LOG_VA_WARN("Server %s claims invalid chunk: <%lld, %lld> to be corrupt",
-				r->server->ServerID().c_str(), r->fid, r->chunkId);
-		return;
-	}
-
-	KFS_LOG_VA_INFO("Server %s claims file/chunk: <%lld, %lld> to be corrupt",
-			r->server->ServerID().c_str(), r->fid, r->chunkId);
-	v.chunkServers.erase(remove_if(v.chunkServers.begin(), v.chunkServers.end(),
-			ChunkServerMatcher(r->server.get())), v.chunkServers.end());
-	mChunkToServerMap[r->chunkId] = v;
-	// check the replication state when the replicaiton checker gets to it
-	ChangeChunkReplication(r->chunkId);
+	ChunkPlacementInfo& v = iter->second;
+        const size_t prevNumSrv = v.chunkServers.size();
+	EraseReallocIfNeeded(v.chunkServers, remove_if(
+		v.chunkServers.begin(), v.chunkServers.end(),
+		ChunkServerMatcher(r->server.get())), v.chunkServers.end());
+	for_each(v.chunkLeases.begin(), v.chunkLeases.end(),
+		ExpireLeaseIfOwner(r->server.get()));
+        if (prevNumSrv != v.chunkServers.size()) {
+            // Invalidate cache.
+            mARAChunkCache.Invalidate(r->fid);
+	    // check the replication state when the replicaiton checker gets to it
+	    ChangeChunkReplication(r->chunkId);
+        }
+	KFS_LOG_STREAM_INFO << "Server " << r->server->ServerID() <<
+		" claims file/chunk: <" <<
+                v.fid << "/" << r->fid << "," << r->chunkId <<
+		"> to be " << (r->isChunkLost ? "lost" : "corrupt") <<
+                " servers: " << prevNumSrv << " -> " << v.chunkServers.size() <<
+	KFS_LOG_EOM;
 
 	// this chunk has to be replicated from elsewhere; since this is no
 	// longer hosted on this server, take it out of its list of blocks
@@ -1205,10 +2209,14 @@ LayoutManager::ChunkCorrupt(MetaChunkCorrupt *r)
 }
 
 class ChunkDeletor {
-    chunkId_t chunkId;
+	const chunkId_t chunkId;
 public:
-    ChunkDeletor(chunkId_t c) : chunkId(c) { }
-    void operator () (ChunkServerPtr &c) { c->DeleteChunk(chunkId); }
+	ChunkDeletor(chunkId_t c)
+		: chunkId(c)
+		{}
+	void operator () (const ChunkServerPtr &c) {
+		c->DeleteChunk(chunkId);
+	}
 };
 
 ///
@@ -1219,20 +2227,23 @@ public:
 void
 LayoutManager::DeleteChunk(chunkId_t chunkId)
 {
-	vector<ChunkServerPtr> c;
-
         // if we know anything about this chunk at all, then we
         // process the delete request.
-	if (GetChunkToServerMapping(chunkId, c) != 0)
+        CSMapIter const iter = mChunkToServerMap.find(chunkId);
+	if (iter == mChunkToServerMap.end()) {
 		return;
+	}
 
+	vector<ChunkServerPtr> const c(iter->second.chunkServers);
 	// remove the mapping
-	mChunkToServerMap.erase(chunkId);
+	mChunkToServerMap.erase(iter);
+	mPendingBeginMakeStable.erase(chunkId);
+	mPendingMakeStable.erase(chunkId);
+	mChunkReplicationCandidates.erase(chunkId);
 
 	// submit an RPC request
 	for_each(c.begin(), c.end(), ChunkDeletor(chunkId));
 }
-
 
 class Truncator {
     chunkId_t chunkId;
@@ -1263,6 +2274,7 @@ LayoutManager::TruncateChunk(chunkId_t chunkId, off_t sz)
 
 void
 LayoutManager::AddChunkToServerMapping(chunkId_t chunkId, fid_t fid,
+					off_t offset,
 					ChunkServer *c)
 {
 	ChunkPlacementInfo v;
@@ -1277,13 +2289,15 @@ LayoutManager::AddChunkToServerMapping(chunkId_t chunkId, fid_t fid,
 
 	assert(ValidServer(c));
 
-	KFS_LOG_VA_DEBUG("Laying out chunk=%lld on server %s",
-			 chunkId, c->GetServerName());
+	KFS_LOG_STREAM_DEBUG << "Laying out chunk=" << chunkId << " on server  " <<
+		c->GetServerName() << KFS_LOG_EOM;
 
 	if (UpdateChunkToServerMapping(chunkId, c) == 0)
             return;
 
 	v.fid = fid;
+	assert((offset % CHUNKSIZE) == 0);
+	v.chunkOffsetIndex = (offset / CHUNKSIZE);
         v.chunkServers.push_back(c->shared_from_this());
         mChunkToServerMap[chunkId] = v;
 }
@@ -1291,11 +2305,9 @@ LayoutManager::AddChunkToServerMapping(chunkId_t chunkId, fid_t fid,
 void
 LayoutManager::RemoveChunkToServerMapping(chunkId_t chunkId)
 {
-        CSMapIter iter = mChunkToServerMap.find(chunkId);
-        if (iter == mChunkToServerMap.end())
-                return;
-
-        mChunkToServerMap.erase(iter);
+        mChunkToServerMap.erase(chunkId);
+	mPendingBeginMakeStable.erase(chunkId);
+	mPendingMakeStable.erase(chunkId);
 }
 
 int
@@ -1308,12 +2320,23 @@ LayoutManager::UpdateChunkToServerMapping(chunkId_t chunkId, ChunkServer *c)
                 return -1;
 
 	/*
-	KFS_LOG_VA_DEBUG("chunk=%lld was laid out on server %s",
-			 chunkId, c->GetServerName());
+	KFS_LOG_STREAM_DEBUG << "chunk=" << chunkId << " was laid out on server " <<
+		c->GetServerName() << KFS_LOG_EOM;
 	*/
         iter->second.chunkServers.push_back(c->shared_from_this());
 
         return 0;
+}
+
+bool
+LayoutManager::GetChunkFileId(chunkId_t chunkId, fid_t& fileId)
+{
+        CSMapConstIter const it = mChunkToServerMap.find(chunkId);
+	if (it == mChunkToServerMap.end()) {
+		return false;
+	}
+	fileId = it->second.fid;
+	return true;
 }
 
 int
@@ -1342,12 +2365,13 @@ LayoutManager::Dispatch()
 {
 	// this method is called in the context of the network thread.
 	// lock out the request processor to prevent changes to the list.
+	// XXX: Above comment doesn't apply anymore.
 
-	pthread_mutex_lock(&mChunkServersMutex);
+	// pthread_mutex_lock(&mChunkServersMutex);
 
 	for_each(mChunkServers.begin(), mChunkServers.end(), Dispatcher());
 
-	pthread_mutex_unlock(&mChunkServersMutex);
+	// pthread_mutex_unlock(&mChunkServersMutex);
 }
 
 class Heartbeater {
@@ -1363,12 +2387,13 @@ LayoutManager::HeartbeatChunkServers()
 {
 	// this method is called in the context of the network thread.
 	// lock out the request processor to prevent changes to the list.
+	// XXX: Above comment doesn't apply anymore.
 
-	pthread_mutex_lock(&mChunkServersMutex);
+	// pthread_mutex_lock(&mChunkServersMutex);
 
 	for_each(mChunkServers.begin(), mChunkServers.end(), Heartbeater());
 
-	pthread_mutex_unlock(&mChunkServersMutex);
+	// pthread_mutex_unlock(&mChunkServersMutex);
 }
 
 bool
@@ -1410,12 +2435,17 @@ LayoutManager::Ping(string &systemInfo, string &upServers, string &downServers, 
 	uint64_t totalSpace = 0, usedSpace = 0;
 	Pinger doPing(upServers, totalSpace, usedSpace);
 	for_each(mChunkServers.begin(), mChunkServers.end(), doPing);
-	downServers = mDownServers.str();
+	downServers.clear();
+	for (DownServers::const_iterator it = mDownServers.begin();
+			it != mDownServers.end();
+			++it) {
+		downServers += *it;
+	}
 	for_each(mChunkServers.begin(), mChunkServers.end(), RetiringStatus(retiringServers));
 
 	ostringstream os;
 
-	os << "Up since= " << timeToStr(mRecoveryStartTime) << '\t';
+	os << "Up since= " << timeToStr(mStartTime) << '\t';
 	os << "Total space= " << totalSpace << '\t';
 	os << "Used space= " << usedSpace;
 	systemInfo = os.str();
@@ -1437,6 +2467,29 @@ LayoutManager::UpServers(ostringstream &os)
     for_each(mChunkServers.begin(), mChunkServers.end(), upServers);
 }
 
+class ReReplicationCheckIniter {
+	CRCandidateSet &crset;
+	CRCandidateSet &prioritySet;
+public:
+	ReReplicationCheckIniter(CRCandidateSet &c, CRCandidateSet &p) : crset(c), prioritySet(p) { }
+	void operator () (const CSMap::value_type p) {
+		crset.insert(p.first);
+		if (p.second.chunkServers.size() == 1)
+			prioritySet.insert(p.first);
+	}
+};
+
+
+// Periodically, check the replication level of ALL chunks in the system.
+void
+LayoutManager::InitCheckAllChunks()
+{
+	mPriorityChunkReplicationCandidates.clear();
+	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
+		ReReplicationCheckIniter(mChunkReplicationCandidates, 
+					mPriorityChunkReplicationCandidates));
+}
+
 /// functor to tell if a lease has expired
 class LeaseExpired {
 	time_t now;
@@ -1446,108 +2499,1291 @@ public:
 
 };
 
-class ChunkWriteDecrementor {
-public:
-	void operator() (ChunkServerPtr &c) { c->UpdateNumChunkWrites(-1); }
-};
-
 /// If the write lease on a chunk is expired, then decrement the # of writes
 /// on the servers that are involved in the write.
 class DecChunkWriteCount {
-	fid_t f;
-	chunkId_t c;
+	const fid_t     fid;
+	const chunkId_t chunkId;
+	const CSMap&    chunkMap;
+	int             writeLeaseCount;
 public:
-	DecChunkWriteCount(fid_t fid, chunkId_t id) : f(fid), c(id) { }
+	DecChunkWriteCount(const CSMap& map, fid_t fid, chunkId_t chunkId)
+		: fid(fid),
+		  chunkId(chunkId),
+		  chunkMap(map),
+		  writeLeaseCount(0)
+		{}
 	void operator() (const LeaseInfo &l) {
-		if (l.leaseType != WRITE_LEASE)
+		if (l.leaseType != WRITE_LEASE) {
 			return;
-		vector<ChunkServerPtr> servers;
-		gLayoutManager.GetChunkToServerMapping(c, servers);
-		for_each(servers.begin(), servers.end(), ChunkWriteDecrementor());
-		// get the chunk's size from one of the servers
-		if (servers.size() > 0)
-			servers[0]->GetChunkSize(f, c, l.pathname);
+		}
+		if (++writeLeaseCount > 1) {
+			KFS_LOG_STREAM_ERROR << "decrement write count:" <<
+				" <" << fid << "," << chunkId << ">"
+				" name: " << l.pathname <<
+				" write lease count: " << writeLeaseCount <<
+				", extraneous write" <<
+					(l.appendFlag ? " append" : "") <<
+				" lease ignored" <<
+			KFS_LOG_EOM;
+			return;
+		}
+		CSMapConstIter const ci = chunkMap.find(chunkId);
+		if (ci == chunkMap.end()) {
+			return;
+		}
+		if (l.relinquishedFlag) {
+			return;
+		}
+		gLayoutManager.MakeChunkStableInit(
+			fid, chunkId, ci->second.chunkOffsetIndex * CHUNKSIZE,
+			l.pathname, ci->second.chunkServers, l.appendFlag,
+			-1, false, 0
+		);
 	}
+};
 
+bool
+LayoutManager::ExpiredLeaseCleanup(
+	chunkId_t                 chunkId,
+	time_t                    now,
+	int                       ownerDownExpireDelay /* = 0 */,
+	const CRCandidateSetIter* chunksWithLeasesIt   /* = 0 */)
+{
+	CSMapIter const iter = mChunkToServerMap.find(chunkId);
+	if (iter == mChunkToServerMap.end()) {
+		if (chunksWithLeasesIt) {
+			mChunksWithLeases.erase(*chunksWithLeasesIt);
+		}
+		return true;
+	}
+	ChunkPlacementInfo& c = iter->second;
+	vector<LeaseInfo>::iterator const i = remove_if(
+		c.chunkLeases.begin(), c.chunkLeases.end(), LeaseExpired(now));
+	if (ownerDownExpireDelay > 0 &&
+			i != c.chunkLeases.end() &&
+			i->ownerWasDownFlag &&
+			LeaseInfo::IsWriteLease(*i) &&
+			i->expires + ownerDownExpireDelay > now) {
+		return false;
+	}
+	if (i != c.chunkLeases.end() && i->appendFlag) {
+		mARAChunkCache.Invalidate(c.fid, chunkId);
+	}
+	// The call to DecChunkWriteCount() can cause the chunk to get deleted:
+	// for instance, if there was an allocation request outstanding, the
+	// allocate will fail because one of the servers went down, causing us
+	// to free chunkLeases.  Then, we come back here, boom.  To fix, stash
+	// away what needs to be deleted into a local and then operate on that.
+	vector<LeaseInfo> const leases(i, c.chunkLeases.end());
+	// trim the list
+	const bool retVal = EraseReallocIfNeeded(
+		c.chunkLeases, i, c.chunkLeases.end()).empty();
+	if (retVal && chunksWithLeasesIt) {
+		mChunksWithLeases.erase(*chunksWithLeasesIt);
+	}
+	for_each(leases.begin(), leases.end(),
+		DecChunkWriteCount(mChunkToServerMap, c.fid, chunkId));
+	// If the chunk disappeared or cleaned up in the process then most likely
+	// mChunksWithLeases is already cleaned up, if not then it will be
+	// cleaned on the next timer run. mChunksWithLeases is only used for
+	// lease cleanup, stale entry should not cause a problem.
+	return retVal;
+}
+
+bool
+LayoutManager::ExpiredLeaseCleanup(chunkId_t chunkId)
+{
+	if (! ExpiredLeaseCleanup(chunkId, TimeNow())) {
+		return false;
+	}
+	mChunksWithLeases.erase(chunkId);
+	return true;
+}
+
+struct UptimeLess :
+	public std::binary_function<ChunkServerPtr, ChunkServerPtr, bool>
+{
+	bool operator() (const ChunkServerPtr& lhs, ChunkServerPtr& rhs) const {
+		return (lhs.get()->Uptime() < rhs.get()->Uptime());
+	}
 };
 
 void
 LayoutManager::LeaseCleanup()
 {
-	time_t now = time(0);
-
-	for (CRCandidateSetIter citer = mChunksWithLeases.begin(); 
+	const time_t now = TimeNow();
+	for (CRCandidateSetIter citer = mChunksWithLeases.begin();
 		citer != mChunksWithLeases.end(); ) {
-		chunkId_t chunkId = *citer;
-		CSMapIter iter = mChunkToServerMap.find(chunkId); 
+		CRCandidateSetIter it = citer++;
+		ExpiredLeaseCleanup(*it, now, mLeaseOwnerDownExpireDelay, &it);
+	}
+	// also clean out the ARACache of old entries
+	mARAChunkCache.Timeout(now - ARA_CHUNK_CACHE_EXPIRE_INTERVAL);
+	if (now - mLastReplicationCheckTime > NDAYS_PER_FULL_REPLICATION_CHECK * 60 * 60 * 24) {
+		KFS_LOG_STREAM_INFO <<
+			"Initiating a replication check of all chunks..." <<
+		KFS_LOG_EOM;
+		InitCheckAllChunks();
+		mLastReplicationCheckTime = now;
+	}
+	if (now - mLastRecomputeDirsizeTime > 60 * 60) {
+		KFS_LOG_STREAM_INFO << "Doing a recompute dir size..." <<
+		KFS_LOG_EOM;
+		metatree.recomputeDirSize();
+		mLastRecomputeDirsizeTime = now;
+		KFS_LOG_STREAM_INFO << "Recompute dir size is done..." <<
+		KFS_LOG_EOM;
+	}
+	ScheduleChunkServersRestart();
+}
 
-		if (iter == mChunkToServerMap.end()) {
-			CRCandidateSetIter toErase = citer;
-
-			++citer;
-			mChunksWithLeases.erase(toErase);
-			continue;
+void LayoutManager::ScheduleChunkServersRestart()
+{
+	if (! IsChunkServerRestartAllowed()) {
+		return;
+	}
+	vector<ChunkServerPtr> servers(mChunkServers);
+	make_heap(servers.begin(), servers.end(), UptimeLess());
+	while (! servers.empty()) {
+		ChunkServer& srv = *servers.front().get();
+		if (srv.Uptime() < mMaxCSUptime) {
+			break;
 		}
-
-		ChunkPlacementInfo c = iter->second;
-
-		vector<LeaseInfo>::iterator i;
-		i = remove_if(c.chunkLeases.begin(), c.chunkLeases.end(),
-			LeaseExpired(now));
-
-		for_each(i, c.chunkLeases.end(), DecChunkWriteCount(c.fid, chunkId));
-		// trim the list
-		c.chunkLeases.erase(i, c.chunkLeases.end());
-		mChunkToServerMap[chunkId] = c;
-		if (c.chunkLeases.size() == 0) {
-			CRCandidateSetIter toErase = citer;
-
-			++citer;
-			mChunksWithLeases.erase(toErase);
-		} else {
-			++citer;
+		bool restartFlag = srv.IsRestartScheduled();
+		if (! restartFlag && mCSToRestartCount < mMaxCSRestarting) {
+			// Make sure that there are enough masters.
+			restartFlag = ! srv.CanBeChunkMaster() ||
+					mMastersCount > mMastersToRestartCount +
+						max(size_t(1), mSlavesCount / 2 * 3);
+			if (! restartFlag && ! mAssignMasterByIpFlag) {
+				for (vector<ChunkServerPtr>::iterator
+						it = servers.begin();
+						it != servers.end();
+						++it) {
+					if (! (*it)->CanBeChunkMaster() &&
+							! (*it)->IsRestartScheduled() &&
+							IsCandidateServer(*it)) {
+						(*it)->SetCanBeChunkMaster(true);
+						srv.SetCanBeChunkMaster(false);
+						restartFlag = true;
+						break;
+					}
+				}
+			}
+			if (restartFlag) {
+				mCSToRestartCount++;
+				if (srv.CanBeChunkMaster()) {
+					mMastersToRestartCount++;
+				}
+			}
 		}
+		if (restartFlag &&
+				srv.ScheduleRestart(
+					mCSGracefulRestartTimeout,
+					mCSGracefulRestartAppendWithWidTimeout)) {
+			KFS_LOG_STREAM_INFO <<
+				"initiated restart sequence for: " <<
+				servers.front()->ServerID() <<
+			KFS_LOG_EOM;
+			break;
+		}
+		pop_heap(servers.begin(), servers.end(), UptimeLess());
+		servers.pop_back();
 	}
 }
 
-/// functor to that cleans out expired leases
-class LeaseExpirer {
-	CSMap &cmap;
-	time_t now; 
-public:
-	LeaseExpirer(CSMap &m, time_t n): cmap(m), now(n) { }
-	void operator () (const map<chunkId_t, ChunkPlacementInfo >::value_type p)
-	{
-		ChunkPlacementInfo c = p.second;
-		chunkId_t chunkId = p.first;
-		vector<LeaseInfo>::iterator i;
-		i = remove_if(c.chunkLeases.begin(), c.chunkLeases.end(), LeaseExpired(now));
-
-		for_each(i, c.chunkLeases.end(), DecChunkWriteCount(c.fid, chunkId));
-		// trim the list
-		c.chunkLeases.erase(i, c.chunkLeases.end());
-		cmap[p.first] = c;
+// This call is internally generated: an allocation failed; invalidate the write
+// lease so that subsequent allocation request will force a version # bump and
+// a new write lease to be issued.
+void
+LayoutManager::InvalidateWriteLease(chunkId_t chunkId)
+{
+        CSMapIter const iter = mChunkToServerMap.find(chunkId);
+	if (iter == mChunkToServerMap.end()) {
+		return;
 	}
-};
+	ChunkPlacementInfo& v = iter->second;
+	vector<LeaseInfo>::iterator l = find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
+			ptr_fun(LeaseInfo::IsValidWriteLease));
+	if (l != v.chunkLeases.end()) {
+		// Invalidate the lease; the normal cleanup will fix things up.
+		l->expires = 0;
+	}
+}
+
+int
+LayoutManager::LeaseRelinquish(MetaLeaseRelinquish *req)
+{
+        CSMapIter const iter = mChunkToServerMap.find(req->chunkId);
+	if (iter == mChunkToServerMap.end()) {
+		return -ELEASEEXPIRED;
+	}
+	ChunkPlacementInfo& v = iter->second;
+	vector<LeaseInfo>::iterator const l =
+		find_if(v.chunkLeases.begin(), v.chunkLeases.end(),
+			LeaseIdMatcher(req->leaseId));
+	if (l == v.chunkLeases.end()) {
+		return -EINVAL;
+	}
+	const time_t now = TimeNow();
+	if (now > l->expires) {
+		return -ELEASEEXPIRED;
+	}
+	const bool hadLeaseFlag = ! l->relinquishedFlag;
+	l->relinquishedFlag = true;
+	// the owner of the lease is giving up the lease; update the expires so
+	// that the normal lease cleanup will work out.
+	l->expires = 0;
+	if (l->leaseType == WRITE_LEASE && hadLeaseFlag) {
+		// For write append lease checksum and size always have to be
+		// specified for make chunk stable, otherwise run begin make
+		// chunk stable.
+		const bool beginMakeChunkStableFlag = l->appendFlag &&
+			(! req->hasChunkChecksum || req->chunkSize < 0);
+		if (l->appendFlag) {
+			mARAChunkCache.Invalidate(v.fid, req->chunkId);
+		}
+		MakeChunkStableInit(
+			v.fid, req->chunkId, (v.chunkOffsetIndex * CHUNKSIZE), 
+			l->pathname, v.chunkServers,
+			beginMakeChunkStableFlag,
+			req->chunkSize, req->hasChunkChecksum, req->chunkChecksum
+		);
+	}
+	return 0;
+}
 
 // Periodically, check the status of all the leases
 // This is an expensive call...use sparingly....
 void
 LayoutManager::CheckAllLeases()
 {
-	time_t now = time(0);
-	for_each(mChunkToServerMap.begin(), mChunkToServerMap.end(),
-		LeaseExpirer(mChunkToServerMap, now));
+	const time_t now = TimeNow();
+	for (CSMapIter it = mChunkToServerMap.first();
+			it != mChunkToServerMap.end();
+			it = mChunkToServerMap.next()) {
+		ExpiredLeaseCleanup(it->first, now, mLeaseOwnerDownExpireDelay);
+	}
 }
 
-// Cleanup the leases for a particular chunk
-void
-LayoutManager::LeaseCleanup(chunkId_t chunkId, ChunkPlacementInfo &v)
+/*
+
+Make chunk stable protocol description.
+
+The protocol is mainly designed for write append, though it is also partially
+used for random write.
+
+The protocol is needed to solve consensus problem, i.e. make all chunk replicas
+identical. This also allows replication participants (chunk servers) to
+determine the status of a particular write append operation, and, if requested,
+to convey this status to the write append client(s).
+
+The fundamental idea is that the meta server always makes final irrevocable
+decision what stable chunk replicas should be: chunk size and chunk checksum.
+The meta server selects exactly one variant of the replica, and broadcast this
+information to all replication participants (the hosting chunk servers). More
+over, the meta server maintains this information until sufficient number or
+replicas become "stable" as a result of "make chunk stable" operation, or as a
+result of re-replication from already "stable" replica(s).
+
+The meta server receives chunk size and chunk checksum from the chunk servers.
+There are two ways meta server can get this information:
+1. Normally chunk size, and checksum are conveyed by the write master in the
+write lease release request.
+2. The meta server declares chunk master nonoperational, and broadcasts "begin
+make chunk stable" request to all remaining operational replication participants
+(slaves). The slaves reply with chunk size and chunk checksum. The meta server
+always selects one reply that has the smallest chunk size, in the hope that
+other participants can converge their replicas to this chunk size, and checksum
+by simple truncation. Begin make chunk stable repeated until the meta server
+gets at least one valid reply.
+
+The meta server writes this decision: chunk version, size, and checksum into the
+log before broadcasting make chunk stable request with these parameters to all
+operational replication participants. This guarantees that the decision is
+final: it can never change as long as the log write is persistent. Once log
+write completes successfully the meta server broadcasts make chunk stable
+request to all operational
+replication participants.
+
+The chunk server maintains the information about chunk state: stable -- read
+only, or not stable -- writable, and if the chunk was open for write append or
+for random write. This information conveyed (back) to the meta server in the
+chunk server hello message. The hello message contains 3 chunk lists: stable,
+not stable write append, and not stable random write. This is needed to make
+appropriate decision when chunk server establishes communication with the meta
+server.
+
+The chunk server can never transition not stable chunk replica into stable
+replica, unless it receives make chunk stable request from the meta server.
+The chunk server discards all non stable replicas on startup (restart).
+
+For stable chunks the server is added to the list of the servers hosting the
+chunk replica, as long as the corresponding chunk meta data exists, and version
+of the replica matches the meta data version.
+
+In case of a failure, the meta server declares chunk replica stale and conveys
+this decision to the chunk server, then the chunk server discards the stale
+replica.
+
+For not stable random write chunk replicas the same checks are performed, plus
+additional step: make chunk stable request is issued, The request in this case
+does not specify the chunk size, and checksum. When make chunk stable completes
+successfully the server added to the list of servers hosting the chunk replica.
+
+With random writes version number is used to detect missing writes, and the task
+of making chunk replicas consistent left entirely up to the writer (client).
+Write lease mechanism is used to control write concurrency: for random write
+only one concurrent writer per chunk is allowed.
+
+Not stable write append chunk handling is more involved, because multiple
+concurrent write appenders are allowed to append to the same chunk.
+
+First, the same checks for chunk meta data existence, and the version match are
+applied.  If successful, then the check for existing write lease is performed.
+If the write (possibly expired) lease exists the server is added to the list of
+servers hosting the replica. If the write lease exists, and begin make chunk
+stable or make chunk stable operation for the corresponding chunk is in
+progress, the chunk server is added to the operation.
+
+If no lease exists, and begin make chunk stable was never successfully completed
+(no valid pending make chunk stable info exists), then the meta server issues
+begin make chunk stable request.
+
+Once begin make chunks stable successfully completes the meta server writes
+"mkstable" log record with the chunk version, size, and checksum into the log,
+and adds this information to in-memory pending make chunk stable table. Make
+chunk stable request is issued after log write successfully completes.
+
+The make chunk stable info is kept in memory, and in the checkpoint file until
+sufficient number of stable replicas created, or chunk ceases to exist. Once
+sufficient number of replicas is created, the make chunk stable info is purged
+from memory, and the "mkstabledone" record written to the log. If chunk ceases
+to exist then only in-memory information purged, but no log write performed.
+"Mkstabledone" log records effectively cancels "mkstable" record.
+
+Chunk allocation log records have an additional "append" attribute set to 1. Log
+replay process creates in-memory make chunk stable entry with chunk size
+attribute set to -1 for every chunk allocation record with the append attribute
+set to 1. In memory entries with size set to -1 mark not stable chunks for which
+chunk size and chunk checksum are not known. For such chunks begin make stable
+has to be issued first. The "mkstable" records are used to update in-memory
+pending make stable info with the corresponding chunk size and checksum. The
+"mkstabledone" records are used to delete the corresponding in-memory pending
+make stable info. Chunk delete log records also purge the corresponding
+in-memory pending make stable info.
+
+In memory pending delete info is written into the checkpoint file, after the
+meta (tree) information. One "mkstable" entry for every chunk that is not
+stable, or does not have sufficient number of replicas.
+
+During "recovery" period, begin make chunk stable is not issued, instead these
+are delayed until recovery period ends, in the hope that begin make stable with
+more servers has higher chances of succeeding, and can potentially produce more
+stable replicas.
+
+*/
+
+class BeginMakeChunkStable
 {
-	for_each(v.chunkLeases.begin(), v.chunkLeases.end(),
-		DecChunkWriteCount(v.fid, chunkId));
-	v.chunkLeases.clear();
+	const fid_t     fid;
+	const chunkId_t chunkId;
+	const seq_t     chunkVersion;
+public:
+	BeginMakeChunkStable(fid_t f, chunkId_t c, seq_t v)
+		: fid(f), chunkId(c), chunkVersion(v)
+	{}
+	void operator()(const ChunkServerPtr &c) const {
+            c->BeginMakeChunkStable(fid, chunkId, chunkVersion);
+        }
+};
+
+class MakeChunkStable
+{
+	const fid_t     fid;
+	const chunkId_t chunkId;
+	const seq_t     chunkVersion;
+        const off_t     chunkSize;
+        const bool      hasChunkChecksum;
+        const uint32_t  chunkChecksum;
+public:
+	MakeChunkStable(fid_t f, chunkId_t c, seq_t v,
+		off_t s, bool hasCs, uint32_t cs)
+		: fid(f), chunkId(c), chunkVersion(v),
+                  chunkSize(s), hasChunkChecksum(hasCs), chunkChecksum(cs)
+	{}
+	void operator() (const ChunkServerPtr &c) const {
+            c->MakeChunkStable(fid, chunkId, chunkVersion,
+	    	chunkSize, hasChunkChecksum, chunkChecksum);
+        }
+};
+
+void
+LayoutManager::MakeChunkStableInit(
+	fid_t                         fid,
+	chunkId_t                     chunkId,
+	off_t                         chunkOffsetInFile,
+	string                        pathname,
+	const vector<ChunkServerPtr>& servers,
+	bool                          beginMakeStableFlag,
+	off_t                         chunkSize,
+	bool                          hasChunkChecksum,
+	uint32_t                      chunkChecksum)
+{
+	const char* const logPrefix = beginMakeStableFlag ? "BMCS:" : "MCS:";
+	if (servers.empty()) {
+		if (beginMakeStableFlag) {
+			// Ensure that there is at least pending begin make
+			// stable.
+			// Append allocations are marked as such, and log replay
+			// adds begin make stable entries if necessary.
+			pair<PendingMakeStableMap::iterator, bool> const res =
+				mPendingMakeStable.insert(make_pair(
+					chunkId, PendingMakeStableEntry()));
+			if (res.second) {
+				MetaChunkInfo* cinfo = 0;
+				const int ret = metatree.getalloc(
+					fid, chunkOffsetInFile, &cinfo);
+				if (cinfo) {
+					res.first->second.mChunkVersion =
+						cinfo->chunkVersion;
+				} else {
+					KFS_LOG_STREAM_ERROR << logPrefix <<
+						" <" << fid <<
+						"," << chunkId << ">"
+						" name: " << pathname <<
+						" unable to get version"
+						" status: " << ret <<
+					KFS_LOG_EOM;
+					if (ret == -ENOENT) {
+						mPendingMakeStable.erase(res.first);
+					}
+				}
+				
+			}
+		}
+		KFS_LOG_STREAM_INFO << logPrefix <<
+			" <" << fid << "," << chunkId << ">"
+			" name: "     << pathname <<
+			" no servers" <<
+		KFS_LOG_EOM;
+		return;
+	}
+	pair<NonStableChunksMap::iterator, bool> const ret =
+		mNonStableChunks.insert(make_pair(chunkId,
+			MakeChunkStableInfo(
+				(int)servers.size(),
+				beginMakeStableFlag,
+				pathname
+		)));
+	if (! ret.second) {
+		KFS_LOG_STREAM_INFO << logPrefix <<
+			" <" << fid << "," << chunkId << ">"
+			" name: " << pathname <<
+			" already in progress" <<
+		KFS_LOG_EOM;
+		return;
+	}
+	MetaChunkInfo* cinfo = 0;
+	const int res = metatree.getalloc(fid, chunkOffsetInFile, &cinfo);
+	const seq_t chunkVersion = cinfo ? cinfo->chunkVersion : -1;
+	ret.first->second.chunkVersion = chunkVersion;
+	if (chunkVersion < 0) {
+		KFS_LOG_STREAM_ERROR << logPrefix <<
+			" <" << fid << "," << chunkId << ">"
+			" name: " << pathname <<
+			" unable to get version"
+			" status: " << res <<
+		KFS_LOG_EOM;
+		// Ignore the error and make non existent chunk stable anyway?
+	}
+	KFS_LOG_STREAM_INFO << logPrefix <<
+		" <" << fid << "," << chunkId << ">"
+		" name: "     << pathname <<
+		" version: "  << chunkVersion <<
+		" servers: "  << servers.size() <<
+		" size: "     << chunkSize <<
+		" checksum: " << (hasChunkChecksum ?
+			(int64_t)chunkChecksum : (int64_t)-1) <<
+	KFS_LOG_EOM;
+	// Make a local copy of servers.
+	// "Placement info" can change while iterating if any servers are down
+	// go down while sending the request.
+	if (beginMakeStableFlag) {
+		const vector<ChunkServerPtr> srv(servers);
+		for_each(srv.begin(), srv.end(),
+			BeginMakeChunkStable(fid, chunkId, chunkVersion));
+	} else if (hasChunkChecksum || chunkSize >= 0) {
+		// Remember chunk check sum and size.
+		PendingMakeStableEntry const pmse(
+			chunkSize,
+			hasChunkChecksum,
+			chunkChecksum,
+			chunkVersion
+		);
+		pair<PendingMakeStableMap::iterator, bool> const res =
+			mPendingMakeStable.insert(make_pair(chunkId, pmse));
+		if (! res.second) {
+			KFS_LOG_STREAM((res.first->second.mSize >= 0 ||
+					res.first->second.mHasChecksum) ?
+					MsgLogger::kLogLevelWARN :
+					MsgLogger::kLogLevelDEBUG) <<
+				logPrefix <<
+				" <" << fid << "," << chunkId << ">"
+				" updating existing pending MCS: " <<
+				" chunkId: "  << chunkId <<
+				" version: "  <<
+					res.first->second.mChunkVersion <<
+				"=>"          << pmse.mChunkVersion <<
+				" size: "     << res.first->second.mSize <<
+				"=>"          << pmse.mSize <<
+				" checksum: " <<
+					(res.first->second.mHasChecksum ?
+					int64_t(res.first->second.mChecksum) :
+					int64_t(-1)) <<
+				"=>"          << (pmse.mHasChecksum ?
+					int64_t(pmse.mChecksum) :
+					int64_t(-1)) <<
+			KFS_LOG_EOM;
+			res.first->second = pmse;
+		}
+		ret.first->second.logMakeChunkStableFlag = true;
+		submit_request(new MetaLogMakeChunkStable(
+			fid, chunkId, chunkVersion,
+			chunkSize, hasChunkChecksum, chunkChecksum, chunkId
+		));
+	} else {
+		const vector<ChunkServerPtr> srv(servers);
+		for_each(srv.begin(), srv.end(), MakeChunkStable(
+			fid, chunkId, chunkVersion,
+			chunkSize, hasChunkChecksum, chunkChecksum
+		));
+	}
 }
+
+bool
+LayoutManager::AddServerToMakeStable(
+	ChunkPlacementInfo& placementInfo,
+	ChunkServerPtr      server,
+	chunkId_t           chunkId,
+	seq_t               chunkVersion,
+	const char*&        errMsg)
+{
+	errMsg = 0;
+	NonStableChunksMap::iterator const it = mNonStableChunks.find(chunkId);
+	if (it == mNonStableChunks.end()) {
+		return false; // Not in progress
+	}
+	MakeChunkStableInfo& info = it->second;
+	if (info.chunkVersion != chunkVersion) {
+		errMsg = "version mismatch";
+		return false;
+	}
+	vector<ChunkServerPtr>& servers = placementInfo.chunkServers;
+	if (find_if(servers.begin(), servers.end(),
+			MatchingServer(server->GetServerLocation())
+			) != servers.end()) {
+		// Already there, duplicate chunk? Same as in progress.
+		return true;
+	}
+	KFS_LOG_STREAM_DEBUG << 
+		(info.beginMakeStableFlag ? "B" :
+			info.logMakeChunkStableFlag ? "L" : "") <<
+		"MCS:"
+		" <" << placementInfo.fid << "," << chunkId << ">"
+		" adding server: " << server->ServerID() <<
+		" name: "          << info.pathname <<
+		" servers: "       << info.numAckMsg <<
+		"/"                << info.numServers <<
+		"/"                << servers.size() <<
+		" size: "          << info.chunkSize <<
+		" checksum: "      << info.chunkChecksum <<
+		" added: "         << info.serverAddedFlag <<
+	KFS_LOG_EOM;
+	servers.push_back(server);
+	info.numServers++;
+	info.serverAddedFlag = true;
+	if (info.beginMakeStableFlag) {
+		server->BeginMakeChunkStable(
+			placementInfo.fid, chunkId, info.chunkVersion);
+	} else if (! info.logMakeChunkStableFlag) {
+		server->MakeChunkStable(
+			placementInfo.fid,
+			chunkId,
+			info.chunkVersion,
+	    		info.chunkSize,
+			info.chunkSize >= 0,
+			info.chunkChecksum
+		);
+	}
+	// If log make stable is in progress, then make stable or begin make
+	// stable will be started when logging is done.
+	return true;
+}
+
+void
+LayoutManager::BeginMakeChunkStableDone(const MetaBeginMakeChunkStable* req)
+{
+	const char* const                  logPrefix = "BMCS: done";
+	NonStableChunksMap::iterator const it        =
+		mNonStableChunks.find(req->chunkId);
+	if (it == mNonStableChunks.end() || ! it->second.beginMakeStableFlag) {
+		KFS_LOG_STREAM_DEBUG << logPrefix <<
+			" <" << req->fid << "," << req->chunkId << ">"
+			" " << req->Show() <<
+			" ignored: " <<
+			(it == mNonStableChunks.end() ?
+				"not in progress" : "MCS in progress") <<
+		KFS_LOG_EOM;
+		return;
+	}
+	MakeChunkStableInfo& info = it->second;
+	KFS_LOG_STREAM_DEBUG << logPrefix <<
+		" <" << req->fid << "," << req->chunkId << ">"
+		" name: "     << info.pathname <<
+		" servers: "  << info.numAckMsg << "/" << info.numServers <<
+		" size: "     << info.chunkSize <<
+		" checksum: " << info.chunkChecksum <<
+		" " << req->Show() <<
+	KFS_LOG_EOM;
+	CSMapConstIter ci = mChunkToServerMap.end();
+	bool noSuchChunkFlag = false;
+	if (req->status != 0 || req->chunkSize < 0) {
+		if (req->status == 0 && req->chunkSize < 0) {
+			KFS_LOG_STREAM_ERROR << logPrefix <<
+				" <" << req->fid << "," << req->chunkId  << ">"
+				" invalid chunk size: " << req->chunkSize <<
+				" declaring chunk replica corrupt" <<
+				" " << req->Show() <<
+			KFS_LOG_EOM;
+		}
+		ci = mChunkToServerMap.find(req->chunkId);
+		if (ci != mChunkToServerMap.end()) {
+			vector<ChunkServerPtr>::const_iterator const si = find_if(
+				ci->second.chunkServers.begin(),
+				ci->second.chunkServers.end(),
+				MatchingServer(req->serverLoc)
+			);
+			if (si != ci->second.chunkServers.end() &&
+					! (*si)->IsDown()) {
+				MetaChunkCorrupt cc(-1, req->fid, req->chunkId);
+				cc.server = *si;
+				ChunkCorrupt(&cc);
+			}
+		} else {
+			noSuchChunkFlag = true;
+		}
+	} else if (req->chunkSize < info.chunkSize || info.chunkSize < 0) {
+		// Pick the smallest good chunk.
+		info.chunkSize     = req->chunkSize;
+		info.chunkChecksum = req->chunkChecksum;
+	}
+	if (++info.numAckMsg < info.numServers) {
+		return;
+	}
+	if (! noSuchChunkFlag && ci == mChunkToServerMap.end()) {
+		ci = mChunkToServerMap.find(req->chunkId);
+		noSuchChunkFlag = ci == mChunkToServerMap.end();
+	}
+	if (noSuchChunkFlag) {
+		KFS_LOG_STREAM_DEBUG << logPrefix <<
+			" <" << req->fid << "," << req->chunkId  << ">"
+			" no such chunk, cleaning up" <<
+		KFS_LOG_EOM;
+		mNonStableChunks.erase(it);
+		mPendingMakeStable.erase(req->chunkId);
+		return;
+	}
+	info.beginMakeStableFlag    = false;
+	info.logMakeChunkStableFlag = true;
+	info.serverAddedFlag        = false;
+	// Remember chunk check sum and size.
+	PendingMakeStableEntry const pmse(
+		info.chunkSize,
+		info.chunkSize >= 0,
+		info.chunkChecksum,
+		req->chunkVersion
+	);
+	pair<PendingMakeStableMap::iterator, bool> const res =
+		mPendingMakeStable.insert(make_pair(req->chunkId, pmse));
+	assert(
+		res.second ||
+		(res.first->second.mSize < 0 &&
+		res.first->second.mChunkVersion == pmse.mChunkVersion)
+	);
+	if (! res.second && pmse.mSize >= 0) {
+		res.first->second = pmse;
+	}
+	if (res.first->second.mSize < 0) {
+		int numUpServers = 0;
+		for (vector<ChunkServerPtr>::const_iterator
+				si = ci->second.chunkServers.begin();
+				si != ci->second.chunkServers.end();
+				++si) {
+			if (! (*si)->IsDown()) {
+				numUpServers++;
+			}
+		}
+		if (numUpServers <= 0) {
+			KFS_LOG_STREAM_DEBUG << logPrefix <<
+				" <" << req->fid << "," << req->chunkId  << ">"
+				" no servers up, retry later" <<
+			KFS_LOG_EOM;
+		} else {
+			// Shouldn't get here.
+			KFS_LOG_STREAM_WARN << logPrefix <<
+				" <" << req->fid << "," << req->chunkId  << ">"
+				" internal error:"
+				" up servers: "         << numUpServers <<
+				" invalid chunk size: " <<
+					res.first->second.mSize <<
+			KFS_LOG_EOM;
+		}
+		// Try again later.
+		mNonStableChunks.erase(it);
+		return;
+	}
+	submit_request(new MetaLogMakeChunkStable(
+		req->fid, req->chunkId, req->chunkVersion,
+		info.chunkSize, info.chunkSize >= 0, info.chunkChecksum,
+		req->opSeqno
+	));
+}
+
+void
+LayoutManager::LogMakeChunkStableDone(const MetaLogMakeChunkStable* req)
+{
+	const char* const                  logPrefix = "LMCS: done";
+	NonStableChunksMap::iterator const it        =
+		mNonStableChunks.find(req->chunkId);
+	if (it == mNonStableChunks.end() ||
+			! it->second.logMakeChunkStableFlag) {
+		KFS_LOG_STREAM_DEBUG << logPrefix <<
+			" <" << req->fid << "," << req->chunkId  << ">" <<
+			" " << req->Show() <<
+			" ignored: " <<
+			(it == mNonStableChunks.end() ?
+				"not in progress" :
+				it->second.beginMakeStableFlag ? "B" : "") <<
+				"MCS in progress" <<
+		KFS_LOG_EOM;
+		return;
+	}
+	MakeChunkStableInfo& info = it->second;
+	CSMapConstIter const ci = mChunkToServerMap.find(req->chunkId);
+	if (ci == mChunkToServerMap.end() || ci->second.chunkServers.empty()) {
+		KFS_LOG_STREAM_INFO << logPrefix <<
+			" <" << req->fid << "," << req->chunkId  << ">" <<
+			" name: " << info.pathname <<
+			(ci == mChunkToServerMap.end() ?
+				" does not exist, cleaning up" :
+				" no servers, run MCS later") <<
+		KFS_LOG_EOM;
+		if (ci == mChunkToServerMap.end()) {
+			// If chunk was deleted, do not emit mkstabledone log
+			// entry. Only ensure that no stale pending make stable
+			// entry exists.
+			mPendingMakeStable.erase(req->chunkId);
+		}
+		mNonStableChunks.erase(it);
+		return;
+	}
+	// Make a local copy of servers.
+	// "Placement info" can change while iterating, if any servers go down
+	// while broadcasting the request.
+	const bool                   serverWasAddedFlag = info.serverAddedFlag;
+	const int                    prevNumServer      = info.numServers;
+	const vector<ChunkServerPtr> servers(ci->second.chunkServers);
+	info.numServers             = (int)servers.size();
+	info.numAckMsg              = 0;
+	info.beginMakeStableFlag    = false;
+	info.logMakeChunkStableFlag = false;
+	info.serverAddedFlag        = false;
+	info.chunkSize              = req->chunkSize;
+	info.chunkChecksum          = req->chunkChecksum;
+	KFS_LOG_STREAM_INFO << logPrefix <<
+		" <" << req->fid << "," << req->chunkId  << ">"
+		" starting MCS"
+		" version: "  << req->chunkVersion  <<
+		" name: "     << info.pathname <<
+		" size: "     << info.chunkSize     <<
+		" checksum: " << info.chunkChecksum <<
+		" servers: "  << prevNumServer << "->" << info.numServers <<
+		" "           << (serverWasAddedFlag ? "new servers" : "") <<
+	KFS_LOG_EOM;
+	if (serverWasAddedFlag && info.chunkSize < 0) {
+		// Retry make chunk stable with newly added servers.
+		info.beginMakeStableFlag = true;
+		for_each(servers.begin(), servers.end(), BeginMakeChunkStable(
+			ci->second.fid, req->chunkId, info.chunkVersion
+		));
+		return;
+	}
+	for_each(servers.begin(), servers.end(), MakeChunkStable(
+		req->fid, req->chunkId, req->chunkVersion,
+		req->chunkSize, req->hasChunkChecksum, req->chunkChecksum
+	));
+}
+
+void
+LayoutManager::MakeChunkStableDone(const MetaChunkMakeStable* req)
+{
+	const char* const                  logPrefix      = "MCS: done";
+	string                             pathname;
+	const ChunkPlacementInfo*          pinfo          = 0;
+	bool                               updateSizeFlag = false;
+	NonStableChunksMap::iterator const it             =
+		mNonStableChunks.find(req->chunkId);
+	if (req->addPending) {
+		// Make chunk stable started in AddNotStableChunk() is now
+		// complete. Sever can be added if nothing has changed since
+		// the op was started.
+		// It is also crucial to ensure to the server with the
+		// identical location is not already present in the list of
+		// servers hosting the chunk before declaring chunk stale.
+		bool        notifyStaleFlag = true;
+		const char* res             = 0;
+		PendingMakeStableMap::iterator msi;
+		if (it != mNonStableChunks.end()) {
+			res = "not stable again";
+		} else {
+			msi = mPendingMakeStable.find(req->chunkId);
+		}
+		if (res) {
+			// Has already failed.
+		} else if (req->chunkSize >= 0 || req->hasChunkChecksum) {
+			if (msi == mPendingMakeStable.end()) {
+				// Chunk went away, or already sufficiently
+				// replicated.
+				res = "no pending make stable info";
+			} else if (msi->second.mChunkVersion !=
+						req->chunkVersion ||
+					msi->second.mSize != req->chunkSize ||
+					msi->second.mHasChecksum !=
+						req->hasChunkChecksum ||
+					msi->second.mChecksum !=
+						req->chunkChecksum) {
+				// Stale request.
+				res = "pending make stable info has changed";
+			}
+		} else if (msi != mPendingMakeStable.end()) {
+			res = "pending make stable info now exists";
+		}
+		if (req->server->IsDown()) {
+			res = "server down";
+			notifyStaleFlag = false;
+		} else if (req->status != 0) {
+			res = "request failed";
+			notifyStaleFlag = false;
+		} else {
+			seq_t           chunkVersion = -1;
+			CSMapIter const ci           =
+				mChunkToServerMap.find(req->chunkId);
+			if (ci == mChunkToServerMap.end()) {
+				res = "no such chunk";
+			} else if (find_if(
+					ci->second.chunkServers.begin(),
+					ci->second.chunkServers.end(),
+					MatchingServer(
+						req->server->GetServerLocation())
+					) != ci->second.chunkServers.end()) {
+				res = "already added";
+				notifyStaleFlag = false;
+			} else if (find_if(
+					ci->second.chunkLeases.begin(),
+					ci->second.chunkLeases.end(),
+					ptr_fun(&LeaseInfo::IsWriteLease)
+					) != ci->second.chunkLeases.end()) {
+				// No write lease existed when this was started.
+				res = "new write lease exists";
+			} else if (metatree.getChunkVersion(
+					ci->second.fid,
+					req->chunkId,
+					&chunkVersion
+					) != 0 ||
+					req->chunkVersion != chunkVersion) {
+				res = "chunk version has changed";
+			} else {
+				pinfo          = &ci->second;
+				updateSizeFlag = pinfo->chunkServers.empty();
+				ci->second.chunkServers.push_back(req->server);
+				/* if (updateSizeFlag) {
+					pathname = metatree.getPathname(
+						pinfo->fid);
+				} */
+				notifyStaleFlag = false;
+			}
+		}
+		if (res) {
+			KFS_LOG_STREAM_DEBUG << logPrefix <<
+				" <" << req->fid << "," << req->chunkId  << ">"
+				" "  << req->server->ServerID() <<
+				" not added: " << res <<
+				"; " << req->Show() <<
+			KFS_LOG_EOM;
+			if (notifyStaleFlag) {
+				req->server->NotifyStaleChunk(req->chunkId);
+			}
+			// List of servers hosting the chunk remains unchanged.
+			return;
+		}
+	} else {
+		if (it == mNonStableChunks.end() ||
+				it->second.beginMakeStableFlag ||
+				it->second.logMakeChunkStableFlag) {
+			KFS_LOG_STREAM_ERROR << "MCS"
+				" " << req->Show() <<
+				" ignored: BMCS in progress" <<
+			KFS_LOG_EOM;
+			return;
+		}
+		MakeChunkStableInfo& info = it->second;
+		KFS_LOG_STREAM_DEBUG << logPrefix <<
+			" <" << req->fid << "," << req->chunkId  << ">"
+			" name: "     << info.pathname <<
+			" servers: "  << info.numAckMsg <<
+				"/" << info.numServers <<
+			" size: "     << req->chunkSize <<
+				"/" << info.chunkSize <<
+			" checksum: " << req->chunkChecksum <<
+				"/" << info.chunkChecksum <<
+			" " << req->Show() <<
+		KFS_LOG_EOM;
+		if (req->status != 0 && ! req->server->IsDown()) {
+			MetaChunkCorrupt cc(-1, req->fid, req->chunkId);
+			cc.server = req->server;
+			ChunkCorrupt(&cc);
+		}
+		if (++info.numAckMsg < info.numServers) {
+			return;
+		}
+		// Cleanup mNonStableChunks, after the lease cleanup, for extra
+		// safety: this will prevent make chunk stable from restarting
+		// recursively, in the case if there are double or stale
+		// write lease.
+		ExpiredLeaseCleanup(req->chunkId);
+		pathname = info.pathname;
+		mNonStableChunks.erase(it);
+		// "&info" is invalid at this point.
+		updateSizeFlag = true;
+	}
+	if (! pinfo) {
+		CSMapConstIter const ci = mChunkToServerMap.find(req->chunkId);
+		if (ci == mChunkToServerMap.end()) {
+			KFS_LOG_STREAM_INFO << logPrefix <<
+				" <"      << req->fid <<
+				","       << req->chunkId  << ">" <<
+				" name: " << pathname <<
+				" does not exist, skipping size update" <<
+			KFS_LOG_EOM;
+			return;
+		}
+		pinfo = &ci->second;
+	}
+	const fid_t    fileId         = pinfo->fid;
+	int            numServers     = 0;
+	int            numDownServers = 0;
+	ChunkServerPtr goodServer;
+	for (vector<ChunkServerPtr>::const_iterator csi =
+				pinfo->chunkServers.begin();
+			csi != pinfo->chunkServers.end();
+			++csi) {
+		if ((*csi)->IsDown()) {
+			numDownServers++;
+		} else {
+			numServers++;
+			if (! goodServer) {
+				goodServer = *csi;
+			}
+		}
+	}
+	int replicas = -1;
+	if (mChunkReplicationCandidates.find(req->chunkId) ==
+			mChunkReplicationCandidates.end()) {
+		const MetaFattr* const fa = metatree.getFattr(fileId);
+		if (fa && (replicas = fa->numReplicas) != numServers) {
+			mChunkReplicationCandidates.insert(req->chunkId);
+		} else {
+			CancelPendingMakeStable(fileId, req->chunkId);
+		}
+	}
+	KFS_LOG_STREAM_INFO << logPrefix <<
+		" <" << req->fid << "," << req->chunkId  << ">"
+		" fid: "              << fileId <<
+		" version: "          << req->chunkVersion  <<
+		" name: "             << pathname <<
+		" size: "             << req->chunkSize <<
+		" checksum: "         << req->chunkChecksum <<
+		" replicas: "         << replicas <<
+		" is now stable on: " << numServers <<
+		" down: "             << numDownServers <<
+		" server(s)" <<
+	KFS_LOG_EOM;
+	if (! updateSizeFlag || numServers <= 0) {
+		return; // if no servers, can not update size
+	}
+	if (req->chunkSize >= 0) {
+		// Already know the size, update it.
+		// The following will invoke GetChunkSizeDone(),
+		// and update the log.
+		MetaChunkSize* const op = new MetaChunkSize(
+			0, // seq #
+			0, // chunk server
+			fileId, req->chunkId, pathname
+		);
+		op->chunkSize = req->chunkSize;
+		submit_request(op);
+	} else {
+		// Get the chunk's size from one of the servers.
+		goodServer->GetChunkSize(fileId, req->chunkId, pathname);
+	}
+}
+
+void
+LayoutManager::ReplayPendingMakeStable(
+	chunkId_t chunkId,
+	seq_t     chunkVersion,
+	off_t     chunkSize,
+	bool      hasChunkChecksum,
+	uint32_t  chunkChecksum,
+	bool      addFlag)
+{
+	const char*          res             = 0;
+	seq_t                curChunkVersion = -1;
+	CSMapConstIter const ci              = mChunkToServerMap.find(chunkId);
+	MsgLogger::LogLevel logLevel = MsgLogger::kLogLevelDEBUG;
+	if (ci == mChunkToServerMap.end()) {
+		res = "no such chunk";
+	} else if (metatree.getChunkVersion(
+			ci->second.fid, chunkId, &curChunkVersion) != 0 ||
+			curChunkVersion != chunkVersion) {
+		res      = "chunk version mismatch";
+		logLevel = MsgLogger::kLogLevelERROR;
+	}
+	if (res) {
+		// Failure.
+	} else if (addFlag) {
+		const PendingMakeStableEntry entry(
+			chunkSize,
+			hasChunkChecksum,
+			chunkChecksum,
+			chunkVersion
+		);
+		pair<PendingMakeStableMap::iterator, bool> const res =
+			mPendingMakeStable.insert(make_pair(chunkId, entry));
+		if (! res.second) {
+			KFS_LOG_STREAM((res.first->second.mHasChecksum ||
+					res.first->second.mSize >= 0) ?
+					MsgLogger::kLogLevelWARN :
+					MsgLogger::kLogLevelDEBUG) <<
+				"replay MCS add:" <<
+				" update:"
+				" chunkId: "  << chunkId <<
+				" version: "  <<
+					res.first->second.mChunkVersion <<
+				"=>"          << entry.mChunkVersion <<
+				" size: "     << res.first->second.mSize <<
+				"=>"          << entry.mSize <<
+				" checksum: " <<
+					(res.first->second.mHasChecksum ?
+					int64_t(res.first->second.mChecksum) :
+					int64_t(-1)) <<
+				"=>"          << (entry.mHasChecksum ?
+					int64_t(entry.mChecksum) :
+					int64_t(-1)) <<
+			KFS_LOG_EOM;
+			res.first->second = entry;
+		}
+	} else {
+		PendingMakeStableMap::iterator const it =
+			mPendingMakeStable.find(chunkId);
+		if (it == mPendingMakeStable.end()) {
+			res      = "no such entry";
+			logLevel = MsgLogger::kLogLevelERROR;
+		} else {
+			const bool warn =
+				it->second.mChunkVersion != chunkVersion ||
+				(it->second.mSize >= 0 && (
+					it->second.mSize != chunkSize ||
+					it->second.mHasChecksum !=
+						hasChunkChecksum ||
+					(hasChunkChecksum &&
+					it->second.mChecksum != chunkChecksum
+				)));
+			KFS_LOG_STREAM(warn ?
+					MsgLogger::kLogLevelWARN :
+					MsgLogger::kLogLevelDEBUG) <<
+				"replay MCS remove:"
+				" chunkId: "  << chunkId <<
+				" version: "  << it->second.mChunkVersion <<
+				"=>"          << chunkVersion <<
+				" size: "     << it->second.mSize <<
+				"=>"          << chunkSize <<
+				" checksum: " << (it->second.mHasChecksum ?
+					int64_t(it->second.mChecksum) :
+					int64_t(-1)) <<
+				"=>"          << (hasChunkChecksum ?
+					int64_t(chunkChecksum) : int64_t(-1)) <<
+			KFS_LOG_EOM;
+			mPendingMakeStable.erase(it);
+		}
+	}
+	KFS_LOG_STREAM(logLevel) <<
+		"replay MCS: " <<
+		(addFlag ? "add" : "remove") <<
+		" "           << (res ? res : "ok") <<
+		" total: "    << mPendingMakeStable.size() <<
+		" chunkId: "  << chunkId <<
+		" version: "  << chunkVersion <<
+		" cur vers: " << curChunkVersion <<
+		" size: "     << chunkSize <<
+		" checksum: " << (hasChunkChecksum ?
+			int64_t(chunkChecksum) : int64_t(-1)) <<
+	KFS_LOG_EOM;
+}
+
+int
+LayoutManager::WritePendingMakeStable(ostream& os) const
+{
+	// Write all entries in restore_makestable() format.
+	for (PendingMakeStableMap::const_iterator it =
+				mPendingMakeStable.begin();
+			it != mPendingMakeStable.end() && os;
+			++it) {
+		os <<
+			"mkstable"
+			"/chunkId/"      << it->first <<
+			"/chunkVersion/" << it->second.mChunkVersion  <<
+			"/size/"         << it->second.mSize <<
+			"/checksum/"     << it->second.mChecksum <<
+			"/hasChecksum/"  << (it->second.mHasChecksum ? 1 : 0) <<
+		"\n";
+	}
+	return (os ? 0 : -EIO);
+}
+
+void
+LayoutManager::CancelPendingMakeStable(fid_t fid, chunkId_t chunkId)
+{
+	PendingMakeStableMap::iterator const it =
+		mPendingMakeStable.find(chunkId); 
+	if (it == mPendingMakeStable.end()) {
+		return;
+	}
+	NonStableChunksMap::iterator const nsi = mNonStableChunks.find(chunkId);
+	if (nsi != mNonStableChunks.end()) {
+		KFS_LOG_STREAM_ERROR << 
+			"delete pending MCS:"
+			" <" << fid << "," << chunkId << ">" <<
+			" attempt to delete while " <<
+			(nsi->second.beginMakeStableFlag ? "B" :
+				(nsi->second.logMakeChunkStableFlag ? "L" : "")) <<
+			"MCS is in progress denied" <<
+		KFS_LOG_EOM;
+		return;
+	}
+	// Emit done log record -- this "cancels" "mkstable" log record.
+	// Do not write if begin make stable wasn't started before the
+	// chunk got deleted.
+	MetaLogMakeChunkStableDone* const op =
+		(it->second.mSize < 0 || it->second.mChunkVersion < 0) ? 0 :
+		new MetaLogMakeChunkStableDone(
+			fid, chunkId, it->second.mChunkVersion,
+			it->second.mSize, it->second.mHasChecksum,
+			it->second.mChecksum, chunkId
+		);
+	mPendingMakeStable.erase(it);
+	mPendingBeginMakeStable.erase(chunkId);
+	KFS_LOG_STREAM_DEBUG <<
+		"delete pending MCS:"
+		" <" << fid << "," << chunkId << ">" <<
+		" total: " << mPendingMakeStable.size() <<
+		" " << (op ? op->Show() : string("size < 0")) <<
+	KFS_LOG_EOM;
+	if (op) {
+		submit_request(op);
+	}
+}
+
+int
+LayoutManager::GetChunkSizeDone(MetaChunkSize* req)
+{
+	MetaFattr * const fa = metatree.getFattr(req->fid);
+	if (! fa || fa->type != KFS_FILE) {
+		return 0;
+	}
+	vector<MetaChunkInfo*> chunkInfo;
+        const int status = metatree.getalloc(fa->id(), chunkInfo);
+	off_t spaceUsageDelta = 0;
+
+        if ((status != 0) || chunkInfo.empty()) {
+		// don't write out a log entry
+                return -1;
+        }
+	if (fa->filesize > 0) {
+		// stash the value for doing the delta calc
+		spaceUsageDelta = fa->filesize;
+	}
+	// only if we are looking at the last chunk of the file can we
+	// set the size.
+        MetaChunkInfo* lastChunk = chunkInfo.back();
+	off_t sizeEstimate = fa->filesize;
+	if (req->chunkId == lastChunk->chunkId) {
+		sizeEstimate = (fa->chunkcount - 1) * CHUNKSIZE +
+				req->chunkSize;
+		fa->filesize = sizeEstimate;
+	}
+	if (fa->filesize == 0) {
+		// 0-length files are strange beasts: they typically
+		// shouldn't happen (unless they are kept to exchange
+		// status between processes); if we have such a file,
+		// ask the client to work out the size.
+		fa->filesize = -1;
+		return -1;
+	}
+	KFS_LOG_STREAM_INFO <<
+		"For file: "  << req->fid <<
+		" chunk: "    << req->chunkId <<
+		" got size: " << req->chunkSize <<
+		" filesize: " << fa->filesize <<
+	KFS_LOG_EOM;
+
+	// fa->filesize = max(fa->filesize, sizeEstimate);
+	// stash the value away so that we can log it.
+	req->filesize = fa->filesize;
+	//
+	// we possibly updated fa->filesize; so, compute the delta from
+	// before and after
+	//
+	spaceUsageDelta = fa->filesize - spaceUsageDelta;
+	if (spaceUsageDelta != 0) {
+		/*
+		if (pathname == "") {
+			pathname = metatree.getPathname(fid);
+		}
+		*/
+		if (! req->pathname.empty()) {
+			metatree.updateSpaceUsageForPath(req->pathname, spaceUsageDelta);
+		} else {
+			KFS_LOG_STREAM_INFO <<
+                            "Got size " << req->chunkSize <<
+                            " for file " << req->fid << ", chunk " << req->chunkId <<
+                            "; Will need to force recomputation of dir size" <<
+                        KFS_LOG_EOM;
+			// don't write out a log entry
+			// status = -1;
+		}
+	}
+	return 0;
+}
+
+bool
+LayoutManager::IsChunkStable(chunkId_t chunkId)
+{
+	return (mNonStableChunks.find(chunkId) == mNonStableChunks.end());
+}
+
 
 class RetiringServerPred {
 public:
@@ -1580,7 +3816,7 @@ public:
 };
 
 int
-LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
+LayoutManager::ReplicateChunk(chunkId_t chunkId, ChunkPlacementInfo &clli,
 				uint32_t extraReplicas)
 {
 	vector<int> racks;
@@ -1635,11 +3871,9 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 }
 
 int
-LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
-				uint32_t extraReplicas, const
-				vector<ChunkServerPtr> &candidates)
+LayoutManager::ReplicateChunk(chunkId_t chunkId, ChunkPlacementInfo &clli,
+	uint32_t extraReplicas, const vector<ChunkServerPtr> &candidates)
 {
-	ChunkServerPtr c, dataServer;
 	vector<MetaChunkInfo *> v;
 	vector<MetaChunkInfo *>::iterator chunk;
 	fid_t fid = clli.fid;
@@ -1656,26 +3890,26 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 	*/
 
 	for (uint32_t i = 0; i < candidates.size() && i < extraReplicas; i++) {
-		vector<ChunkServerPtr>::const_iterator iter;
 
-		c = candidates[i];
+		ChunkServerPtr const c = candidates[i];
 		// Don't send too many replications to a server
-		if (c->GetNumChunkReplications() > MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
+		if (c->IsDown() ||
+				c->GetNumChunkReplications() >
+				MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
 			continue;
-#ifdef DEBUG
 		// verify that we got good candidates
-		iter = find(clli.chunkServers.begin(), clli.chunkServers.end(), c);
-		if (iter != clli.chunkServers.end()) {
-			assert(!"Not possible...");
-		}
-#endif
+		assert(
+			find(clli.chunkServers.begin(), clli.chunkServers.end(), c) ==
+			clli.chunkServers.end()
+		);
 		// prefer a server that is being retired to the other nodes as
 		// the source of the chunk replication
-		iter = find_if(clli.chunkServers.begin(), clli.chunkServers.end(),
-				RetiringServerPred());
+		vector<ChunkServerPtr>::const_iterator const iter = find_if(
+			clli.chunkServers.begin(), clli.chunkServers.end(),
+			RetiringServerPred());
 
 		const char *reason;
-
+		ChunkServerPtr dataServer;
 		if (iter != clli.chunkServers.end()) {
 			reason = " evacuating chunk ";
 			if (((*iter)->GetReplicationReadLoad() <
@@ -1689,7 +3923,7 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 		// if we can't find a retiring server, pick a server that has read b/w available
 		for (uint32_t j = 0; (!dataServer) &&
 				(j < clli.chunkServers.size()); j++) {
-			if ((clli.chunkServers[j]->GetReplicationReadLoad() >= 
+			if ((clli.chunkServers[j]->GetReplicationReadLoad() >=
 				MAX_CONCURRENT_READ_REPLICATIONS_PER_NODE) ||
 				(!(clli.chunkServers[j]->IsResponsiveServer())))
 				continue;
@@ -1698,27 +3932,27 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 		if (dataServer) {
 			ServerLocation srcLocation = dataServer->GetServerLocation();
 			ServerLocation dstLocation = c->GetServerLocation();
-
-			KFS_LOG_VA_INFO("Starting re-replication for chunk %lld (from: %s to %s) reason = %s",
-					chunkId,
-					srcLocation.ToString().c_str(),
-					dstLocation.ToString().c_str(), reason);
+			KFS_LOG_STREAM_INFO <<
+				"Starting re-replication for chunk " << chunkId <<
+				" from: " << srcLocation.ToString() <<
+				" to " << dstLocation.ToString() <<
+				" reason: " << reason <<
+			KFS_LOG_EOM;
 			dataServer->UpdateReplicationReadLoad(1);
-			/*
-			c->ReplicateChunk(fid, chunkId, mci->chunkVersion,
-				dataServer->GetServerLocation());
-			*/
 			// have the chunkserver get the version
+			assert(clli.ongoingReplications >= 0 && mNumOngoingReplications >= 0);
+			// Bump counters here, completion can be invoked
+			// immediately, for example when send fails.
+			mNumOngoingReplications++;
+			clli.ongoingReplications++;
+			mLastChunkReplicated = chunkId;
+			mOngoingReplicationStats->Update(1);
+			mTotalReplicationStats->Update(1);
 			c->ReplicateChunk(fid, chunkId, -1,
 				dataServer->GetServerLocation());
 			numDone++;
 		}
 		dataServer.reset();
-	}
-
-	if (numDone > 0) {
-		mTotalReplicationStats->Update(1);
-		mOngoingReplicationStats->Update(numDone);
 	}
 	return numDone;
 }
@@ -1726,94 +3960,124 @@ LayoutManager::ReplicateChunk(chunkId_t chunkId, const ChunkPlacementInfo &clli,
 bool
 LayoutManager::CanReplicateChunkNow(chunkId_t chunkId,
 				ChunkPlacementInfo &c,
-				int &extraReplicas)
+				int &extraReplicas,
+				bool &noSuchChunkFlag)
 {
-	vector<LeaseInfo>::iterator l;
-
+	noSuchChunkFlag = false;
+	extraReplicas = 0;
 	// Don't replicate chunks for which a write lease
 	// has been issued.
-	l = find_if(c.chunkLeases.begin(), c.chunkLeases.end(),
-		ptr_fun(LeaseInfo::IsValidWriteLease));
+	vector<LeaseInfo>::iterator const l = find_if(
+		c.chunkLeases.begin(), c.chunkLeases.end(),
+		ptr_fun(&LeaseInfo::IsWriteLease));
 
-	if (l != c.chunkLeases.end())
+	if (l != c.chunkLeases.end()) {
+		KFS_LOG_STREAM_DEBUG <<
+			"re-replication delayed chunk:"
+			" <" << c.fid << "," << chunkId << ">"
+			" " << (LeaseInfo::IsValidWriteLease(*l) ?
+				"valid" : "expired") <<
+			" write lease exists" <<
+		KFS_LOG_EOM;
 		return false;
+	}
+	if (! IsChunkStable(chunkId)) {
+		KFS_LOG_STREAM_DEBUG <<
+			"re-replication delayed chunk:"
+			" <" << c.fid << "," << chunkId << ">"
+			" is not stable yet" <<
+		KFS_LOG_EOM;
+		return false;
+	}
 
-	extraReplicas = 0;
 	// Can't re-replicate a chunk if we don't have a copy! so,
 	// take out this chunk from the candidate set.
-	if (c.chunkServers.size() == 0)
+	if (c.chunkServers.empty()) {
+		KFS_LOG_STREAM_DEBUG <<
+			"can not re-replicate chunk:"
+			" <" << c.fid << "," << chunkId << ">"
+			" no copies left,"
+			" canceling re-replication" <<
+		KFS_LOG_EOM;
 		return true;
-
-	MetaFattr *fa = metatree.getFattr(c.fid);
-	if (fa == NULL)
-		// No file attr.  So, take out this chunk
-		// from the candidate set.
-		return true;
-
+	}
 	// check if the chunk still exists
 	vector<MetaChunkInfo *> v;
-	vector<MetaChunkInfo *>::iterator chunk;
-
 	metatree.getalloc(c.fid, v);
-	chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(chunkId));
+	vector<MetaChunkInfo *>::iterator const chunk = find_if(
+		v.begin(), v.end(), ChunkIdMatcher(chunkId));
 	if (chunk == v.end()) {
 		// This chunk doesn't exist in this file anymore.
 		// So, take out this chunk from the candidate set.
+		KFS_LOG_STREAM_ERROR <<
+			"can not re-replicate chunk:"
+			" <" << c.fid << "," << chunkId << ">"
+			" no such chunk,"
+			" possible stale chunk to server mapping," <<
+			" canceling re-replication" <<
+		KFS_LOG_EOM;
+		noSuchChunkFlag = true;
 		return true;
 	}
-
+	MetaFattr * const fa = metatree.getFattr(c.fid);
+	if (! fa) {
+		// No file attr.  So, take out this chunk
+		// from the candidate set.
+		KFS_LOG_STREAM_ERROR <<
+			"can not re-replicate chunk:"
+			" <" << c.fid << "," << chunkId << ">"
+			" no file attribute exists,"
+			" canceling re-replication" <<
+		KFS_LOG_EOM;
+		return true;
+	}
 	// if any of the chunkservers are retiring, we need to make copies
 	// so, first determine how many copies we need because one of the
 	// servers hosting the chunk is going down
-	int numRetiringServers = count_if(c.chunkServers.begin(), c.chunkServers.end(),
-					RetiringServerPred());
-	// now, determine if we have sufficient copies
-	if (numRetiringServers > 0) {
-		if (c.chunkServers.size() - numRetiringServers < (uint32_t) fa->numReplicas) {
-			// we need to make this many copies: # of servers that are
-			// retiring plus the # this chunk is under-replicated
-			extraReplicas = numRetiringServers +  (fa->numReplicas - c.chunkServers.size());
-		} else {
-			// we got sufficient copies even after accounting for
-			// the retiring server.  so, take out this chunk from
-			// replication candidates set.
-			extraReplicas = 0;
-		}
-		return true;
-	}
-
 	// May need to re-replicate this chunk:
 	//    - extraReplicas > 0 means make extra copies;
 	//    - extraReplicas == 0, take out this chunkid from the candidate set
 	//    - extraReplicas < 0, means we got too many copies; delete some
-	extraReplicas = fa->numReplicas - c.chunkServers.size();
-
-	if (extraReplicas < 0) {
-		//
-		// We need to delete additional copies; however, if
-		// there is a valid (read) lease issued on the chunk,
-		// then leave the chunk alone for now; we'll look at
-		// deleting it when the lease has expired.  This is for
-		// safety: if a client was reading from the copy of the
-		// chunk that we are trying to delete, the client will
-		// see the deletion and will have to failover; avoid
-		// unnecessary failovers
-		//
-		l = find_if(c.chunkLeases.begin(), c.chunkLeases.end(),
-				ptr_fun(LeaseInfo::IsValidLease));
-
-		if (l != c.chunkLeases.end())
-			return false;
+	const int numRetiringServers = (int)count_if(
+		c.chunkServers.begin(), c.chunkServers.end(),
+		RetiringServerPred());
+	// now, determine if we have sufficient copies
+	if (numRetiringServers <= 0 ||
+		c.chunkServers.size() <=
+			(size_t)(fa->numReplicas + numRetiringServers)) {
+		// we need to make this many copies: # of servers that are
+		// retiring plus the # this chunk is under-replicated
+		extraReplicas = (fa->numReplicas + numRetiringServers) -
+			c.chunkServers.size();
 	}
-
-	return true;
+	//
+	// If additional copies need to be deleted, check if there is a valid
+	// (read) lease issued on the chunk. In case if lease exists leave the
+	// chunk alone for now; we'll look at deleting it when the lease has
+	// expired.  This is for safety: if a client was reading from the copy
+	// of the chunk that we are trying to delete, the client will see the
+	// deletion and will have to failover; avoid unnecessary failovers
+	//
+	const bool ret = extraReplicas >= 0 || find_if(
+		c.chunkLeases.begin(), c.chunkLeases.end(),
+		ptr_fun(LeaseInfo::IsValidLease)
+	) == c.chunkLeases.end();
+	KFS_LOG_STREAM_DEBUG <<
+		"re-replicate: chunk:"
+		" <" << c.fid << "," << chunkId << ">"
+		" retiring: " << numRetiringServers <<
+		" target: "   << fa->numReplicas <<
+		" needed: "   << extraReplicas <<
+		(ret ? " start now" : " check later") <<
+ 	KFS_LOG_EOM;
+	return ret;
 }
 
 class EvacuateChunkChecker {
-	CRCandidateSet &candidates;
+	ReplicationCandidates &candidates;
 	CSMap &chunkToServerMap;
 public:
-	EvacuateChunkChecker(CRCandidateSet &c, CSMap &m) :
+	EvacuateChunkChecker(ReplicationCandidates &c, CSMap &m) :
 		candidates(c), chunkToServerMap(m) {}
 	void operator()(ChunkServerPtr c) {
 		if (!c->IsRetiring())
@@ -1821,21 +4085,26 @@ public:
 		CRCandidateSet leftover = c->GetEvacuatingChunks();
 		for (CRCandidateSetIter citer = leftover.begin(); citer !=
 			leftover.end(); ++citer) {
-			chunkId_t chunkId = *citer;
+			const chunkId_t chunkId = *citer;
 			CSMapIter iter = chunkToServerMap.find(chunkId);
 
 			if (iter == chunkToServerMap.end()) {
 				c->EvacuateChunkDone(chunkId);
-				KFS_LOG_VA_INFO("%s has bogus block %ld",
-					c->GetServerLocation().ToString().c_str(), chunkId);
+				KFS_LOG_STREAM_INFO <<
+					c->GetServerLocation().ToString() <<
+					" has bogus block " << chunkId <<
+				KFS_LOG_EOM;
 			} else {
 				// XXX
 				// if we don't think this chunk is on this
 				// server, then we should update the view...
 
 				candidates.insert(chunkId);
-				KFS_LOG_VA_INFO("%s has block %ld that wasn't in replication candidates",
-					c->GetServerLocation().ToString().c_str(), chunkId);
+				KFS_LOG_STREAM_INFO <<
+					c->GetServerLocation().ToString() <<
+					" has block " << chunkId  <<
+					" that wasn't in replication candidates" <<
+				KFS_LOG_EOM;
 			}
 		}
 	}
@@ -1844,7 +4113,7 @@ public:
 void
 LayoutManager::CheckHibernatingServersStatus()
 {
-	time_t now = time(0);
+	const time_t now = TimeNow();
 
 	vector <HibernatingServerInfo_t>::iterator iter = mHibernatingServers.begin();
 	vector<ChunkServerPtr>::iterator i;
@@ -1859,101 +4128,154 @@ LayoutManager::CheckHibernatingServersStatus()
 			continue;
 		}
 		if (i != mChunkServers.end()) {
-			KFS_LOG_VA_INFO("Hibernated server (%s) is back as promised...",
-					iter->location.ToString().c_str());
+			KFS_LOG_STREAM_INFO <<
+				"Hibernated server " << iter->location.ToString()  <<
+				" is back as promised" <<
+			KFS_LOG_EOM;
 		} else {
 			// server hasn't come back as promised...so, check
 			// re-replication for the blocks that were on that node
-			KFS_LOG_VA_INFO("Hibernated server (%s) is not back as promised...",
-				iter->location.ToString().c_str());
-			mChunkReplicationCandidates.insert(iter->blocks.begin(), iter->blocks.end());
+			KFS_LOG_STREAM_INFO <<
+				"Hibernated server " << iter->location.ToString()  <<
+				" is NOT back as promised" <<
+			KFS_LOG_EOM;
+			if (mChunkReplicationCandidates.empty()) {
+				mChunkReplicationCandidates.swap(iter->blocks);
+			} else {
+				mChunkReplicationCandidates.insert(
+					iter->blocks.begin(), iter->blocks.end());
+			}
 		}
-		mHibernatingServers.erase(iter);
-		iter = mHibernatingServers.begin();
+		iter = mHibernatingServers.erase(iter);
 	}
 }
 
-void
-LayoutManager::ChunkReplicationChecker()
+bool
+LayoutManager::IsAnyServerAvailForReReplication() const
 {
-	if (InRecovery()) {
-		return;
+	int anyAvail = 0;
+	for (uint32_t i = 0; i < mChunkServers.size(); i++) {
+		const ChunkServerPtr c = mChunkServers[i];
+		if (c->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD)
+			continue;
+		if (c->GetNumChunkReplications() > MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
+			continue;
+		anyAvail++;
 	}
+	return anyAvail > 0;
+}
 
-	CheckHibernatingServersStatus();
-
+void
+LayoutManager::HandoutChunkReplicationWork(CRCandidateSet &candidates,
+						CRCandidateSet &delset)
+{
 	// There is a set of chunks that are affected: their server went down
 	// or there is a change in their degree of replication.  in either
 	// case, walk this set of chunkid's and work on their replication amount.
 
-	chunkId_t chunkId;
-	CRCandidateSet delset;
-	int extraReplicas, numOngoing;
-	uint32_t numIterations = 0;
 	struct timeval start;
 
-	gettimeofday(&start, NULL);
+	const int kCheckTime = 32;
+	int       pass       = 0;
 
-	for (CRCandidateSetIter citer = mChunkReplicationCandidates.begin();
-		citer != mChunkReplicationCandidates.end(); ++citer) {
-		chunkId = *citer;
+	for (ReplicationCandidates::const_iterator citer = candidates.begin();
+		citer != candidates.end(); ++citer) {
+		if (--pass <= 0) {
+			struct timeval now;
+			gettimeofday(&now, 0);
+			if (pass < 0) {
+				start = now;
+			}
+			pass = kCheckTime;
+			if (ComputeTimeDiff(start, now) > MAX_TIME_FOR_CHUNK_REPLICATION_CHECK)
+				// if we have spent more than 1 second here, stop
+				// serve other requests
+				break;
+		}
 
-		struct timeval now;
-		gettimeofday(&now, NULL);
-
-		if (ComputeTimeDiff(start, now) > 5.0)
-			// if we have spent more than 5 seconds here, stop
-			// serve other requests
+		if (!IsAnyServerAvailForReReplication())
 			break;
 
-        	CSMapIter iter = mChunkToServerMap.find(chunkId);
+		const chunkId_t chunkId = *citer;
+        	CSMapIter const iter    = mChunkToServerMap.find(chunkId);
         	if (iter == mChunkToServerMap.end()) {
 			delset.insert(chunkId);
 			continue;
 		}
+		// if the chunk is already in the delset, don't process it
+		// further
+		ReplicationCandidates::const_iterator alreadyDeleted = delset.find(chunkId);
+		if (alreadyDeleted != delset.end())
+			continue;
+
 		if (iter->second.ongoingReplications > 0)
 			// this chunk is being re-replicated; we'll check later
 			continue;
 
-		if (!CanReplicateChunkNow(iter->first, iter->second, extraReplicas))
+		int  extraReplicas   = 0;
+		bool noSuchChunkFlag = false;
+		if (!CanReplicateChunkNow(iter->first, iter->second,
+				extraReplicas, noSuchChunkFlag))
 			continue;
 
-		if (extraReplicas > 0) {
-			numOngoing = ReplicateChunk(iter->first, iter->second, extraReplicas);
-			iter->second.ongoingReplications += numOngoing;
-			if (numOngoing > 0) {
-				mNumOngoingReplications++;
-				mLastChunkReplicated = chunkId;
-				numIterations++;
-			}
+		if (noSuchChunkFlag) {
+			// Delete stale mapping.
+			delset.insert(chunkId);
+			mChunkToServerMap.erase(iter);
+		} else if (extraReplicas > 0) {
+			ReplicateChunk(iter->first, iter->second, extraReplicas);
 		} else if (extraReplicas == 0) {
 			delset.insert(chunkId);
 		} else {
 			DeleteAddlChunkReplicas(iter->first, iter->second, -extraReplicas);
 			delset.insert(chunkId);
 		}
-		if (numIterations > mChunkServers.size() *
+		if (mNumOngoingReplications > (int64_t)mChunkServers.size() *
 			MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
 			// throttle...we are handing out
 			break;
 	}
+}
 
-	if (delset.size() > 0) {
-		for (CRCandidateSetIter citer = delset.begin();
-			citer != delset.end(); ++citer) {
-			// Notify the retiring servers of any of their chunks have
-			// been evacuated---such as, if there were too many copies of those
-			// chunks, we are done evacuating them
-			chunkId = *citer;
-        		CSMapIter iter = mChunkToServerMap.find(chunkId);
-			if (iter != mChunkToServerMap.end())
-				for_each(iter->second.chunkServers.begin(), iter->second.chunkServers.end(),
-					ReplicationDoneNotifier(chunkId));
-			mChunkReplicationCandidates.erase(*citer);
-		}
+void
+LayoutManager::ChunkReplicationChecker()
+{
+	if (! mPendingBeginMakeStable.empty() && ! InRecoveryPeriod()) {
+		ProcessPendingBeginMakeStable();
+	}
+	if (InRecovery()) {
+		return;
 	}
 
-	if (mChunkReplicationCandidates.size() == 0) {
+	CheckHibernatingServersStatus();
+
+	CRCandidateSet delset;
+	HandoutChunkReplicationWork(mPriorityChunkReplicationCandidates, delset);
+	HandoutChunkReplicationWork(mChunkReplicationCandidates, delset);
+
+	for (CRCandidateSet::const_iterator citer = delset.begin();
+			citer != delset.end();
+			++citer) {
+		// Notify the retiring servers of any of their chunks have
+		// been evacuated---such as, if there were too many copies of those
+		// chunks, we are done evacuating them
+		const chunkId_t chunkId = *citer;
+        	CSMapIter const iter = mChunkToServerMap.find(chunkId);
+		if (iter != mChunkToServerMap.end() &&
+				! iter->second.chunkServers.empty()) {
+			for_each(iter->second.chunkServers.begin(),
+				iter->second.chunkServers.end(),
+				ReplicationDoneNotifier(chunkId));
+			// Sufficient replicas, now no need to make chunk
+			// stable.
+			CancelPendingMakeStable(iter->second.fid, *citer);
+		}
+		mPriorityChunkReplicationCandidates.erase(*citer);
+		mChunkReplicationCandidates.erase(*citer);
+	}
+
+	if (mChunkReplicationCandidates.empty()) {
+		mPriorityChunkReplicationCandidates.clear();
 		// if there are any retiring servers, we need to make sure that
 		// the servers don't think there is a block to be replicated
 		// if there is any such, let us get them into the set of
@@ -1965,13 +4287,12 @@ LayoutManager::ChunkReplicationChecker()
 	RebalanceServers();
 
 	mReplicationTodoStats->Set(mChunkReplicationCandidates.size());
+	mChunksWithOneReplicaStats->Set(mPriorityChunkReplicationCandidates.size());
 }
 
 void
 LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server, chunkId_t chunkReplicated)
 {
-	chunkId_t chunkId;
-	int extraReplicas = 0, numOngoing;
 	vector<ChunkServerPtr> c;
 
 	if (server->IsRetiring())
@@ -1980,8 +4301,8 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server, chunkId_t ch
 	c.push_back(server);
 
 	// try to start where we were done with this server
-	CRCandidateSetIter citer = mChunkReplicationCandidates.find(chunkReplicated + 1);
-
+	ReplicationCandidates::iterator citer =
+		mChunkReplicationCandidates.find(chunkReplicated + 1);
 	if (citer == mChunkReplicationCandidates.end()) {
 		// try to start where we left off last time; if that chunk has
 		// disappeared, find something "closeby"
@@ -2000,27 +4321,31 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server, chunkId_t ch
 	for (; citer != mChunkReplicationCandidates.end(); ++citer) {
 		gettimeofday(&now, NULL);
 
-		if (ComputeTimeDiff(start, now) > 0.2)
-			// if we have spent more than 200 m-seconds here, stop
+		if (ComputeTimeDiff(start, now) > MAX_TIME_TO_FIND_ADDL_REPLICATION_WORK)
+			// if we have spent more than 5 m-seconds here, stop
 			// serve other requests
 			break;
 
-		chunkId = *citer;
-
+		const chunkId_t chunkId = *citer;
         	CSMapIter iter = mChunkToServerMap.find(chunkId);
-        	if (iter == mChunkToServerMap.end()) {
+        	if (iter == mChunkToServerMap.end())
 			continue;
-		}
+
 		if (iter->second.ongoingReplications > 0)
 			continue;
 
 		// if the chunk is already hosted on this server, the chunk isn't a candidate for
 		// work to be sent to this server.
+		int  extraReplicas   = 0;
+		bool noSuchChunkFlag = false;
 		if (IsChunkHostedOnServer(iter->second.chunkServers, server) ||
-			(!CanReplicateChunkNow(iter->first, iter->second, extraReplicas)))
+				(!CanReplicateChunkNow(iter->first, iter->second,
+					extraReplicas, noSuchChunkFlag)))
 			continue;
 
-		if (extraReplicas > 0) {
+		if (noSuchChunkFlag) {
+			mChunkToServerMap.erase(iter);
+		} else if (extraReplicas > 0) {
 			if (mRacks.size() > 1) {
 				// when there is more than one rack, since we
 				// are re-replicating a chunk, we don't want to put two
@@ -2034,13 +4359,9 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server, chunkId_t ch
 				if (excludeRacks.find(server->GetRack()) != excludeRacks.end())
 					continue;
 			}
-
-			numOngoing = ReplicateChunk(iter->first, iter->second, 1, c);
-			iter->second.ongoingReplications += numOngoing;
-			if (numOngoing > 0) {
-				mNumOngoingReplications++;
-				mLastChunkReplicated = chunkId;
-			}
+			ReplicateChunk(iter->first, iter->second, 1, c);
+		} else if (! iter->second.chunkServers.empty()) {
+			CancelPendingMakeStable(iter->second.fid, iter->first);
 		}
 
 		if (server->GetNumChunkReplications() > MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
@@ -2053,42 +4374,53 @@ LayoutManager::FindReplicationWorkForServer(ChunkServerPtr &server, chunkId_t ch
 void
 LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
 {
-	vector<ChunkServerPtr>::iterator source;
+	KFS_LOG_STREAM_DEBUG <<
+		"Meta chunk replicate finished for"
+		" chunk: "   << req->chunkId <<
+		" version: " << req->chunkVersion <<
+		" status: "  << req->status <<
+		" replications in flight: " << mNumOngoingReplications <<
+		" server: " << req->server->ServerID() <<
+		" " << (req->server->IsDown() ? "down" : "OK") <<
+	KFS_LOG_EOM;
 
 	mOngoingReplicationStats->Update(-1);
+	assert(mNumOngoingReplications > 0);
+	mNumOngoingReplications--;
 
 	// Book-keeping....
-	CSMapIter iter = mChunkToServerMap.find(req->chunkId);
-
+	int             chunkInFlight;
+	CSMapIter const iter = mChunkToServerMap.find(req->chunkId);
 	if (iter != mChunkToServerMap.end()) {
+		assert(iter->second.ongoingReplications > 0);
 		iter->second.ongoingReplications--;
-		if (iter->second.ongoingReplications == 0)
-			// if all the replications for this chunk are done,
-			// then update the global counter.
-			mNumOngoingReplications--;
-
-		if (iter->second.ongoingReplications < 0)
-			// sanity...
-			iter->second.ongoingReplications = 0;
+		chunkInFlight = iter->second.ongoingReplications;
+	} else {
+		chunkInFlight = -1;
+		KFS_LOG_STREAM_INFO <<
+			"chunk " << req->chunkId << " mapping no longer exists" <<
+		KFS_LOG_EOM;
 	}
 
 	req->server->ReplicateChunkDone(req->chunkId);
-
-	source = find_if(mChunkServers.begin(), mChunkServers.end(),
-			MatchingServer(req->srcLocation));
+	vector<ChunkServerPtr>::iterator const source = find_if(
+		mChunkServers.begin(), mChunkServers.end(),
+		MatchingServer(req->srcLocation));
 	if (source !=  mChunkServers.end()) {
 		(*source)->UpdateReplicationReadLoad(-1);
 	}
 
 	if (req->status != 0) {
 		// Replication failed...we will try again later
-		KFS_LOG_VA_INFO("%s: re-replication for chunk %lld failed, code = %d",
-			req->server->GetServerLocation().ToString().c_str(),
-			req->chunkId, req->status);
+		KFS_LOG_STREAM_INFO <<
+			req->server->GetServerLocation().ToString() <<
+			": re-replication for chunk " << req->chunkId <<
+			" failed, status: " << req->status <<
+			" chunk replications in flight: " << chunkInFlight <<
+		KFS_LOG_EOM;
 		mFailedReplicationStats->Update(1);
 		return;
 	}
-
 	// replication succeeded: book-keeping
 
 	// if any of the hosting servers were being "retired", notify them that
@@ -2100,31 +4432,40 @@ LayoutManager::ChunkReplicationDone(MetaChunkReplicate *req)
 
 	// validate that the server got the latest copy of the chunk
 	vector<MetaChunkInfo *> v;
-	vector<MetaChunkInfo *>::iterator chunk;
-
-	metatree.getalloc(req->fid, v);
-	chunk = find_if(v.begin(), v.end(), ChunkIdMatcher(req->chunkId));
+	metatree.getalloc(iter->second.fid, v);
+	vector<MetaChunkInfo *>::const_iterator const chunk = find_if(
+            v.begin(), v.end(), ChunkIdMatcher(req->chunkId));
 	if (chunk == v.end()) {
 		// Chunk disappeared -> stale; this chunk will get nuked
-		KFS_LOG_VA_INFO("Re-replicate: chunk (%lld) disappeared => so, stale",
-				req->chunkId);
+		KFS_LOG_STREAM_INFO <<
+			req->server->GetServerLocation().ToString() <<
+			" re-replicate: chunk " << req->chunkId <<
+			" disappeared => stale" <<
+		KFS_LOG_EOM;
 		mFailedReplicationStats->Update(1);
 		req->server->NotifyStaleChunk(req->chunkId);
 		return;
 	}
-	MetaChunkInfo *mci = *chunk;
+	const MetaChunkInfo *mci = *chunk;
 	if (mci->chunkVersion != req->chunkVersion) {
 		// Version that we replicated has changed...so, stale
-		KFS_LOG_VA_INFO("Re-replicate: chunk (%lld) version changed (was=%lld, now=%lld) => so, stale",
-				req->chunkId, req->chunkVersion, mci->chunkVersion);
+		KFS_LOG_STREAM_INFO <<
+			req->server->GetServerLocation().ToString() <<
+			" re-replicate: chunk " << req->chunkId <<
+			" version changed was: " << req->chunkVersion <<
+			" now " << mci->chunkVersion << " => stale" <<
+		KFS_LOG_EOM;
 		mFailedReplicationStats->Update(1);
 		req->server->NotifyStaleChunk(req->chunkId);
 		return;
 	}
 
 	// Yaeee...all good...
-	KFS_LOG_VA_DEBUG("%s reports that re-replication for chunk %lld is all done",
-			req->server->GetServerLocation().ToString().c_str(), req->chunkId);
+	KFS_LOG_STREAM_DEBUG <<
+		req->server->GetServerLocation().ToString() <<
+		" reports that re-replication for chunk " << req->chunkId <<
+		" is all done" <<
+	KFS_LOG_EOM;
 	UpdateChunkToServerMapping(req->chunkId, req->server.get());
 
 	// since this server is now free, send more work its way...
@@ -2185,20 +4526,18 @@ LayoutManager::DeleteAddlChunkReplicas(chunkId_t chunkId, ChunkPlacementInfo &cl
 	mChunkToServerMap[chunkId] = clli;
 
 	ostringstream msg;
-	msg << "Chunk " << chunkId << " lives on: \n";
+	msg << "Chunk " << chunkId << " lives on:\n";
 	for (uint32_t i = 0; i < clli.chunkServers.size(); i++) {
 		msg << clli.chunkServers[i]->GetServerLocation().ToString() << ' '
 			<< clli.chunkServers[i]->GetRack() << "; ";
 	}
-	msg << "\n";
-	msg << "Discarding chunk on: ";
+	msg << "\nDiscarding chunk on: ";
 	for (uint32_t i = 0; i < copiesToDiscard.size(); i++) {
 		msg << copiesToDiscard[i]->GetServerLocation().ToString() << ' '
 			<< copiesToDiscard[i]->GetRack() << " ";
 	}
 	msg << "\n";
-
-	KFS_LOG_VA_INFO("%s", msg.str().c_str());
+	KFS_LOG_STREAM_INFO << msg.str() << KFS_LOG_EOM;
 
 	for_each(copiesToDiscard.begin(), copiesToDiscard.end(), ChunkDeletor(chunkId));
 }
@@ -2342,7 +4681,7 @@ LayoutManager::RebalanceServers()
 			continue;
 		if (servers[i]->GetSpaceUtilization() < mMinRebalanceSpaceUtilThreshold)
 			nonloadedServers.push_back(servers[i]);
-		else if (servers[i]->GetSpaceUtilization() > mMaxRebalanceSpaceUtilThreshold) 
+		else if (servers[i]->GetSpaceUtilization() > mMaxRebalanceSpaceUtilThreshold)
 			loadedServers.push_back(servers[i]);
 	}
 
@@ -2388,10 +4727,14 @@ LayoutManager::RebalanceServers()
 		mLastChunkRebalanced = chunkId;
 
 		// If this chunk is already being replicated or it is busy, skip
+		bool noSuchChunkFlag = false;
 		if ((clli.ongoingReplications > 0) ||
-			(!CanReplicateChunkNow(chunkId, clli, extraReplicas)))
+			(!CanReplicateChunkNow(chunkId, clli, extraReplicas, noSuchChunkFlag)))
 				continue;
-
+		if (noSuchChunkFlag) {
+			mChunkToServerMap.erase(iter--);
+			continue;
+		}
 		// if we got too many copies of this chunk, don't bother
 		if (extraReplicas < 0)
 			continue;
@@ -2452,16 +4795,13 @@ LayoutManager::ReplicateChunkToServers(chunkId_t chunkId, ChunkPlacementInfo &cl
 		assert(!IsChunkHostedOnServer(clli.chunkServers, candidates[i]));
 	}
 
-	int numOngoing = ReplicateChunk(chunkId, clli, numCopies, candidates);
-	if (numOngoing > 0) {
+	const int numStarted = ReplicateChunk(chunkId, clli, numCopies, candidates);
+	if (numStarted > 0) {
 		// add this chunk to the target set of chunkIds that we are tracking
 		// for replication status change
 		ChangeChunkReplication(chunkId);
-
-		clli.ongoingReplications += numOngoing;
-		mNumOngoingReplications++;
 	}
-	return numOngoing;
+	return numStarted;
 }
 
 class RebalancePlanExecutor {
@@ -2482,7 +4822,7 @@ LayoutManager::LoadRebalancePlan(const string &planFn)
 	int fd = open(planFn.c_str(), O_RDONLY);
 
 	if (fd < 0) {
-		KFS_LOG_VA_INFO("Unable to open: %s", planFn.c_str());
+		KFS_LOG_STREAM_INFO << "Unable to open: " << planFn << KFS_LOG_EOM;
 		return -1;
 	}
 
@@ -2509,7 +4849,9 @@ LayoutManager::LoadRebalancePlan(const string &planFn)
 	close(fd);
 
 	mIsExecutingRebalancePlan = true;
-	KFS_LOG_VA_INFO("Setup for rebalance plan execution from %s is done", planFn.c_str());
+	KFS_LOG_STREAM_INFO << "Setup for rebalance plan execution from " <<
+		planFn << " is done" <<
+	KFS_LOG_EOM;
 
 	return 0;
 }
@@ -2528,16 +4870,15 @@ LayoutManager::ExecuteRebalancePlan()
 	for (vector<ChunkServerPtr>::iterator iter = mChunkServers.begin();
 		iter != mChunkServers.end(); iter++) {
 		ChunkServerPtr c = *iter;
-		set<chunkId_t> chunksToMove = c->GetChunksToMove();
-
-		if (!chunksToMove.empty()) {
+		if (!c->GetChunksToMove().empty()) {
 			alldone = false;
 			break;
 		}
 	}
 
 	if (alldone) {
-		KFS_LOG_INFO("Execution of rebalance plan is complete...");
+		KFS_LOG_STREAM_INFO << "Execution of rebalance plan is complete" <<
+		KFS_LOG_EOM;
 		mIsExecutingRebalancePlan = false;
 	}
 }
@@ -2545,29 +4886,32 @@ LayoutManager::ExecuteRebalancePlan()
 void
 LayoutManager::ExecuteRebalancePlan(ChunkServerPtr &c)
 {
-	set<chunkId_t> chunksToMove = c->GetChunksToMove();
 	vector<ChunkServerPtr> candidates;
 
 	if (!mIsExecutingRebalancePlan)
 		return;
 
 	if (c->GetSpaceUtilization() > MAX_SERVER_SPACE_UTIL_THRESHOLD) {
-		KFS_LOG_VA_INFO("Terminating rebalance plan execution for overloaded server %s", c->ServerID().c_str());
+		KFS_LOG_STREAM_INFO <<
+			"Terminating rebalance plan execution for overloaded server " <<
+			c->ServerID() <<
+		KFS_LOG_EOM;
 		c->ClearChunksToMove();
 		return;
 	}
 
 	candidates.push_back(c);
 
-	for (set<chunkId_t>::iterator citer = chunksToMove.begin();
+	const ChunkIdSet chunksToMove = c->GetChunksToMove();
+	for (ChunkIdSet::const_iterator citer = chunksToMove.begin();
 		citer != chunksToMove.end(); citer++) {
 		if (c->GetNumChunkReplications() >
 			MAX_CONCURRENT_WRITE_REPLICATIONS_PER_NODE)
 			return;
 
-		chunkId_t cid = *citer;
+		const chunkId_t cid = *citer;
 
-		CSMapIter iter = mChunkToServerMap.find(cid);
+		CSMapIter const iter = mChunkToServerMap.find(cid);
 
 		if (iter == mChunkToServerMap.end()) {
 			// chunk got deleted from the time the plan was created
@@ -2576,19 +4920,22 @@ LayoutManager::ExecuteRebalancePlan(ChunkServerPtr &c)
 			continue;
 		}
 
-		int extraReplicas;
-
+		int  extraReplicas   = 0;
+		bool noSuchChunkFlag = false;
 		if ((iter->second.ongoingReplications > 0) ||
 			(!CanReplicateChunkNow(cid, iter->second,
-				extraReplicas)))
+				extraReplicas, noSuchChunkFlag)))
 			continue;
 		if (IsChunkHostedOnServer(iter->second.chunkServers, c)) {
 			// Paranoia...
 			c->MovingChunkDone(cid);
 			continue;
 		}
-
-		ReplicateChunkToServers(cid, iter->second, 1, candidates);
+		if (noSuchChunkFlag) {
+			mChunkToServerMap.erase(iter);
+		} else {
+			ReplicateChunkToServers(cid, iter->second, 1, candidates);
+		}
 	}
 }
 
@@ -2597,12 +4944,11 @@ class OpenFileChecker {
 public:
 	OpenFileChecker(set<fid_t> &r, set<fid_t> &w) :
 		readFd(r), writeFd(w) { }
-	void operator() (const map<chunkId_t, ChunkPlacementInfo >::value_type p) {
-		ChunkPlacementInfo c = p.second;
-		vector<LeaseInfo>::iterator l;
-
+	void operator() (const CSMap::value_type& p) {
+		const ChunkPlacementInfo& c = p.second;
+		vector<LeaseInfo>::const_iterator l;
 		l = find_if(c.chunkLeases.begin(), c.chunkLeases.end(),
-				ptr_fun(LeaseInfo::IsValidWriteLease));
+			ptr_fun(LeaseInfo::IsValidWriteLease));
 		if (l != c.chunkLeases.end()) {
 			writeFd.insert(c.fid);
 			return;

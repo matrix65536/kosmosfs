@@ -3,7 +3,6 @@
 //
 // Created 2008/08/27
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -47,7 +46,7 @@ ChunkServerEmulator::ChunkServerEmulator(const ServerLocation &loc, int rack) : 
 }
 
 void
-ChunkServerEmulator::Enqueue(MetaRequest *r)
+ChunkServerEmulator::Enqueue(MetaChunkRequest *r)
 {
     mPendingReqs.enqueue(r);
 }

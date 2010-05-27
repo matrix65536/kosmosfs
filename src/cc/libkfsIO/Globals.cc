@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/10/09
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -27,52 +26,74 @@
 
 #include "Globals.h"
 
-#include <cstdio>
-#include <cstdlib>
-
-using namespace KFS::libkfsio;
-
-// To make it easy to get globals with gdb.
-static Globals_t* gLibKfsGlobals = 0;
-
-Globals_t & KFS::libkfsio::globals()
+namespace KFS
 {
-    if (! gLibKfsGlobals) {
-        gLibKfsGlobals = new Globals_t();
-    }
-    return *gLibKfsGlobals;
+namespace libkfsio
+{
+
+Globals_t* Globals_t::sForGdbToFindInstance = 0;
+
+Globals_t::Globals_t()
+    : counterManager(),
+      ctrOpenNetFds      ("Open network fds"),
+      ctrOpenDiskFds     ("Open disk fds"),
+      ctrNetBytesRead    ("Bytes read from network"),
+      ctrNetBytesWritten ("Bytes written to network"),
+      ctrDiskBytesRead   ("Bytes read from disk"),
+      ctrDiskBytesWritten("Bytes written to disk"),
+      ctrDiskIOErrors    ("Disk I/O errors"),
+      mInitedFlag(false),
+      mDestructedFlag(false),
+      mForGdbToFindNetManager(0)
+{
+    counterManager.AddCounter(&ctrOpenNetFds);
+    counterManager.AddCounter(&ctrOpenDiskFds);
+    counterManager.AddCounter(&ctrNetBytesRead);
+    counterManager.AddCounter(&ctrNetBytesWritten);
+    counterManager.AddCounter(&ctrDiskBytesRead);
+    counterManager.AddCounter(&ctrDiskBytesWritten);
+    counterManager.AddCounter(&ctrDiskIOErrors);
+    sForGdbToFindInstance = this;
 }
 
-//
-// Initialize the globals once.
-//
-void
-KFS::libkfsio::InitGlobals()
+Globals_t::~Globals_t()
 {
-    static bool calledOnce = false;
+    mDestructedFlag = true;
+}
 
-    if (calledOnce) 
+Globals_t&
+Globals_t::Instance()
+{
+    static Globals_t globalsInstance;
+    return globalsInstance;
+}
+
+NetManager&
+Globals_t::getNetManager()
+{
+    // Ensure that globals are constructed before net manager.
+    NetManager*& netManager = Instance().mForGdbToFindNetManager;
+    static NetManager netManagerInstance;
+    if (! netManager) {
+        netManager = &netManagerInstance;
+    }
+    return netManagerInstance;
+}
+
+void
+Globals_t::Init()
+{
+    if (mInitedFlag) {
         return;
+    }
+    mInitedFlag = true;
+}
 
-    calledOnce = true;
+void
+Globals_t::Destroy()
+{
+    // Rely on compiler / runtime to invoke static dtors in the reverse order.
+}
 
-    globals().diskManager.Init();
-    globals().eventManager.Init();
-
-    globals().ctrOpenNetFds.SetName("Open network fds");
-    globals().ctrOpenDiskFds.SetName("Open disk fds");
-    globals().ctrNetBytesRead.SetName("Bytes read from network");
-    globals().ctrNetBytesWritten.SetName("Bytes written to network");
-    globals().ctrDiskBytesRead.SetName("Bytes read from disk");
-    globals().ctrDiskBytesWritten.SetName("Bytes written to disk");
-        // track the # of failed read/writes
-    globals().ctrDiskIOErrors.SetName("Disk I/O errors");
-
-    globals().counterManager.AddCounter(&globals().ctrOpenNetFds);
-    globals().counterManager.AddCounter(&globals().ctrOpenDiskFds);
-    globals().counterManager.AddCounter(&globals().ctrNetBytesRead);
-    globals().counterManager.AddCounter(&globals().ctrNetBytesWritten);
-    globals().counterManager.AddCounter(&globals().ctrDiskBytesRead);
-    globals().counterManager.AddCounter(&globals().ctrDiskBytesWritten);
-    globals().counterManager.AddCounter(&globals().ctrDiskIOErrors);
+}
 }

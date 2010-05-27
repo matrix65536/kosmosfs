@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/10/09
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -28,10 +27,7 @@
 #ifndef LIBKFSIO_GLOBALS_H
 #define LIBKFSIO_GLOBALS_H
 
-#include "DiskManager.h"
 #include "NetManager.h"
-#include "EventManager.h"
-#include "NetKicker.h"
 #include "Counter.h"
 
 namespace KFS
@@ -40,11 +36,7 @@ namespace KFS
     {
 
         struct Globals_t {
-            DiskManager diskManager;
-            NetManager netManager;
-            EventManager eventManager;
             CounterManager counterManager;
-            NetKicker netKicker;
             // Commonly needed counters
             Counter ctrOpenNetFds;
             Counter ctrOpenDiskFds;
@@ -54,11 +46,27 @@ namespace KFS
             Counter ctrDiskBytesWritten;
             // track the # of failed read/writes
             Counter ctrDiskIOErrors;
+            void Init();
+            static NetManager& getNetManager();
+            static void Destroy();
+            static Globals_t& Instance();
+        private:
+            ~Globals_t();
+            Globals_t();
+            bool              mInitedFlag;
+            bool              mDestructedFlag;
+            NetManager*       mForGdbToFindNetManager;
+            static Globals_t* sForGdbToFindInstance;
         };
 
-        void InitGlobals();
-
-        Globals_t & globals();
+        inline static void InitGlobals()
+            { Globals_t::Instance().Init(); }
+        inline static void DestroyGlobals()
+            { Globals_t::Destroy(); }
+        inline static NetManager& globalNetManager()
+            { return Globals_t::getNetManager(); }
+        inline static Globals_t & globals()
+            { return Globals_t::Instance(); }
     }
 }
 

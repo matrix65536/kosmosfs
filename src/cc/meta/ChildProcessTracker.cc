@@ -3,7 +3,6 @@
 // $Id$
 //
 // Created 2009/04/30
-// Author: Sriram Rao
 //
 // Copyright 2009 Quantcast Corp.
 //
@@ -27,49 +26,71 @@
 //
 //----------------------------------------------------------------------------
 
+#include <vector>
+
 #include "request.h"
 #include "logger.h"
 #include "ChildProcessTracker.h"
 #include "libkfsIO/Globals.h"
 #include "common/log.h"
-using namespace KFS;
-using namespace KFS::libkfsio;
-using std::pair;
-using std::list;
 
-ChildProcessTrackingTimer KFS::gChildProcessTracker;
-
-void KFS::ChildProcessTrackerInit()
+namespace KFS
 {
-	globals().netManager.RegisterTimeoutHandler(&gChildProcessTracker);
-}
+
+ChildProcessTrackingTimer gChildProcessTracker;
 
 void ChildProcessTrackingTimer::Track(pid_t pid, MetaRequest *r)
 {
-	mPending.push_back(pair<pid_t, MetaRequest *>(pid, r));
+	if (mPending.empty()) {
+		libkfsio::globalNetManager().RegisterTimeoutHandler(this);
+	}
+	mPending.insert(std::make_pair(pid, r));
 }
 
 void ChildProcessTrackingTimer::Timeout()
 {
-	for (list<pair<pid_t, MetaRequest *> >::iterator curr = mPending.begin();
-		curr != mPending.end(); ) {
-
-		int status;
-		MetaRequest *req = curr->second;
-		pid_t pid = waitpid(curr->first, &status, WNOHANG);
-		if ((pid == curr->first) && WIFEXITED(status))  {
-			req->status = WEXITSTATUS(status);
+        while (! mPending.empty()) {
+		int         status = 0;
+		const pid_t pid    = waitpid(-1, &status, WNOHANG);
+		if (pid <= 0) {
+			return;
+		}
+		std::pair<Pending::iterator, Pending::iterator> const range =
+			mPending.equal_range(pid);
+		if (range.first == range.second) {
+			// Assume that all children are reaped here.
+			KFS_LOG_STREAM_ERROR <<
+				"untracked child exited:" 
+				" pid: "     << pid <<
+				" status: "  << status <<
+			KFS_LOG_EOM;
+			continue;
+		}
+		typedef std::vector<std::pair<pid_t, MetaRequest*> > Requests;
+		Requests reqs;
+		copy(range.first, range.second, std::back_inserter(reqs));
+		mPending.erase(range.first, range.second);
+		const bool lastReqFlag = mPending.empty();
+		if (lastReqFlag) {
+			libkfsio::globalNetManager().UnRegisterTimeoutHandler(this);
+		}
+		for (Requests::const_iterator it = reqs.begin(); it != reqs.end(); ++it) {
+			MetaRequest* const req = it->second;
+			req->status = WIFEXITED(status) ? WEXITSTATUS(status) :
+				(WIFSIGNALED(status) ? -WTERMSIG(status) : -11111);
 			req->suspended = false;
-
-			KFS_LOG_VA_INFO("Child pid: %d exited with status: %d",
-					pid, req->status);
-
+			KFS_LOG_STREAM_INFO <<
+				"child exited:" 
+				" pid: "     << pid <<
+				" status: "  << req->status <<
+				" request: " << req->Show() <<
+			KFS_LOG_EOM;
 			oplog.dispatch(req);
-			
-			list<pair<pid_t, MetaRequest * > >::iterator toErase = curr;
-			curr++;
-			mPending.erase(toErase);
-                }
-		curr++;
+		}
+		if (lastReqFlag) {
+			return;
+		}
 	}
+}
+
 }

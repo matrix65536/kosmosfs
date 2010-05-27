@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/10
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -119,6 +118,7 @@ public:
     int GetPeerName(struct sockaddr *peerAddr, int len) const;
     /// Return the peer's IP address as a string
     std::string GetPeerName() const;
+    std::string GetSockName() const;
 
     /// Sends at-most the specified # of bytes.  
     /// @retval Returns the result of calling send().
@@ -131,6 +131,8 @@ public:
     /// Close the TCP socket.
     void Close();
 
+    /// Get and clear pending socket error: getsockopt(SO_ERROR)
+    int GetSocketError() const;
 private:
     int mSockFd;
 

@@ -4,7 +4,6 @@
 // Created 2008/08/29
 //
 
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -103,5 +102,4 @@ KFS::EmulatorSetup(string &logdir, string &cpdir, string &networkFn,
     status = gLayoutEmulator.LoadChunkmap(chunkmapFn, addChunksToReplicationChecker);
     if (status != 0)
         panic("Unable to load chunkmap", false);
-    cout << "Reading stuff is done..." << endl;
 }

@@ -1,5 +1,5 @@
 /*
- * $Id$ 
+ * $Id$
  *
  * \file checkpoint.h
  * \brief KFS checkpointer

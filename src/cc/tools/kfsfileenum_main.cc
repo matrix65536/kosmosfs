@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2008/05/05
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -36,7 +35,6 @@ using std::cout;
 using std::endl;
 #include "common/log.h"
 #include "libkfsClient/KfsClient.h"
-#include "KfsToolsCommon.h"
 
 using namespace KFS;
 KfsClientPtr gKfsClient;
@@ -45,20 +43,18 @@ int
 main(int argc, char **argv)
 {
     bool help = false;
-    string serverHost = "";
+    const char *server = NULL;
     const char *filename = NULL;
     int port = -1, retval;
     char optchar;
     bool verboseLogging = false;
 
-    KFS::tools::getEnvServer(serverHost, port);
-    
     KFS::MsgLogger::Init(NULL);
 
     while ((optchar = getopt(argc, argv, "hs:p:f:v")) != -1) {
         switch (optchar) {
             case 's':
-                KFS::tools::parseServer(optarg, serverHost, port);
+                server = optarg;
                 break;
             case 'p':
                 port = atoi(optarg);
@@ -79,22 +75,22 @@ main(int argc, char **argv)
         }
     }
 
-    if (help || (serverHost == "") || (port < 0) || (filename == NULL)) {
+    if (help || (server == NULL) || (port < 0) || (filename == NULL)) {
         cout << "Usage: " << argv[0] << " -s <server name> -p <port> -f <path> {-v}" 
              << endl;
         exit(-1);
     }
 
-    gKfsClient = getKfsClientFactory()->GetClient(serverHost, port);
+    gKfsClient = getKfsClientFactory()->GetClient(server, port);
     if (!gKfsClient) {
         cout << "kfs client failed to initialize...exiting" << endl;
         exit(-1);
     }
 
     if (verboseLogging) {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelDEBUG);
     } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+        KFS::MsgLogger::SetLevel(KFS::MsgLogger::kLogLevelINFO);
     } 
 
     retval = gKfsClient->EnumerateBlocks(filename);

@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file request.cc
  * \brief process queue of outstanding metadata requests
@@ -25,6 +25,7 @@
 
 #include <map>
 #include <boost/lexical_cast.hpp>
+#include <string.h>
 
 #include "common/Version.h"
 
@@ -38,19 +39,19 @@
 #include "ChildProcessTracker.h"
 
 #include "libkfsIO/Globals.h"
+#include "common/log.h"
 
 using std::map;
 using std::string;
 using std::istringstream;
 using std::ifstream;
 using std::min;
+using std::max;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
 
-typedef void (*ReqHandler)(MetaRequest *r);
-map <MetaOp, ReqHandler> handler;
-
+namespace KFS {
 typedef int (*ParseHandler)(Properties &, MetaRequest **);
 
 static int parseHandlerLookup(Properties &prop, MetaRequest **r);
@@ -66,11 +67,13 @@ static int parseHandlerGetalloc(Properties &prop, MetaRequest **r);
 static int parseHandlerGetlayout(Properties &prop, MetaRequest **r);
 static int parseHandlerAllocate(Properties &prop, MetaRequest **r);
 static int parseHandlerTruncate(Properties &prop, MetaRequest **r);
+static int parseHandlerCoalesceBlocks(Properties &prop, MetaRequest **r);
 static int parseHandlerSetMtime(Properties &prop, MetaRequest **r);
 static int parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r);
 static int parseHandlerRetireChunkserver(Properties &prop, MetaRequest **r);
 static int parseHandlerToggleRebalancing(Properties &prop, MetaRequest **r);
 static int parseHandlerExecuteRebalancePlan(Properties &prop, MetaRequest **r);
+static int parseHandlerReadConfig(Properties &prop, MetaRequest **r);
 
 static int parseHandlerLeaseAcquire(Properties &prop, MetaRequest **r);
 static int parseHandlerLeaseRenew(Properties &prop, MetaRequest **r);
@@ -85,9 +88,12 @@ static int parseHandlerCheckLeases(Properties &prop, MetaRequest **r);
 static int parseHandlerRecomputeDirsize(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r);
 static int parseHandlerDumpChunkReplicationCandidates(Properties &prop, MetaRequest **r);
+static int parseHandlerFsck(Properties &prop, MetaRequest **r);
 static int parseHandlerOpenFiles(Properties &prop, MetaRequest **r);
 static int parseHandlerToggleWORM(Properties &prop, MetaRequest **r);
 static int parseHandlerUpServers(Properties &prop, MetaRequest **r);
+static int parseHandlerSetChunkServersProperties(Properties &prop, MetaRequest **r);
+static int parseHandlerGetChunkServerCounters(Properties &prop, MetaRequest **r);
 
 /// command -> parsehandler map
 typedef map<string, ParseHandler> ParseHandlerMap;
@@ -101,6 +107,7 @@ typedef map<MetaOp, Counter *> OpCounterMap;
 typedef map<MetaOp, Counter *>::iterator OpCounterMapIter;
 OpCounterMap gCounters;
 Counter *gNumFiles, *gNumDirs, *gNumChunks;
+Counter *gPathToFidCacheHit, *gPathToFidCacheMiss;
 
 // see the comments in setClusterKey()
 string gClusterKey;
@@ -138,7 +145,7 @@ AddCounter(const char *name, MetaOp opName)
 }
 
 void
-KFS::RegisterCounters()
+RegisterCounters()
 {
 	static int calledOnce = 0;
 	if (calledOnce)
@@ -172,10 +179,14 @@ KFS::RegisterCounters()
 	gNumFiles = new Counter("Number of Files");
 	gNumDirs = new Counter("Number of Directories");
 	gNumChunks = new Counter("Number of Chunks");
+	gPathToFidCacheHit = new Counter("Number of Hits in Path->Fid Cache");
+	gPathToFidCacheMiss = new Counter("Number of Misses in Path->Fid Cache");
 
 	globals().counterManager.AddCounter(gNumFiles);
 	globals().counterManager.AddCounter(gNumDirs);
 	globals().counterManager.AddCounter(gNumChunks);
+	globals().counterManager.AddCounter(gPathToFidCacheHit);
+	globals().counterManager.AddCounter(gPathToFidCacheMiss);
 }
 
 static void
@@ -192,7 +203,7 @@ UpdateCounter(MetaOp opName)
 }
 
 void
-KFS::UpdateNumDirs(int count)
+UpdateNumDirs(int count)
 {
 	if (gNumDirs == NULL)
 		return;
@@ -204,7 +215,7 @@ KFS::UpdateNumDirs(int count)
 }
 
 void
-KFS::UpdateNumFiles(int count)
+UpdateNumFiles(int count)
 {
 	if (gNumFiles == NULL)
 		return;
@@ -216,7 +227,7 @@ KFS::UpdateNumFiles(int count)
 }
 
 void
-KFS::UpdateNumChunks(int count)
+UpdateNumChunks(int count)
 {
 	if (gNumChunks == NULL)
 		return;
@@ -233,7 +244,7 @@ KFS::UpdateNumChunks(int count)
  * out to disk as part of completing the request processing.
  */
 void
-KFS::ChangeIncarnationNumber(MetaRequest *r)
+ChangeIncarnationNumber(MetaRequest *r)
 {
 	if (chunkVersionInc < 1)
 		// disable this bumping for now
@@ -249,7 +260,7 @@ KFS::ChangeIncarnationNumber(MetaRequest *r)
  * @param[in] key  The desired cluster key
 */
 void
-KFS::setClusterKey(const char *key)
+setClusterKey(const char *key)
 {
 	gClusterKey = key;
 }
@@ -264,7 +275,7 @@ KFS::setClusterKey(const char *key)
  * @param[in] md5sumFn  The filename with the list of MD5Sums
 */
 void
-KFS::setMD5SumFn(const char *md5sumFn)
+setMD5SumFn(const char *md5sumFn)
 {
 	gMD5SumFn = md5sumFn;
 }
@@ -273,73 +284,78 @@ KFS::setMD5SumFn(const char *md5sumFn)
  * Set WORM mode. In WORM mode, deletes are disabled.
  */
 void
-KFS::setWORMMode(bool value)
+setWORMMode(bool value)
 {
 	gWormMode = value;
 }
 
 void
-KFS::setMaxReplicasPerFile(int16_t val)
+setMaxReplicasPerFile(int16_t val)
 {
 	gMaxReplicasPerFile = val;
 }
 
 void
-KFS::setChunkmapDumpDir(string d)
+setChunkmapDumpDir(string d)
 {
 	gChunkmapDumpDir = d;
 }
 
-/*
- * Boilerplate code for specific request types.  Cast to the
- * appropriate type, call the corresponding KFS tree routine,
- * then use the callback to return the results.
- */
-static void
-handle_lookup(MetaRequest *r)
+static inline string FattrReply(const MetaFattr *fa)
 {
-	MetaLookup *req = static_cast <MetaLookup *>(r);
-	MetaFattr *fa = metatree.lookup(req->dir, req->name);
-	req->status = (fa == NULL) ? -ENOENT : 0;
-	if (fa != NULL)
-		req->result = *fa;
+	if (! fa) {
+		return string();
+	}
+	static const string fname[] = { "empty", "file", "dir" };
+	ostringstream os;
+	os << "File-handle: " << toString(fa->id()) << "\r\n";
+	os << "Type: " << fname[fa->type] << "\r\n";
+	os << "Chunk-count: " << toString(fa->chunkcount) << "\r\n";
+	os << "File-size: " << toString(fa->filesize) << "\r\n";
+	os << "Replication: " << toString(fa->numReplicas) << "\r\n";
+	sendtime(os, "M-Time:", fa->mtime, "\r\n");
+	sendtime(os, "C-Time:", fa->ctime, "\r\n");
+	sendtime(os, "CR-Time:", fa->crtime, "\r\n");
+	return os.str();
 }
 
-static void
-handle_lookup_path(MetaRequest *r)
+/* virtual */ void
+MetaLookup::handle()
 {
-	MetaLookupPath *req = static_cast <MetaLookupPath *>(r);
-	MetaFattr *fa = metatree.lookupPath(req->root, req->path);
-	req->status = (fa == NULL) ? -ENOENT : 0;
-	if (fa != NULL)
-		req->result = *fa;
+	MetaFattr *fa = metatree.lookup(dir, name);
+	status = (fa == NULL) ? -ENOENT : 0;
+	result = FattrReply(fa);
 }
 
-static void
-handle_create(MetaRequest *r)
+/* virtual */ void
+MetaLookupPath::handle()
 {
-	MetaCreate *req = static_cast <MetaCreate *>(r);
-	fid_t fid = 0;
-	if (!is_dir(req->dir)) {
-		req->status = -ENOTDIR;
+	MetaFattr *fa = metatree.lookupPath(root, path);
+	status = (fa == NULL) ? -ENOENT : 0;
+	result = FattrReply(fa);
+}
+
+/* virtual */ void
+MetaCreate::handle()
+{
+	if (!is_dir(dir)) {
+		status = -ENOTDIR;
 		return;
 	}
-	req->status = metatree.create(req->dir, req->name, &fid,
-					req->numReplicas, req->exclusive);
-	req->fid = fid;
+        fid = 0;
+	status = metatree.create(dir, name, &fid,
+					numReplicas, exclusive);
 }
 
-static void
-handle_mkdir(MetaRequest *r)
+/* virtual */ void
+MetaMkdir::handle()
 {
-	MetaMkdir *req = static_cast <MetaMkdir *>(r);
-	if (!is_dir(req->dir)) {
-		req->status = -ENOTDIR;
+	if (!is_dir(dir)) {
+		status = -ENOTDIR;
 		return;
 	}
-	fid_t fid = 0;
-	req->status = metatree.mkdir(req->dir, req->name, &fid);
-	req->fid = fid;
+        fid = 0;
+	status = metatree.mkdir(dir, name, &fid);
 }
 
 
@@ -362,44 +378,37 @@ isWormMutationAllowed(const string &pathname)
  * RPCs to the appropriate chunkservers.
  */
 
-static void
-handle_remove(MetaRequest *r)
+/* virtual */ void
+MetaRemove::handle()
 {
-	MetaRemove *req = static_cast <MetaRemove *>(r);
-	if (gWormMode && (!isWormMutationAllowed(req->name))) {
+	if (gWormMode && (!isWormMutationAllowed(name))) {
 		// deletes are disabled in WORM mode except for specially named
 		// files
-		req->status = -EPERM;
+		status = -EPERM;
 		return;
 	}
-	req->status = metatree.remove(req->dir, req->name, req->pathname, &req->filesize);
+	status = metatree.remove(dir, name, pathname, &filesize);
 }
 
-static void
-handle_rmdir(MetaRequest *r)
+/* virtual */ void
+MetaRmdir::handle()
 {
-	MetaRmdir *req = static_cast <MetaRmdir *>(r);
-	if (gWormMode && (!isWormMutationAllowed(req->name))) {
+	if (gWormMode && (!isWormMutationAllowed(name))) {
 		// deletes are disabled in WORM mode
-		req->status = -EPERM;
+		status = -EPERM;
 		return;
 	}
-	req->status = metatree.rmdir(req->dir, req->name, req->pathname);
+	status = metatree.rmdir(dir, name, pathname);
 }
 
-static void
-handle_readdir(MetaRequest *r)
+/* virtual */ void
+MetaReaddir::handle()
 {
-	MetaReaddir *req = static_cast <MetaReaddir *>(r);
-	if (!file_exists(req->dir))
-		req->status = -ENOENT;
-	else if (!is_dir(req->dir))
-		req->status = -ENOTDIR;
-	else {
-		// Since we took out threads in the code, we can revert the change back to version 71.  
-		// This piece of code was changed with svn version 75.
-		req->status = metatree.readdir(req->dir, req->v);
-	}
+        // Since we took out threads in the code, we can revert the change back to version 71.  
+        // This piece of code was changed with svn version 75.
+	MetaFattr * const fa = metatree.getFattr(dir);
+        status = (! fa) ? -ENOENT : (fa->type != KFS_DIR ? -ENOTDIR :
+            metatree.readdir(dir, v));
 }
 
 class EnumerateLocations {
@@ -497,97 +506,97 @@ public:
 
 };
 
-static void
-handle_readdirplus(MetaRequest *r)
+/* virtual */ void
+MetaReaddirPlus::handle()
 {
-	MetaReaddirPlus *req = static_cast <MetaReaddirPlus *>(r);
-	if (!file_exists(req->dir)) {
-		req->status = -ENOENT;
-		return;
+	MetaFattr * const fa = metatree.getFattr(dir);
+	if (! fa) {
+		status = -ENOENT;
+        } else if (fa->type != KFS_DIR) {
+		status = -ENOTDIR;
+	} else {
+		vector<MetaDentry *> res;
+		status = metatree.readdir(dir, res);
+		if (status == 0) {
+			// now that we have the entire directory read, for each entry in the
+			// directory, get the attributes out.
+			numEntries = res.size();
+			for_each(res.begin(), res.end(), EnumerateReaddirPlusInfo(v));
+		}
 	}
-	else if (!is_dir(req->dir)) {
-		req->status = -ENOTDIR;
-		return;
-	}
-	vector<MetaDentry *> res;
-	req->status = metatree.readdir(req->dir, res);
-	if (req->status != 0)
-		return;
-	// now that we have the entire directory read, for each entry in the
-	// directory, get the attributes out.
-	req->numEntries = res.size();
-	for_each(res.begin(), res.end(), EnumerateReaddirPlusInfo(req->v));
 }
 
 /*!
  * \brief Get the allocation information for a specific chunk in a file.
  */
-static void
-handle_getalloc(MetaRequest *r)
+/* virtual */ void
+MetaGetalloc::handle()
 {
-	MetaGetalloc *req = static_cast <MetaGetalloc *>(r);
-	MetaChunkInfo *chunkInfo;
+	if (!file_exists(fid)) {
+		KFS_LOG_STREAM_DEBUG << "handle_getalloc: no such file " << fid <<
+		KFS_LOG_EOM;
+		status = -ENOENT;
+		return;
+	}
+
+	MetaChunkInfo *chunkInfo = 0;
+	status = metatree.getalloc(fid, offset, &chunkInfo);
+	if (status != 0) {
+		KFS_LOG_STREAM_DEBUG <<
+			"handle_getalloc(" << fid << "," << offset <<
+			") = " << status << ": kfsop failed" <<
+		KFS_LOG_EOM;
+		return;
+	}
+
+	chunkId = chunkInfo->chunkId;
+	chunkVersion = chunkInfo->chunkVersion;
 	vector<ChunkServerPtr> c;
-
-	if (!file_exists(req->fid)) {
-		KFS_LOG_VA_DEBUG("handle_getalloc: no such file %lld", req->fid);
-		req->status = -ENOENT;
+	if (gLayoutManager.GetChunkToServerMapping(chunkId, c) != 0) {
+		KFS_LOG_STREAM_DEBUG <<
+			"handle_getalloc(" << fid << "," << chunkId << "," << offset <<
+			"): no chunkservers" <<
+		KFS_LOG_EOM;
+		status = -EAGAIN;
 		return;
 	}
-
-	req->status = metatree.getalloc(req->fid, req->offset, &chunkInfo);
-	if (req->status != 0) {
-		KFS_LOG_VA_DEBUG(
-			"handle_getalloc(%lld, %lld) = %d: kfsop failed",
-			req->fid, req->offset, req->status);
-		return;
-	}
-
-	req->chunkId = chunkInfo->chunkId;
-	req->chunkVersion = chunkInfo->chunkVersion;
-	if (gLayoutManager.GetChunkToServerMapping(req->chunkId, c) != 0) {
-		KFS_LOG_DEBUG("handle_getalloc: no chunkservers");
-		req->status = -EAGAIN;
-		return;
-	}
-	for_each(c.begin(), c.end(), EnumerateLocations(req->locations));
-	req->status = 0;
+	for_each(c.begin(), c.end(), EnumerateLocations(locations));
+	status = 0;
 }
 
 /*!
  * \brief Get the allocation information for a file.  Determine
  * how many chunks there and where they are located.
  */
-static void
-handle_getlayout(MetaRequest *r)
+/* virtual */ void
+MetaGetlayout::handle()
 {
-	MetaGetlayout *req = static_cast <MetaGetlayout *>(r);
 	vector<MetaChunkInfo*> chunkInfo;
 	vector<ChunkServerPtr> c;
 
-	if (!file_exists(req->fid)) {
-		req->status = -ENOENT;
+	if (!file_exists(fid)) {
+		status = -ENOENT;
 		return;
 	}
 
-	req->status = metatree.getalloc(req->fid, chunkInfo);
-	if (req->status != 0)
+	status = metatree.getalloc(fid, chunkInfo);
+	if (status != 0)
 		return;
 
-	for (vector<ChunkLayoutInfo>::size_type i = 0; i < chunkInfo.size(); i++) {
+	for (vector<MetaChunkInfo*>::size_type i = 0; i < chunkInfo.size(); i++) {
 		ChunkLayoutInfo l;
 
 		l.offset = chunkInfo[i]->offset;
 		l.chunkId = chunkInfo[i]->chunkId;
 		l.chunkVersion = chunkInfo[i]->chunkVersion;
 		if (gLayoutManager.GetChunkToServerMapping(l.chunkId, c) != 0) {
-			req->status = -EHOSTUNREACH;
+			status = -EHOSTUNREACH;
 			return;
 		}
 		for_each(c.begin(), c.end(), EnumerateLocations(l.locations));
-		req->v.push_back(l);
+		v.push_back(l);
 	}
-	req->status = 0;
+	status = 0;
 }
 
 class ChunkVersionChanger {
@@ -639,373 +648,544 @@ public:
  * manager tells us where the data has been placed; the process for
  * the request is therefore complete.
  */
-static void
-handle_allocate(MetaRequest *r)
+/* virtual */ void
+MetaAllocate::handle()
 {
-	MetaAllocate *req = static_cast<MetaAllocate *>(r);
-
-	if (!req->layoutDone) {
-		KFS_LOG_VA_DEBUG("Starting layout for req:%lld", req->opSeqno);
-		// force an allocation
-		req->chunkId = 0;
-		// start at step #2 above.
-		req->status = metatree.allocateChunkId(
-				req->fid, req->offset, &req->chunkId,
-				&req->chunkVersion, &req->numReplicas);
-		if ((req->status != 0) && (req->status != -EEXIST)) {
-			// we have a problem
-			return;
-		}
-		if (req->status == -EEXIST) {
-			bool isNewLease = false;
-			// Get a (new) lease if possible
-			req->status = gLayoutManager.GetChunkWriteLease(req, isNewLease);
-			if (req->status != 0) {
-				// couln't get the lease...bail
-				return;
-			}
-			if (!isNewLease) {
-				KFS_LOG_VA_DEBUG("Got valid lease for req:%lld",
-						req->opSeqno);
-				// we got a valid lease.  so, return
-				return;
-			}
-			// new lease and chunkservers have been notified
-			// so, wait for them to ack
-
-		} else if (gLayoutManager.AllocateChunk(req) != 0) {
-			// we have a problem
-			req->status = -ENOSPC;
-			return;
-		}
-		// we have queued an RPC to the chunkserver.  so, hold
-		// off processing (step #5)
-		req->suspended = true;
+	suspended = false;
+	if (layoutDone) {
 		return;
 	}
-	KFS_LOG_VA_DEBUG("Layout is done for req:%lld", req->opSeqno);
+	KFS_LOG_STREAM_DEBUG << "Starting layout for req: " << opSeqno <<
+        KFS_LOG_EOM;
+	if (appendChunk) {
+		// pick a chunk for which a write lease exists
+		status = gLayoutManager.AllocateChunkForAppend(this);
+		if (status == 0) {
+			// all good
+			KFS_LOG_STREAM_DEBUG <<
+                            "For append re-using chunk " << chunkId <<
+			    (suspended ? "; allocation in progress" : "") <<
+                        KFS_LOG_EOM;
+			logFlag = false; // Do not emit redundant log record.
+			return;
+		}
+		offset = -1; // Allocate a new chunk past eof.
+	}
+	// force an allocation
+	chunkId = 0;
+	// start at step #2 above.
+	status = metatree.allocateChunkId(
+			fid, offset, &chunkId,
+			&chunkVersion, &numReplicas);
+	if ((status != 0) && (status != -EEXIST || appendChunk)) {
+		// we have a problem
+		return;
+	}
+	if (status == -EEXIST) {
+		bool isNewLease = false;
+		// Get a (new) lease if possible
+		status = gLayoutManager.GetChunkWriteLease(this, isNewLease);
+		if (status != 0) {
+			// couln't get the lease...bail
+			return;
+		}
+		if (!isNewLease) {
+			KFS_LOG_STREAM_DEBUG << "Got valid lease for req:" << opSeqno <<
+                        KFS_LOG_EOM;
+			// we got a valid lease.  so, return
+			return;
+		}
+		// new lease and chunkservers have been notified
+		// so, wait for them to ack
 
-	if (req->status != 0) {
+	} else if (gLayoutManager.AllocateChunk(this) != 0) {
+		// we have a problem
+		status = -ENOSPC;
+		return;
+	}
+	// we have queued an RPC to the chunkserver.  so, hold
+	// off processing (step #5)
+	// If all allocate ops fail synchronously (all servers are down), then
+	// the op is not suspended, and can proceed immediately.
+	suspended =! layoutDone;
+}
+
+void
+MetaAllocate::LayoutDone()
+{
+	const bool wasSuspended = suspended;
+	suspended  = false;
+	layoutDone = true;
+	KFS_LOG_STREAM_DEBUG <<
+		"Layout is done for req: " << opSeqno << " status: " << status <<
+	KFS_LOG_EOM;
+	if (status == 0) {
+		// Check if all servers are still up, and didn't go down
+		// and reconnected back.
+		// In the case of reconnect smart pointers should be different:
+		// the the previous server incarnation always taken down on
+		// reconnect.
+		// Since the chunk is "dangling" up until this point, then in
+		// the case of reconnect the chunk becomes "stale", and chunk
+		// server is instructed to delete its replica of this new chunk.
+		for (vector<ChunkServerPtr>::const_iterator i = servers.begin();
+				i != servers.end(); ++i) {
+			if ((*i)->IsDown()) {
+				KFS_LOG_STREAM_DEBUG << (*i)->ServerID() <<
+					" went down during allocation, alloc failed" <<
+				KFS_LOG_EOM;
+				status = -EIO;
+				break;
+			}
+		}
+	}
+	if (status != 0) {
+		seq_t oldvers = -1;
 		// we have a problem: it is possible that the server
 		// went down.  ask the client to retry....
-		req->status = -KFS::EALLOCFAILED;
+		status = -KFS::EALLOCFAILED;
 
-		metatree.getChunkVersion(req->fid, req->chunkId,
-					&req->chunkVersion);
-		if (req->chunkVersion > 0) {
-			// reset version #'s at the chunkservers
-			for_each(req->servers.begin(), req->servers.end(),
-				ChunkVersionChanger(req->fid, req->chunkId,
-						req->chunkVersion));
+		gLayoutManager.InvalidateWriteLease(chunkId);
+		metatree.getChunkVersion(fid, chunkId, &oldvers);
+		if (oldvers > 0) {
+			// For allocation requests that cause a version bump, we
+			// have notified some of the chunkservers of the version bump.
+			// If we need to revert the version # and can't send them that
+			// message, we got a problem.  That particular version # is
+			// poisoned and we aren't taking it out of the system.  By
+			// letting the message to flow thru, we update the metatree with
+			// the version # and then when the client does a new allocation,
+			// we'll avoid re-using the poisoned version #.
+			metatree.assignChunkId(fid, offset,
+						chunkId, chunkVersion);
 		} else {
 			// this is the first time the chunk was allocated.
 			// since the allocation failed, remove existence of this chunk
 			// on the metaserver.
-			gLayoutManager.RemoveChunkToServerMapping(req->chunkId);
+			gLayoutManager.DeleteChunk(chunkId);
 		}
 		// processing for this message is all done
-		req->suspended = false;
+	} else {
+		// layout is complete (step #6)
+
+		// update the tree (step #7) and since we turned off the
+		// suspend flag, the request will be logged and go on its
+		// merry way.
+		//
+		// There could be more than one append allocation request set
+		// (each set one or more request with the same chunk) in flight.
+		// The append request sets can finish in any order.
+		// The append request sets can potentially all have the same
+		// offset: the eof at the time the first request in each set
+		// started.
+		// For append requests assignChunkId assigns past eof offset,
+		// if it succeeds, and returns the value in appendOffset.
+		chunkOff_t appendOffset = offset;
+		status = metatree.assignChunkId(fid, offset,
+						chunkId, chunkVersion,
+						appendChunk ? &appendOffset : 0);
+		if (status == 0) {
+			// Offset can change in the case of append.
+			offset = appendOffset;
+			gLayoutManager.CancelPendingMakeStable(fid, chunkId);
+			// assignChunkId() forces a recompute of the file's size.
+		} else {
+			assert(! appendChunk || status != -EEXIST);
+			KFS_LOG_STREAM((appendChunk && status == -EEXIST) ?
+					MsgLogger::kLogLevelERROR :
+					MsgLogger::kLogLevelDEBUG) <<
+				"Assign chunk id failed for"
+				" <" << fid << "," << offset << ">"
+				" status: " << status <<
+                	KFS_LOG_EOM; 
+		}
+	}
+	if (appendChunk) {
+		gLayoutManager.AllocateChunkForAppendDone(*this);
+	}
+	if (! wasSuspended) {
+		// Do need need to resume, if it wasn't suspended: this method
+		// is [indirectly] invoked from handle().
+		// Presently the only way to get here is from synchronous chunk
+		// server allocation failure. The request can not possibly have
+		// non empty request list in this case, as it wasn't ever
+		// suspened.
+		if (next) {
+			panic(
+				"non empty allocation queue,"
+				" for request that was not suspended",
+				false
+			);
+		}
 		return;
 	}
-	// layout is complete (step #6)
-	req->suspended = false;
-
-	// update the tree (step #7) and since we turned off the
-	// suspend flag, the request will be logged and go on its
-	// merry way.
-	req->status = metatree.assignChunkId(req->fid, req->offset,
-					req->chunkId, req->chunkVersion);
-	if (req->status != 0)
-		KFS_LOG_VA_DEBUG("Assign chunk id failed for %lld,%lld", req->fid, req->offset);
+	// Currently the ops queue only used for append allocations.
+	assert(appendChunk || ! next);
+	// Clone status for all ops in the queue.
+	// Submit the replies in the same order as requests.
+	// "this" might get deleted after submit_request()
+	MetaAllocate* n = this;
+	do {
+		MetaAllocate& c = *n;
+		n = c.next;
+		c.next = 0;
+		if (n) {
+			MetaAllocate& q = *n;
+			assert(q.fid == c.fid);
+			q.status           = c.status;
+			q.statusMsg        = c.statusMsg;
+			q.suspended        = false;
+			q.fid              = c.fid;
+			q.offset           = c.offset;
+			q.chunkId          = c.chunkId;
+			q.chunkVersion     = c.chunkVersion;
+			q.pathname         = c.pathname;
+			q.numReplicas      = c.numReplicas;
+			q.layoutDone       = c.layoutDone;
+			q.appendChunk      = c.appendChunk;
+			q.servers          = c.servers;
+			q.master           = c.master;
+			q.numServerReplies = c.numServerReplies;
+		}
+		submit_request(&c);
+	} while (n);
 }
 
-static void
-handle_truncate(MetaRequest *r)
+/* virtual */ void
+MetaChunkAllocate::resume()
 {
-	MetaTruncate *req = static_cast <MetaTruncate *>(r);
+        assert(req && (req->op == META_ALLOCATE));
+
+	// if there is a non-zero status, don't throw it away
+	if (req->status == 0) {
+                req->status = status;
+	}
+        MetaAllocate& alloc = *req;
+	delete this;                
+
+        alloc.numServerReplies++;
+        // wait until we get replies from all servers
+	if (alloc.numServerReplies == alloc.servers.size()) {
+		// The ops are no longer suspended
+		alloc.LayoutDone();
+        }
+}
+
+string
+MetaAllocate::Show() const
+{
+	ostringstream os;
+	os << "allocate:"
+            " seq:  "     << opSeqno     <<
+            " path: "     << pathname    <<
+            " fid: "      << fid         <<
+            " chunkId: "  << chunkId     <<
+            " offset: "   << offset      <<
+            " client: "   << clientHost  <<
+            " replicas: " << numReplicas <<
+            " append: "   << appendChunk <<
+	    " log: "      << logFlag
+        ;
+        for (vector<ChunkServerPtr>::const_iterator i = servers.begin();
+                i != servers.end(); ++i) {
+            os << " " << (*i)->ServerID();
+        }
+	return os.str();
+}
+
+/* virtual */ void
+MetaTruncate::handle()
+{
 	chunkOff_t allocOffset = 0;
 
 	if (gWormMode) {
-		req->status = -EPERM;
+		status = -EPERM;
 		return;
 	}
 
-	req->status = metatree.truncate(req->fid, req->offset, &allocOffset);
-	if (req->status > 0) {
+	if (pruneBlksFromHead) {
+		status = metatree.pruneFromHead(fid, offset);
+		return;
+	}
+
+	status = metatree.truncate(fid, offset, &allocOffset);
+	if (status > 0) {
 		// an allocation is needed
-		MetaAllocate *alloc = new MetaAllocate(req->opSeqno, req->fid,
+		MetaAllocate *alloc = new MetaAllocate(opSeqno, KFS_CLIENT_PROTO_VERS, fid,
 							allocOffset);
 
-		KFS_LOG_VA_DEBUG("Suspending truncation due to alloc at offset: %lld",
-				allocOffset);
+		KFS_LOG_STREAM_DEBUG << "Suspending truncation due to alloc at offset: " <<
+				allocOffset << KFS_LOG_EOM;
 
 		// tie things together
-		alloc->req = r;
-		req->suspended = true;
-		handle_allocate(alloc);
+		alloc->req = this;
+		suspended = true;
+		alloc->handle();
 	}
 }
 
-static void
-handle_rename(MetaRequest *r)
+/* virtual */ void
+MetaRename::handle()
 {
-	MetaRename *req = static_cast <MetaRename *>(r);
-	if (gWormMode && ((!isWormMutationAllowed(req->oldname)) ||
-                          path_exists(req->newname))) {
+	if (gWormMode && ((!isWormMutationAllowed(oldname)) ||
+                          path_exists(newname))) {
 		// renames are disabled in WORM mode: otherwise, we could
 		// overwrite an existing file
-		req->status = -EPERM;
+		status = -EPERM;
 		return;
 	}
-	req->status = metatree.rename(req->dir, req->oldname, req->newname,
-					req->oldpath, req->overwrite);
+	status = metatree.rename(dir, oldname, newname,
+					oldpath, overwrite);
 }
 
-static void
-handle_setmtime(MetaRequest *r)
+/* virtual */ void
+MetaSetMtime::handle()
 {
-	MetaSetMtime *req = static_cast <MetaSetMtime *>(r);
-	MetaFattr *fa = metatree.lookupPath(KFS::ROOTFID, req->pathname);
+	MetaFattr *fa = metatree.lookupPath(ROOTFID, pathname);
 
 	if (fa != NULL) {
-		fa->mtime   = req->mtime;
-		req->fid    = fa->id();
-		req->status = 0;
+		fa->mtime = mtime;
+		fid    = fa->id();
+		status = 0;
 	} else {
-		req->status = -ENOENT;
-		req->fid    = -1;
+		status = -ENOENT;
+		fid    = -1;
 	}
 
 }
 
-static void
-handle_change_file_replication(MetaRequest *r)
+/* virtual */ void
+MetaChangeFileReplication::handle()
 {
-	MetaChangeFileReplication *req = static_cast <MetaChangeFileReplication *>(r);
-	if (file_exists(req->fid))
-		req->status = metatree.changePathReplication(req->fid, req->numReplicas);
+	if (file_exists(fid))
+		status = metatree.changePathReplication(fid, numReplicas);
 	else
-		req->status = -ENOENT;
+		status = -ENOENT;
 }
 
-static void
-handle_retire_chunkserver(MetaRequest *r)
+/*
+ * Move chunks from src file into the end chunk boundary of the dst file.
+ */
+/* virtual */ void
+MetaCoalesceBlocks::handle()
 {
-	MetaRetireChunkserver *req = static_cast <MetaRetireChunkserver *>(r);
-
-	req->status = gLayoutManager.RetireServer(req->location, req->nSecsDown);
+	chunkOff_t appendOffset = -1;
+	if ((status = metatree.coalesceBlocks(
+			srcPath, dstPath, srcFid, srcChunks, dstFid,
+			appendOffset)) == 0) {
+		dstStartOffset = appendOffset;
+		gLayoutManager.CoalesceBlocks(srcChunks, srcFid, dstFid, dstStartOffset);
+	} else {
+		dstStartOffset = -1;
+	}
+	KFS_LOG_STREAM(status == 0 ?
+			MsgLogger::kLogLevelINFO : MsgLogger::kLogLevelERROR) <<
+		"Coalesce blocks " << srcPath << "->" << dstPath <<
+			" status: " << status <<
+			" offset: " << dstStartOffset <<
+	KFS_LOG_EOM;
 }
 
-static void
-handle_toggle_rebalancing(MetaRequest *r)
+/* virtual */ void
+MetaRetireChunkserver::handle()
 {
-	MetaToggleRebalancing *req = static_cast <MetaToggleRebalancing *>(r);
-
-	gLayoutManager.ToggleRebalancing(req->value);
-	req->status = 0;
+	status = gLayoutManager.RetireServer(location, nSecsDown);
 }
 
-static void
-handle_toggle_worm(MetaRequest *r) {
-	MetaToggleWORM *req = static_cast <MetaToggleWORM *>(r);
-   	setWORMMode(req->value);
-	req->status = 0;
-}
-
-static void
-handle_execute_rebalanceplan(MetaRequest *r)
+/* virtual */ void
+MetaToggleRebalancing::handle()
 {
-	MetaExecuteRebalancePlan *req = static_cast <MetaExecuteRebalancePlan *>(r);
-
-	req->status = gLayoutManager.LoadRebalancePlan(req->planPathname);
+	gLayoutManager.ToggleRebalancing(value);
+	status = 0;
 }
 
-static void
-handle_hello(MetaRequest *r)
+/* virtual */ void
+MetaToggleWORM::handle()
 {
-	MetaHello *req = static_cast <MetaHello *>(r);
+   	setWORMMode(value);
+	status = 0;
+}
 
-	if (req->status < 0) {
+/* virtual */ void
+MetaExecuteRebalancePlan::handle()
+{
+	status = gLayoutManager.LoadRebalancePlan(planPathname);
+}
+
+/* virtual */ void
+MetaReadConfig::handle()
+{
+	Properties prop;
+
+	if (prop.loadProperties(configFn.c_str(), '=', true) != 0) {
+		status = -1;
+		return;
+	}
+	setMaxReplicasPerFile(prop.getValue("metaServer.maxReplicasPerFile",
+				MAX_REPLICAS_PER_FILE));
+	gLayoutManager.SetParameters(prop);
+	status = 0;
+}
+
+/* virtual */ void
+MetaHello::handle()
+{
+	if (status < 0) {
 		// bad hello request...possible cluster key mismatch
 		return;
 	}
-
-	gLayoutManager.AddNewServer(req);
-	req->status = 0;
+	gLayoutManager.AddNewServer(this);
+	status = 0;
 }
 
-static void
-handle_bye(MetaRequest *r)
+/* virtual */ void
+MetaBye::handle()
 {
-	MetaBye *req = static_cast <MetaBye *>(r);
-
-	gLayoutManager.ServerDown(req->server.get());
-	req->status = 0;
+	gLayoutManager.ServerDown(server.get());
+	status = 0;
 }
 
-static void
-handle_lease_acquire(MetaRequest *r)
+/* virtual */ void
+MetaLeaseAcquire::handle()
 {
-	MetaLeaseAcquire *req = static_cast <MetaLeaseAcquire *>(r);
-
-	req->status = gLayoutManager.GetChunkReadLease(req);
+	status = gLayoutManager.GetChunkReadLease(this);
 }
 
-static void
-handle_lease_renew(MetaRequest *r)
+/* virtual */ void
+MetaLeaseRenew::handle()
 {
-	MetaLeaseRenew *req = static_cast <MetaLeaseRenew *>(r);
-
-	req->status = gLayoutManager.LeaseRenew(req);
+	status = gLayoutManager.LeaseRenew(this);
 }
 
-static void
-handle_lease_relinquish(MetaRequest *r)
+/* virtual */ void
+MetaLeaseRelinquish::handle()
 {
-	MetaLeaseRelinquish *req = static_cast <MetaLeaseRelinquish *>(r);
-
-	req->status = gLayoutManager.LeaseRelinquish(req);
-	KFS_LOG_VA_INFO("Lease relinquish: %s, status = %d", r->Show().c_str(),
-			req->status);
+	status = gLayoutManager.LeaseRelinquish(this);
+	KFS_LOG_STREAM(status == 0 ?
+			MsgLogger::kLogLevelDEBUG : MsgLogger::kLogLevelERROR) <<
+		Show() << " status: " << status <<
+        KFS_LOG_EOM;
 }
 
-static void
-handle_lease_cleanup(MetaRequest *r)
+/* virtual */ void
+MetaLeaseCleanup::handle()
 {
-	MetaLeaseCleanup *req = static_cast <MetaLeaseCleanup *>(r);
-
 	gLayoutManager.LeaseCleanup();
 	// some leases are gone.  so, cleanup dumpster
 	metatree.cleanupDumpster();
-	req->status = 0;
+	metatree.cleanupPathToFidCache();
+	status = 0;
 }
 
-static void
-handle_chunk_corrupt(MetaRequest *r)
+/* virtual */ void
+MetaChunkCorrupt::handle()
 {
-	MetaChunkCorrupt *req = static_cast <MetaChunkCorrupt *>(r);
-
-	gLayoutManager.ChunkCorrupt(req);
-	req->status = 0;
+	gLayoutManager.ChunkCorrupt(this);
+	status = 0;
 }
 
-static void
-handle_chunk_replication_check(MetaRequest *r)
+/* virtual */ void
+MetaChunkReplicationCheck::handle()
 {
-	MetaChunkReplicationCheck *req = static_cast <MetaChunkReplicationCheck *>(r);
-
 	gLayoutManager.ChunkReplicationChecker();
-	req->status = 0;
+	status = 0;
 }
 
-static void
-handle_chunk_size_done(MetaRequest *r)
+/* virtual */ void
+MetaBeginMakeChunkStable::handle()
 {
-	MetaChunkSize *req = static_cast <MetaChunkSize *>(r);
+	gLayoutManager.BeginMakeChunkStableDone(this);
+	status = 0;
+}
 
-	if (req->chunkSize < 0) {
-		req->status = -1;
+int
+MetaLogMakeChunkStable::logDone(int code, void *data)
+{
+	assert(
+		code == EVENT_CMD_DONE &&
+		data == static_cast<MetaRequest*>(this)
+	);
+	if (op == META_LOG_MAKE_CHUNK_STABLE) {
+		gLayoutManager.LogMakeChunkStableDone(this);
+	}
+	delete this;
+	return 0;
+}
+
+/* virtual */ void
+MetaChunkMakeStable::handle()
+{
+	gLayoutManager.MakeChunkStableDone(this);
+	status = 0;
+}
+
+/* virtual */ string
+MetaChunkMakeStable::Show() const
+{
+	ostringstream os;
+	os <<
+		"make-chunk-stable:"
+		" server: "        << server->GetServerLocation().ToString() <<
+		" seq: "           << opSeqno <<
+		" status: "        << status <<
+		    (statusMsg.empty() ? "" : " ") << statusMsg <<
+		" fileid: "        << fid <<
+		" chunkid: "       << chunkId <<
+		" chunkvers: "     << chunkVersion <<
+		" chunkSize: "     << chunkSize <<
+		" chunkChecksum: " << chunkChecksum
+	;
+	return os.str();
+}
+
+/* virtual */ void
+MetaChunkSize::handle()
+{
+	if (chunkSize < 0) {
+		status = -1;
 		return;
 	}
-
-	req->status = 0;
-	MetaFattr *fa = metatree.getFattr(req->fid);
-	if ((fa != NULL) && (fa->type == KFS_FILE)) {
-		vector<MetaChunkInfo*> chunkInfo;
-                int status = metatree.getalloc(fa->id(), chunkInfo);
-		off_t spaceUsageDelta = 0;
-
-                if ((status != 0) || (chunkInfo.size() == 0)) {
-                        return;
-                }
-		if (fa->filesize > 0) {
-			// stash the value for doing the delta calc
-			spaceUsageDelta = fa->filesize;
-		}
-		// only if we are looking at the last chunk of the file can we
-		// set the size.
-                MetaChunkInfo* lastChunk = chunkInfo.back();
-		off_t sizeEstimate = fa->filesize;
-		if (req->chunkId == lastChunk->chunkId) {
-			sizeEstimate = (fa->chunkcount - 1) * CHUNKSIZE +
-					req->chunkSize;
-			fa->filesize = sizeEstimate;
-		}
-		// fa->filesize = max(fa->filesize, sizeEstimate);
-		// stash the value away so that we can log it.
-		req->filesize = fa->filesize;
-		//
-		// we possibly updated fa->filesize; so, compute the delta from
-		// before and after
-		//
-		spaceUsageDelta = fa->filesize - spaceUsageDelta;
-		if (spaceUsageDelta != 0) {
-			/*
-			if (req->pathname == "") {
-				req->pathname = metatree.getPathname(req->fid);
-			}
-			*/
-			if (req->pathname != "") {
-				metatree.updateSpaceUsageForPath(req->pathname, spaceUsageDelta);
-			}
-			else {
-				KFS_LOG_VA_INFO("Got size %lld for file %lld, chunk %lld; Will need to force recomputation of dir size",
-						req->chunkSize, req->fid, req->chunkId);
-				// don't write out a log entry
-				// req->status = -1;
-			}
-		}
-	}
+	status = gLayoutManager.GetChunkSizeDone(this);
 }
 
-static void
-handle_chunk_replication_done(MetaRequest *r)
+/* virtual */ void
+MetaChunkReplicate::handle()
 {
-	MetaChunkReplicate *req = static_cast <MetaChunkReplicate *>(r);
-
-	gLayoutManager.ChunkReplicationDone(req);
+	gLayoutManager.ChunkReplicationDone(this);
 }
 
-static void
-handle_change_chunkVersionInc(MetaRequest *r)
+/* virtual */ void
+MetaChangeChunkVersionInc::handle()
 {
-	r->status = 0;
+	status = 0;
 }
 
-static void
-handle_ping(MetaRequest *r)
+/* virtual */ void
+MetaPing::handle()
 {
-	MetaPing *req = static_cast <MetaPing *>(r);
-
-	req->status = 0;
-
-	gLayoutManager.Ping(req->systemInfo, req->servers, req->downServers, req->retiringServers);
+	status = 0;
+	gLayoutManager.Ping(systemInfo, servers, downServers, retiringServers);
 
 }
 
-static void
-handle_upservers(MetaRequest *r)
+/* virtual */ void
+MetaUpServers::handle()
 {
-	MetaUpServers *req = static_cast <MetaUpServers *>(r);
-
-	req->status = 0;
-	gLayoutManager.UpServers(req->stringStream);
+	status = 0;
+	gLayoutManager.UpServers(stringStream);
 }
 
-static void
-handle_recompute_dirsize(MetaRequest *r)
+/* virtual */ void
+MetaRecomputeDirsize::handle()
 {
-	MetaRecomputeDirsize *req = static_cast <MetaRecomputeDirsize *>(r);
-
-	req->status = 0;
-	KFS_LOG_INFO("Processing a recompute dir size...");
+	status = 0;
+	KFS_LOG_STREAM_INFO << "Processing a recompute dir size..." << KFS_LOG_EOM;
 	metatree.recomputeDirSize();
 }
 
-static void
-handle_dump_chunkToServerMap(MetaRequest *r)
+/* virtual */ void
+MetaDumpChunkToServerMap::handle()
 {
-	MetaDumpChunkToServerMap *req = static_cast <MetaDumpChunkToServerMap *>(r);
 	pid_t pid;
 
 	if ((pid = fork()) == 0) {
@@ -1013,7 +1193,8 @@ handle_dump_chunkToServerMap(MetaRequest *r)
 		// avoid random crashes due to the d'tors trying to clear out
 		// entres from the poll vector, update the netManager so that it
 		// can "fake out" the closes.
-		globals().netManager.SetForkedChild();
+                MsgLogger::Stop();
+		globalNetManager().SetForkedChild();
 
 		// let the child write out the map; if the map is large, this'll
 		// take several seconds.  we get the benefits of writing out the
@@ -1025,58 +1206,69 @@ handle_dump_chunkToServerMap(MetaRequest *r)
 	KFS_LOG_VA_INFO("child that is writing out the chunk->server map has pid: %d", pid);
 	// if fork() failed, let the sender know
 	if (pid < 0) {
-		req->status = -1;
+		status = -1;
 		return;
 	}
 	// hold on to the request until the child  finishes
-	req->chunkmapFile = gChunkmapDumpDir + "/chunkmap.txt." + boost::lexical_cast<string>(pid);
-	req->suspended = true;
-	gChildProcessTracker.Track(pid, req);
+	chunkmapFile = gChunkmapDumpDir + "/chunkmap.txt." + boost::lexical_cast<string>(pid);
+	suspended = true;
+	gChildProcessTracker.Track(pid, this);
 }
 
-static void
-handle_dump_chunkReplicationCandidates(MetaRequest *r)
+/* virtual */ void
+MetaDumpChunkReplicationCandidates::handle()
 {
-	MetaDumpChunkReplicationCandidates *req = static_cast <MetaDumpChunkReplicationCandidates *>(r);
 	ostringstream os;
-
-	req->status = 0;
-
+	status = 0;
 	gLayoutManager.DumpChunkReplicationCandidates(os);
-	req->blocks = os.str();
+	blocks = os.str();
 }
 
-static void
-handle_check_leases(MetaRequest *r)
+/* virtual */ void
+MetaFsck::handle()
 {
-	MetaCheckLeases *req = static_cast <MetaCheckLeases *>(r);
+	ostringstream os;
+	status = 0;
+	gLayoutManager.Fsck(os);
+	fsckStatus = os.str();
+}
 
-	req->status = 0;
-
+/* virtual */ void
+MetaCheckLeases::handle()
+{
+	status = 0;
 	gLayoutManager.CheckAllLeases();
 }
 
-static void
-handle_stats(MetaRequest *r)
+/* virtual */ void
+MetaStats::handle()
 {
-	MetaStats *req = static_cast <MetaStats *>(r);
 	ostringstream os;
-
-	req->status = 0;
-
+	status = 0;
 	globals().counterManager.Show(os);
-	req->stats = os.str();
+	stats = os.str();
 
 }
 
-static void
-handle_open_files(MetaRequest *r)
+/* virtual */ void
+MetaOpenFiles::handle()
 {
-	MetaOpenFiles *req = static_cast <MetaOpenFiles *>(r);
+	status = 0;
+	gLayoutManager.GetOpenFiles(openForRead, openForWrite);
+}
 
-	req->status = 0;
+/* virtual */ void
+MetaSetChunkServersProperties::handle()
+{
+	status = (int)properties.size();
+	gLayoutManager.SetChunkServersProperties(properties);
+}
 
-	gLayoutManager.GetOpenFiles(req->openForRead, req->openForWrite);
+/* virtual */ void
+MetaGetChunkServersCounters::handle()
+{
+	status = 0;
+	resp = ToString(gLayoutManager.GetChunkServerCounters(), string("\n"));
 }
 
 /*
@@ -1085,52 +1277,6 @@ handle_open_files(MetaRequest *r)
 static void
 setup_handlers()
 {
-	handler[META_LOOKUP] = handle_lookup;
-	handler[META_LOOKUP_PATH] = handle_lookup_path;
-	handler[META_CREATE] = handle_create;
-	handler[META_MKDIR] = handle_mkdir;
-	handler[META_REMOVE] = handle_remove;
-	handler[META_RMDIR] = handle_rmdir;
-	handler[META_READDIR] = handle_readdir;
-	handler[META_READDIRPLUS] = handle_readdirplus;
-	handler[META_GETALLOC] = handle_getalloc;
-	handler[META_GETLAYOUT] = handle_getlayout;
-	handler[META_ALLOCATE] = handle_allocate;
-	handler[META_TRUNCATE] = handle_truncate;
-	handler[META_RENAME] = handle_rename;
-	handler[META_SETMTIME] = handle_setmtime;
-	handler[META_CHANGE_FILE_REPLICATION] = handle_change_file_replication;
-	handler[META_CHUNK_SIZE] = handle_chunk_size_done;
-	handler[META_CHUNK_REPLICATE] = handle_chunk_replication_done;
-	handler[META_CHUNK_REPLICATION_CHECK] = handle_chunk_replication_check;
-	handler[META_RETIRE_CHUNKSERVER] = handle_retire_chunkserver;
-	handler[META_TOGGLE_REBALANCING] = handle_toggle_rebalancing;
-	handler[META_EXECUTE_REBALANCEPLAN] = handle_execute_rebalanceplan;
-	handler[META_TOGGLE_WORM] = handle_toggle_worm;
-	// Chunk server -> Meta server op
-	handler[META_HELLO] = handle_hello;
-	handler[META_BYE] = handle_bye;
-
-	// Lease related ops
-	handler[META_LEASE_ACQUIRE] = handle_lease_acquire;
-	handler[META_LEASE_RENEW] = handle_lease_renew;
-	handler[META_LEASE_RELINQUISH] = handle_lease_relinquish;
-	handler[META_LEASE_CLEANUP] = handle_lease_cleanup;
-
-	// Chunk version # increment/corrupt chunk
-	handler[META_CHANGE_CHUNKVERSIONINC] = handle_change_chunkVersionInc;
-	handler[META_CHUNK_CORRUPT] = handle_chunk_corrupt;
-
-	// Monitoring RPCs
-	handler[META_PING] = handle_ping;
-	handler[META_STATS] = handle_stats;
-	handler[META_CHECK_LEASES] = handle_check_leases;
-	handler[META_RECOMPUTE_DIRSIZE] = handle_recompute_dirsize;
-	handler[META_DUMP_CHUNKTOSERVERMAP] = handle_dump_chunkToServerMap;
-	handler[META_DUMP_CHUNKREPLICATIONCANDIDATES] = handle_dump_chunkReplicationCandidates;
-	handler[META_OPEN_FILES] = handle_open_files;
-	handler[META_UPSERVERS] = handle_upservers;
-
 	gParseHandlers["LOOKUP"] = parseHandlerLookup;
 	gParseHandlers["LOOKUP_PATH"] = parseHandlerLookupPath;
 	gParseHandlers["CREATE"] = parseHandlerCreate;
@@ -1146,8 +1292,11 @@ setup_handlers()
 	gParseHandlers["RENAME"] = parseHandlerRename;
 	gParseHandlers["SET_MTIME"] = parseHandlerSetMtime;
 	gParseHandlers["CHANGE_FILE_REPLICATION"] = parseHandlerChangeFileReplication;
+	gParseHandlers["COALESCE_BLOCKS"] = parseHandlerCoalesceBlocks;
+
 	gParseHandlers["RETIRE_CHUNKSERVER"] = parseHandlerRetireChunkserver;
 	gParseHandlers["EXECUTE_REBALANCEPLAN"] = parseHandlerExecuteRebalancePlan;
+	gParseHandlers["READ_CONFIG"] = parseHandlerReadConfig;
 	gParseHandlers["TOGGLE_REBALANCING"] = parseHandlerToggleRebalancing;
 
 	// Lease related ops
@@ -1167,30 +1316,34 @@ setup_handlers()
 	gParseHandlers["RECOMPUTE_DIRSIZE"] = parseHandlerRecomputeDirsize;
 	gParseHandlers["DUMP_CHUNKTOSERVERMAP"] = parseHandlerDumpChunkToServerMap;
 	gParseHandlers["DUMP_CHUNKREPLICATIONCANDIDATES"] = parseHandlerDumpChunkReplicationCandidates;
+	gParseHandlers["FSCK"] = parseHandlerFsck;
 	gParseHandlers["OPEN_FILES"] = parseHandlerOpenFiles;
+	gParseHandlers["SET_CHUNK_SERVERS_PROPERTIES"] = &parseHandlerSetChunkServersProperties;
+	gParseHandlers["GET_CHUNK_SERVERS_COUNTERS"] = &parseHandlerGetChunkServerCounters;
 }
 
 /*!
  * \brief request queue initialization
  */
 void
-KFS::initialize_request_handlers()
+initialize_request_handlers()
 {
 	setup_handlers();
+}
+
+/* virtual */ void
+MetaRequest::handle()
+{
+    status = -ENOSYS;  // Not implemented
 }
 
 /*!
  * \brief remove successive requests for the queue and carry them out.
  */
 void
-KFS::process_request(MetaRequest *r)
+process_request(MetaRequest *r)
 {
-	map <MetaOp, ReqHandler>::iterator h = handler.find(r->op);
-	if (h == handler.end())
-		r->status = -ENOSYS;
-	else
-		((*h).second)(r);
-
+        r->handle();
 	if (!r->suspended) {
 		UpdateCounter(r->op);
 		oplog.dispatch(r);
@@ -1205,10 +1358,12 @@ KFS::process_request(MetaRequest *r)
  * \param[in] r the request
  */
 void
-KFS::submit_request(MetaRequest *r)
+submit_request(MetaRequest *r)
 {
 	struct timeval s, e;
-	string op = r->Show();
+	// stash the string lest r get deleted after calling process_request()
+	// and we need to print a message because it took too long.
+	string msg = r->Show();
 
 	gettimeofday(&s, NULL);
 
@@ -1218,10 +1373,10 @@ KFS::submit_request(MetaRequest *r)
 
 	float timeSpent = ComputeTimeDiff(s, e);
 
-	// if we spend more than 200 ms/msg, inquiring minds'd like to know
+	// if we spend more than 200 ms/msg, inquiring minds'd like to know ;-)
 	if (timeSpent > 0.2) {
-		KFS_LOG_VA_INFO("Time spent processing %s is: %.3f",
-			op.c_str(), timeSpent);
+		KFS_LOG_STREAM_INFO << "Time spent processing: " << msg
+				<< " is: " << timeSpent << KFS_LOG_EOM;
 	}
 }
 
@@ -1229,7 +1384,7 @@ KFS::submit_request(MetaRequest *r)
  * \brief print out the leaf nodes for debugging
  */
 void
-KFS::printleaves()
+printleaves()
 {
 	metatree.printleaves();
 }
@@ -1344,6 +1499,9 @@ MetaGetlayout::log(ofstream &file) const
 int
 MetaAllocate::log(ofstream &file) const
 {
+	if (! logFlag) {
+		return 0;
+	}
 	// use the log entry time as a proxy for when the block was created/file
 	// was modified
 	struct timeval t;
@@ -1352,7 +1510,9 @@ MetaAllocate::log(ofstream &file) const
 	file << "allocate/file/" << fid << "/offset/" << offset
 	     << "/chunkId/" << chunkId
 	     << "/chunkVersion/" << chunkVersion 
-	     << "/mtime/" << showtime(t) << '\n';
+	     << "/mtime/" << showtime(t)
+	     << "/append/" << (appendChunk ? 1 : 0)
+	     << '\n';
 	return file.fail() ? -EIO : 0;
 }
 
@@ -1366,8 +1526,13 @@ MetaTruncate::log(ofstream &file) const
 	struct timeval t;
 	gettimeofday(&t, NULL);
 
-	file << "truncate/file/" << fid << "/offset/" << offset 
-	     << "/mtime/" << showtime(t) << '\n';
+	if (pruneBlksFromHead) {
+		file << "pruneFromHead/file/" << fid << "/offset/" << offset 
+	     		<< "/mtime/" << showtime(t) << '\n';
+	} else {
+		file << "truncate/file/" << fid << "/offset/" << offset 
+	     		<< "/mtime/" << showtime(t) << '\n';
+	}
 	return file.fail() ? -EIO : 0;
 }
 
@@ -1379,6 +1544,17 @@ MetaRename::log(ofstream &file) const
 {
 	file << "rename/dir/" << dir << "/old/" <<
 		oldname << "/new/" << newname << '\n';
+	return file.fail() ? -EIO : 0;
+}
+
+/*!
+ * \brief log a block coalesce
+ */
+int
+MetaCoalesceBlocks::log(ofstream &file) const
+{
+	file << "coalesce/old/" << srcFid << "/new/" << dstFid 
+		<< "/count/" << srcChunks.size() << '\n';
 	return file.fail() ? -EIO : 0;
 }
 
@@ -1450,6 +1626,15 @@ MetaExecuteRebalancePlan::log(ofstream &file) const
 }
 
 /*!
+ * \brief read the config file and update parameters (nop)
+ */
+int
+MetaReadConfig::log(ofstream &file) const
+{
+	return 0;
+}
+
+/*!
  * \brief for a chunkserver hello, there is nothing to log
  */
 int
@@ -1463,89 +1648,6 @@ MetaHello::log(ofstream &file) const
  */
 int
 MetaBye::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief for a chunkserver allocate, there is nothing to log
- */
-int
-MetaChunkAllocate::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief log a chunk delete; (nop)
- */
-int
-MetaChunkDelete::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief log a chunk truncation; (nop)
- */
-int
-MetaChunkTruncate::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief log a heartbeat to a chunk server; (nop)
- */
-int
-MetaChunkHeartbeat::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief log a stale notify to a chunk server; (nop)
- */
-int
-MetaChunkStaleNotify::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief log a chunk server retire; (nop)
- */
-int
-MetaChunkRetire::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief when a chunkserver tells us of a corrupted chunk, there is nothing to log
- */
-int
-MetaChunkCorrupt::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief When notifying a chunkserver of a version # change, there is
- * nothing to log.
- */
-int
-MetaChunkVersChange::log(ofstream &file) const
-{
-	return 0;
-}
-
-/*!
- * \brief When asking a chunkserver to replicate a chunk, there is
- * nothing to log.
- */
-int
-MetaChunkReplicate::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1601,6 +1703,16 @@ MetaDumpChunkToServerMap::log(ofstream &file) const
 }
 
 /*!
+ * \brief for a fsck request, there is nothing to log
+ */
+int
+MetaFsck::log(ofstream &file) const
+{
+	return 0;
+}
+
+
+/*!
  * \brief for a recompute dir size request, there is nothing to log
  */
 int
@@ -1632,6 +1744,27 @@ MetaDumpChunkReplicationCandidates::log(ofstream &file) const
  */
 int
 MetaOpenFiles::log(ofstream &file) const
+{
+	return 0;
+}
+
+int
+MetaSetChunkServersProperties::log(ofstream & /* file */) const
+{
+	return 0;
+}
+
+int
+MetaGetChunkServersCounters::log(ofstream & /* file */) const
+{
+	return 0;
+}
+
+/*!
+ * \brief for an open files request, there is nothing to log
+ */
+int
+MetaChunkCorrupt::log(ofstream &file) const
 {
 	return 0;
 }
@@ -1683,6 +1816,24 @@ MetaChunkReplicationCheck::log(ofstream &file) const
 }
 
 /*!
+ * \brief This is an internally generated op. Log chunk id, size, and checksum.
+ */
+int
+MetaLogMakeChunkStable::log(ofstream &file) const
+{
+	file << "mkstable"         <<
+			(op == META_LOG_MAKE_CHUNK_STABLE ? "" : "done") <<
+		"/fileId/"         << fid <<
+		"/chunkId/"        << chunkId <<
+		"/chunkVersion/"   << chunkVersion  <<
+		"/size/"           << chunkSize <<
+		"/checksum/"       << chunkChecksum <<
+		"/hasChecksum/"    << (hasChunkChecksum ? 1 : 0) <<
+	'\n';
+	return file.fail() ? -EIO : 0;
+}
+
+/*!
  * \brief parse a command sent by a client
  *
  * Commands are of the form:
@@ -1705,7 +1856,7 @@ MetaChunkReplicationCheck::log(ofstream &file) const
  * @retval 0 on success;  -1 if there is an error
  */
 int
-KFS::ParseCommand(std::istream& is, MetaRequest **res)
+ParseCommand(std::istream& is, MetaRequest **res)
 {
 	const char *delims = " \r\n";
 	// header/value pairs are separated by a :
@@ -1754,15 +1905,17 @@ parseHandlerLookup(Properties &prop, MetaRequest **r)
 	fid_t dir;
 	const char *name;
 	seq_t seq;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	dir = prop.getValue("Parent File-handle", (fid_t) -1);
 	if (dir < 0)
 		return -1;
 	name = prop.getValue("Filename", (const char*) NULL);
 	if (name == NULL)
 		return -1;
-	*r = new MetaLookup(seq, dir, name);
+	*r = new MetaLookup(seq, protoVers, dir, name);
 	return 0;
 }
 
@@ -1772,15 +1925,17 @@ parseHandlerLookupPath(Properties &prop, MetaRequest **r)
 	fid_t root;
 	const char *path;
 	seq_t seq;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	root = prop.getValue("Root File-handle", (fid_t) -1);
 	if (root < 0)
 		return -1;
 	path = prop.getValue("Pathname", (const char *) NULL);
 	if (path == NULL)
 		return -1;
-	*r = new MetaLookupPath(seq, root, path);
+	*r = new MetaLookupPath(seq, protoVers, root, path);
 	return 0;
 }
 
@@ -1792,6 +1947,7 @@ parseHandlerCreate(Properties &prop, MetaRequest **r)
 	seq_t seq;
 	int16_t numReplicas;
 	bool exclusive;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
 	dir = prop.getValue("Parent File-handle", (fid_t) -1);
@@ -1807,8 +1963,9 @@ parseHandlerCreate(Properties &prop, MetaRequest **r)
 	// by default, create overwrites the file; when it is turned off,
 	// it is for supporting O_EXCL
 	exclusive = (prop.getValue("Exclusive", 1)) == 1;
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaCreate(seq, dir, name, numReplicas, exclusive);
+	*r = new MetaCreate(seq, protoVers, dir, name, numReplicas, exclusive);
 	return 0;
 }
 
@@ -1818,15 +1975,17 @@ parseHandlerRemove(Properties &prop, MetaRequest **r)
 	fid_t dir;
 	const char *name;
 	seq_t seq;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	dir = prop.getValue("Parent File-handle", (fid_t) -1);
 	if (dir < 0)
 		return -1;
 	name = prop.getValue("Filename", (const char *) NULL);
 	if (name == NULL)
 		return -1;
-	MetaRemove *rm = new MetaRemove(seq, dir, name);
+	MetaRemove *rm = new MetaRemove(seq, protoVers, dir, name);
 	rm->pathname = prop.getValue("Pathname", "");
 	*r = rm;
 	return 0;
@@ -1838,15 +1997,17 @@ parseHandlerMkdir(Properties &prop, MetaRequest **r)
 	fid_t dir;
 	const char *name;
 	seq_t seq;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	dir = prop.getValue("Parent File-handle", (fid_t) -1);
 	if (dir < 0)
 		return -1;
 	name = prop.getValue("Directory", (const char *) NULL);
 	if (name == NULL)
 		return -1;
-	*r = new MetaMkdir(seq, dir, name);
+	*r = new MetaMkdir(seq, protoVers, dir, name);
 	return 0;
 }
 
@@ -1856,15 +2017,18 @@ parseHandlerRmdir(Properties &prop, MetaRequest **r)
 	fid_t dir;
 	const char *name;
 	seq_t seq;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	dir = prop.getValue("Parent File-handle", (fid_t) -1);
 	if (dir < 0)
 		return -1;
 	name = prop.getValue("Directory", (const char *) NULL);
 	if (name == NULL)
 		return -1;
-	MetaRmdir *rm = new MetaRmdir(seq, dir, name);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
+	MetaRmdir *rm = new MetaRmdir(seq, protoVers, dir, name);
 	rm->pathname = prop.getValue("Pathname", "");
 	*r = rm;
 	return 0;
@@ -1875,12 +2039,14 @@ parseHandlerReaddir(Properties &prop, MetaRequest **r)
 {
 	fid_t dir;
 	seq_t seq;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	dir = prop.getValue("Directory File-handle", (fid_t) -1);
 	if (dir < 0)
 		return -1;
-	*r = new MetaReaddir(seq, dir);
+	*r = new MetaReaddir(seq, protoVers, dir);
 	return 0;
 }
 
@@ -1889,12 +2055,14 @@ parseHandlerReaddirPlus(Properties &prop, MetaRequest **r)
 {
 	fid_t dir;
 	seq_t seq;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	dir = prop.getValue("Directory File-handle", (fid_t) -1);
 	if (dir < 0)
 		return -1;
-	*r = new MetaReaddirPlus(seq, dir);
+	*r = new MetaReaddirPlus(seq, protoVers, dir);
 	return 0;
 }
 
@@ -1904,19 +2072,15 @@ parseHandlerGetalloc(Properties &prop, MetaRequest **r)
 	fid_t fid;
 	seq_t seq;
 	chunkOff_t offset;
-	const char *pathname;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	fid = prop.getValue("File-handle", (fid_t) -1);
 	offset = prop.getValue("Chunk-offset", (chunkOff_t) -1);
-	pathname = prop.getValue("Pathname", (const char *) NULL);
 	if ((fid < 0) || (offset < 0))
 		return -1;
-	*r = new MetaGetalloc(seq, fid, offset);
-	if (pathname != NULL) {
-		MetaGetalloc *mg = static_cast<MetaGetalloc *> (*r);
-		mg->pathname = pathname;
-	}
+	*r = new MetaGetalloc(seq, protoVers, fid, offset, prop.getValue("Pathname", string()));
 	return 0;
 }
 
@@ -1925,12 +2089,14 @@ parseHandlerGetlayout(Properties &prop, MetaRequest **r)
 {
 	fid_t fid;
 	seq_t seq;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	fid = prop.getValue("File-handle", (fid_t) -1);
 	if (fid < 0)
 		return -1;
-	*r = new MetaGetlayout(seq, fid);
+	*r = new MetaGetlayout(seq, protoVers, fid);
 	return 0;
 }
 
@@ -1939,16 +2105,30 @@ parseHandlerAllocate(Properties &prop, MetaRequest **r)
 {
 	fid_t fid;
 	seq_t seq;
-	chunkOff_t offset;
+	chunkOff_t offset = 0;
+	short appendChunk = 0;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	fid = prop.getValue("File-handle", (fid_t) -1);
-	offset = prop.getValue("Chunk-offset", (chunkOff_t) -1);
+	appendChunk = prop.getValue("Chunk-append", 0);
+	if (!appendChunk)
+		offset = prop.getValue("Chunk-offset", (chunkOff_t) -1);
 	if ((fid < 0) || (offset < 0))
 		return -1;
-	MetaAllocate *m = new MetaAllocate(seq, fid, offset);
+	MetaAllocate *m = new MetaAllocate(seq, protoVers, fid, offset);
 	m->pathname = prop.getValue("Pathname", "");
 	m->clientHost = prop.getValue("Client-host", "");
+	m->appendChunk = (appendChunk == 1);
+	m->spaceReservationSize = prop.getValue("Space-reserve", 1 << 20);
+	m->maxAppendersPerChunk = prop.getValue("Max-appenders", 64);
+	if (m->appendChunk)
+		// fill this value in when the allocation is processed: the
+		// client is likely passing in a hint of where its last
+		// allocation was and where metaserver should start looking for
+		// a block.
+		m->offset = prop.getValue("Chunk-offset", (chunkOff_t) -1);
 	*r = m;
 	return 0;
 }
@@ -1959,14 +2139,17 @@ parseHandlerTruncate(Properties &prop, MetaRequest **r)
 	fid_t fid;
 	seq_t seq;
 	chunkOff_t offset;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	fid = prop.getValue("File-handle", (fid_t) -1);
 	offset = prop.getValue("Offset", (chunkOff_t) -1);
 	if ((fid < 0) || (offset < 0))
 		return -1;
-	MetaTruncate *mt = new MetaTruncate(seq, fid, offset);
+	MetaTruncate *mt = new MetaTruncate(seq, protoVers, fid, offset);
 	mt->pathname = prop.getValue("Pathname", "");
+	mt->pruneBlksFromHead = prop.getValue("Prune-from-head", 0);
 	*r = mt;
 	return 0;
 }
@@ -1979,8 +2162,10 @@ parseHandlerRename(Properties &prop, MetaRequest **r)
 	const char *oldname;
 	const char *newpath;
 	bool overwrite;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	fid = prop.getValue("Parent File-handle", (fid_t) -1);
 	oldname = prop.getValue("Old-name", (const char *) NULL);
 	newpath = prop.getValue("New-path", (const char *) NULL);
@@ -1988,7 +2173,7 @@ parseHandlerRename(Properties &prop, MetaRequest **r)
 	if ((fid < 0) || (oldname == NULL) || (newpath == NULL))
 		return -1;
 
-	MetaRename *rn = new MetaRename(seq, fid, oldname, newpath, overwrite);
+	MetaRename *rn = new MetaRename(seq, protoVers, fid, oldname, newpath, overwrite);
 	rn->oldpath = prop.getValue("Old-path", "");
 	*r = rn;
 	return 0;
@@ -2004,14 +2189,16 @@ parseHandlerSetMtime(Properties &prop, MetaRequest **r)
 	string path;
 	seq_t seq;
 	struct timeval mtime;
+	int protoVers;
 	
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	path = prop.getValue("Pathname", "");
 	mtime.tv_sec  = prop.getValue("Mtime-sec", 0);
 	mtime.tv_usec = prop.getValue("Mtime-usec", 0);
 	if (path == "")
 		return -1;
-	*r = new MetaSetMtime(seq, path, mtime);
+	*r = new MetaSetMtime(seq, protoVers, path, mtime);
 	return 0;
 }
 
@@ -2021,13 +2208,33 @@ parseHandlerChangeFileReplication(Properties &prop, MetaRequest **r)
 	fid_t fid;
 	seq_t seq;
 	int16_t numReplicas;
+	int protoVers;
 
 	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	fid = prop.getValue("File-handle", (fid_t) -1);
 	numReplicas = min((int16_t) prop.getValue("Num-replicas", 1), gMaxReplicasPerFile);
 	if (numReplicas <= 0)
 		return -1;
-	*r = new MetaChangeFileReplication(seq, fid, numReplicas);
+	*r = new MetaChangeFileReplication(seq, protoVers, fid, numReplicas);
+	return 0;
+}
+
+static int
+parseHandlerCoalesceBlocks(Properties &prop, MetaRequest **r)
+{
+	seq_t seq;
+	const char *srcPath, *dstPath;
+	int protoVers;
+
+	seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
+	srcPath = prop.getValue("Src-path", (const char *) NULL);
+	dstPath = prop.getValue("Dest-path", (const char *) NULL);
+	if ((srcPath == NULL) || (dstPath == NULL))
+		return -1;
+
+	*r = new MetaCoalesceBlocks(seq, protoVers, srcPath, dstPath);
 	return 0;
 }
 
@@ -2038,16 +2245,18 @@ static int
 parseHandlerRetireChunkserver(Properties &prop, MetaRequest **r)
 {
 	ServerLocation location;
-	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
 	int downtime;
+	int protoVers;
 
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	location.hostname = prop.getValue("Chunk-server-name", "");
 	location.port = prop.getValue("Chunk-server-port", -1);
 	if (!location.IsValid()) {
 		return -1;
 	}
 	downtime = prop.getValue("Downtime", -1);
-	*r = new MetaRetireChunkserver(seq, location, downtime);
+	*r = new MetaRetireChunkserver(seq, protoVers, location, downtime);
 	return 0;
 }
 
@@ -2058,8 +2267,9 @@ parseHandlerToggleRebalancing(Properties &prop, MetaRequest **r)
 	// 1 is enable; 0 is disable
 	int value = prop.getValue("Toggle-rebalancing", 0);
 	bool v = (value == 1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaToggleRebalancing(seq, v);
+	*r = new MetaToggleRebalancing(seq, protoVers, v);
 	KFS_LOG_VA_INFO("Toggle rebalancing: %d", value);
 	return 0;
 }
@@ -2071,9 +2281,24 @@ static int
 parseHandlerExecuteRebalancePlan(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	string pathname = prop.getValue("Pathname", "");
 
-	*r = new MetaExecuteRebalancePlan(seq, pathname);
+	*r = new MetaExecuteRebalancePlan(seq, protoVers, pathname);
+	return 0;
+}
+
+/*!
+ * \brief Message that initiates the re-load of MetaServer.prp file
+*/
+static int
+parseHandlerReadConfig(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
+	string pathname = prop.getValue("Pathname", "");
+
+	*r = new MetaReadConfig(seq, protoVers, pathname);
 	return 0;
 }
 
@@ -2148,6 +2373,11 @@ parseHandlerHello(Properties &prop, MetaRequest **r)
 	hello->rackId = prop.getValue("Rack-id", (int) -1);
 	// # of chunks hosted on this server
 	hello->numChunks = prop.getValue("Num-chunks", 0);
+        hello->numNotStableAppendChunks = prop.getValue("Num-not-stable-append-chunks", 0);
+        hello->numNotStableChunks = prop.getValue("Num-not-stable-chunks", 0);
+	hello->uptime = prop.getValue("Uptime", 0);
+        hello->numAppendsWithWid = prop.getValue("Num-appends-with-wids", (long long)0);
+
 	// The chunk names follow in the body.  This field tracks
 	// the length of the message body
 	hello->contentLength = prop.getValue("Content-length", 0);
@@ -2162,15 +2392,12 @@ parseHandlerHello(Properties &prop, MetaRequest **r)
 int
 parseHandlerLeaseAcquire(Properties &prop, MetaRequest **r)
 {
-	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
-	chunkId_t chunkId = prop.getValue("Chunk-handle", (chunkId_t) -1);
-	const char *pathname = prop.getValue("Pathname", (const char *) NULL);
-
-	*r = new MetaLeaseAcquire(seq, chunkId);
-	if (pathname != NULL) {
-		MetaLeaseAcquire *mla = static_cast<MetaLeaseAcquire *> (*r);
-		mla->pathname = pathname;
-	}
+	*r = new MetaLeaseAcquire(
+		prop.getValue("Cseq", (seq_t) -1),
+		prop.getValue("Client-Protocol-Version", (int) 0),
+		prop.getValue("Chunk-handle", (chunkId_t) -1),
+		prop.getValue("Pathname", string())
+	);
 	return 0;
 }
 
@@ -2184,19 +2411,16 @@ parseHandlerLeaseRenew(Properties &prop, MetaRequest **r)
 	chunkId_t chunkId = prop.getValue("Chunk-handle", (chunkId_t) -1);
 	int64_t leaseId = prop.getValue("Lease-id", (int64_t) -1);
 	string leaseTypeStr = prop.getValue("Lease-type", "READ_LEASE");
-	const char *pathname = prop.getValue("Pathname", (const char *) NULL);
 	LeaseType leaseType;
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
 	if (leaseTypeStr == "WRITE_LEASE")
 		leaseType = WRITE_LEASE;
 	else
 		leaseType = READ_LEASE;
 
-	*r = new MetaLeaseRenew(seq, leaseType, chunkId, leaseId);
-	if (pathname != NULL) {
-		MetaLeaseRenew *mlr = static_cast<MetaLeaseRenew *> (*r);
-		mlr->pathname = pathname;
-	}
+	*r = new MetaLeaseRenew(seq, protoVers, leaseType, chunkId, 
+				leaseId, prop.getValue("Pathname", string()));
 	return 0;
 }
 
@@ -2206,18 +2430,17 @@ parseHandlerLeaseRenew(Properties &prop, MetaRequest **r)
 int
 parseHandlerLeaseRelinquish(Properties &prop, MetaRequest **r)
 {
-	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
-	chunkId_t chunkId = prop.getValue("Chunk-handle", (chunkId_t) -1);
-	int64_t leaseId = prop.getValue("Lease-id", (int64_t) -1);
-	string leaseTypeStr = prop.getValue("Lease-type", "READ_LEASE");
-	LeaseType leaseType;
-
-	if (leaseTypeStr == "WRITE_LEASE")
-		leaseType = WRITE_LEASE;
-	else
-		leaseType = READ_LEASE;
-
-	*r = new MetaLeaseRelinquish(seq, leaseType, chunkId, leaseId);
+	*r = new MetaLeaseRelinquish(
+            prop.getValue("Cseq", (seq_t) -1),
+	    prop.getValue("Client-Protocol-Version", (int) 0),
+            strcmp(prop.getValue("Lease-type", "READ_LEASE"), "WRITE_LEASE") == 0 ?
+                WRITE_LEASE : READ_LEASE,
+            prop.getValue("Chunk-handle", (chunkId_t) -1),
+            prop.getValue("Lease-id", (int64_t) -1),
+            prop.getValue("Chunk-size", (int64_t)-1),
+            ! prop.getValue("Chunk-checksum", std::string()).empty(),
+            (uint32_t)prop.getValue("Chunk-checksum", (uint64_t)0)
+        );
 	return 0;
 }
 
@@ -2231,7 +2454,9 @@ parseHandlerChunkCorrupt(Properties &prop, MetaRequest **r)
 	fid_t fid = prop.getValue("File-handle", (chunkId_t) -1);
 	chunkId_t chunkId = prop.getValue("Chunk-handle", (chunkId_t) -1);
 
-	*r = new MetaChunkCorrupt(seq, fid, chunkId);
+	MetaChunkCorrupt *mcc = new MetaChunkCorrupt(seq, fid, chunkId);
+	mcc->isChunkLost = prop.getValue("Is-chunk-lost", 0);
+	*r = mcc;
 	return 0;
 }
 
@@ -2242,8 +2467,9 @@ int
 parseHandlerPing(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaPing(seq);
+	*r = new MetaPing(seq, protoVers);
 	return 0;
 }
 
@@ -2253,10 +2479,11 @@ parseHandlerPing(Properties &prop, MetaRequest **r)
 int
 parseHandlerUpServers(Properties &prop, MetaRequest **r)
 {
-    seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-    *r = new MetaUpServers(seq);
-    return 0;
+	*r = new MetaUpServers(seq, protoVers);
+	return 0;
 }
 
 /*!
@@ -2266,11 +2493,12 @@ int
 parseHandlerToggleWORM(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 	// 1 is enable; 0 is disable
 	int value = prop.getValue("Toggle-WORM", 0);
 	bool v = (value == 1);
 
-	*r = new MetaToggleWORM(seq, v);
+	*r = new MetaToggleWORM(seq, protoVers, v);
 	KFS_LOG_VA_INFO("Toggle WORM: %d", value);
 	return 0;
 }
@@ -2282,8 +2510,9 @@ int
 parseHandlerStats(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaStats(seq);
+	*r = new MetaStats(seq, protoVers);
 	return 0;
 }
 
@@ -2294,8 +2523,9 @@ int
 parseHandlerCheckLeases(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaCheckLeases(seq);
+	*r = new MetaCheckLeases(seq, protoVers);
 	return 0;
 }
 
@@ -2306,8 +2536,9 @@ int
 parseHandlerDumpChunkToServerMap(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaDumpChunkToServerMap(seq);
+	*r = new MetaDumpChunkToServerMap(seq, protoVers);
 	return 0;
 }
 
@@ -2318,8 +2549,9 @@ int
 parseHandlerRecomputeDirsize(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaRecomputeDirsize(seq);
+	*r = new MetaRecomputeDirsize(seq, protoVers);
 	return 0;
 }
 
@@ -2330,8 +2562,22 @@ int
 parseHandlerDumpChunkReplicationCandidates(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaDumpChunkReplicationCandidates(seq);
+	*r = new MetaDumpChunkReplicationCandidates(seq, protoVers);
+	return 0;
+}
+
+/*!
+ * \brief Parse out a dump chunk replication candidates request.
+ */
+int
+parseHandlerFsck(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
+
+	*r = new MetaFsck(seq, protoVers);
 	return 0;
 }
 
@@ -2342,9 +2588,60 @@ int
 parseHandlerOpenFiles(Properties &prop, MetaRequest **r)
 {
 	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
 
-	*r = new MetaOpenFiles(seq);
+	*r = new MetaOpenFiles(seq, protoVers);
 	return 0;
+}
+
+int
+parseHandlerSetChunkServersProperties(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
+
+	MetaSetChunkServersProperties* const op =
+		new MetaSetChunkServersProperties(seq, protoVers);
+	prop.copyWithPrefix("chunkServer.", op->properties);
+	*r = op;
+	return 0;
+}
+
+int
+parseHandlerGetChunkServerCounters(Properties &prop, MetaRequest **r)
+{
+	seq_t seq = prop.getValue("Cseq", (seq_t) -1);
+	int protoVers = prop.getValue("Client-Protocol-Version", (int) 0);
+	MetaGetChunkServersCounters* const op =
+		new MetaGetChunkServersCounters(seq, protoVers);
+	*r = op;
+	return 0;
+}
+
+inline static bool
+OkHeader(const MetaRequest* op, ostream &os, bool checkStatus = true)
+{
+    os << "OK\r\n";
+    os << "Cseq: " << op->opSeqno << "\r\n";
+    os << "Status: " << op->status << "\r\n";
+    if (! op->statusMsg.empty()) {
+        const size_t p = op->statusMsg.find('\r');
+        assert(string::npos == p && op->statusMsg.find('\n') == string::npos);
+        os << "Status-message: " <<
+            (p == string::npos ? op->statusMsg : op->statusMsg.substr(0, p)) <<
+        "\r\n";
+    }
+    if (checkStatus && op->status < 0) {
+        os << "\r\n";
+    }
+    return (op->status >= 0);
+}
+
+inline static ostream&
+PutHeader(const MetaRequest* op, ostream &os)
+{
+    OkHeader(op, os, false);
+    return os;
 }
 
 /*!
@@ -2357,55 +2654,25 @@ parseHandlerOpenFiles(Properties &prop, MetaRequest **r)
 void
 MetaLookup::response(ostream &os)
 {
-	static string fname[] = { "empty", "file", "dir" };
-
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
-	os << "File-handle: " << toString(result.id()) << "\r\n";
-	os << "Type: " << fname[result.type] << "\r\n";
-	os << "Chunk-count: " << toString(result.chunkcount) << "\r\n";
-	os << "File-size: " << toString(result.filesize) << "\r\n";
-	os << "Replication: " << toString(result.numReplicas) << "\r\n";
-	sendtime(os, "M-Time:", result.mtime, "\r\n");
-	sendtime(os, "C-Time:", result.ctime, "\r\n");
-	sendtime(os, "CR-Time:", result.crtime, "\r\n\r\n");
+        os << result << "\r\n";
 }
 
 void
 MetaLookupPath::response(ostream &os)
 {
-	static string fname[] = { "empty", "file", "dir" };
-
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
-	os << "File-handle: " << toString(result.id()) << "\r\n";
-	os << "Type: " << fname[result.type] << "\r\n";
-	os << "Chunk-count: " << toString(result.chunkcount) << "\r\n";
-	os << "File-size: " << toString(result.filesize) << "\r\n";
-	os << "Replication: " << toString(result.numReplicas) << "\r\n";
-	sendtime(os, "M-Time:", result.mtime, "\r\n");
-	sendtime(os, "C-Time:", result.ctime, "\r\n");
-	sendtime(os, "CR-Time:", result.crtime, "\r\n\r\n");
+        os << result << "\r\n";
 }
 
 void
 MetaCreate::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
 	os << "File-handle: " << toString(fid) << "\r\n\r\n";
@@ -2414,19 +2681,13 @@ MetaCreate::response(ostream &os)
 void
 MetaRemove::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaMkdir::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
 	os << "File-handle: " << toString(fid) << "\r\n\r\n";
@@ -2435,9 +2696,7 @@ MetaMkdir::response(ostream &os)
 void
 MetaRmdir::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
@@ -2447,11 +2706,7 @@ MetaReaddir::response(ostream &os)
 	ostringstream entries;
 	int numEntries = 0;
 
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
 	// Send over the names---1 name per line so it is easy to
@@ -2478,11 +2733,7 @@ MetaReaddir::response(ostream &os)
 void
 MetaReaddirPlus::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
 	os << "Num-Entries: " << numEntries << "\r\n";
@@ -2493,27 +2744,19 @@ MetaReaddirPlus::response(ostream &os)
 void
 MetaRename::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaSetMtime::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaGetalloc::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
 	os << "Chunk-handle: " << chunkId << "\r\n";
@@ -2532,25 +2775,21 @@ MetaGetlayout::response(ostream &os)
 {
 	vector<ChunkLayoutInfo>::iterator iter;
 	ChunkLayoutInfo l;
-	string res;
+	ostringstream entries;
 
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
 	os << "Num-chunks: " << v.size() << "\r\n";
 	// Send over the layout info
 	for (iter = v.begin(); iter != v.end(); ++iter) {
 		l = *iter;
-		res = res + l.toString();
+		entries << l.toString();
 	}
-	os << "Content-length: " << res.length() << "\r\n\r\n";
+	os << "Content-length: " << entries.str().length() << "\r\n\r\n";
 
-	if (res.length() > 0)
-		os << res;
+	if (entries.str().length() > 0)
+		os << entries.str();
 }
 
 class PrintChunkServerLocations {
@@ -2566,15 +2805,13 @@ public:
 void
 MetaAllocate::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status < 0) {
-		os << "\r\n";
+	if (! OkHeader(this, os)) {
 		return;
 	}
 	os << "Chunk-handle: " << chunkId << "\r\n";
 	os << "Chunk-version: " << chunkVersion << "\r\n";
+	if (appendChunk)
+		os << "Chunk-offset: " << offset << "\r\n";
 
 	os << "Master: " << master->ServerID() << "\r\n";
 	os << "Num-replicas: " << servers.size() << "\r\n";
@@ -2588,102 +2825,92 @@ MetaAllocate::response(ostream &os)
 void
 MetaLeaseAcquire::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	if (status >= 0) {
-		os << "Lease-id: " << leaseId << "\r\n";
+	if (! OkHeader(this, os)) {
+		return;
 	}
-	os << "\r\n";
+	os << "Lease-id: " << leaseId << "\r\n\r\n";
 }
 
 void
 MetaLeaseRenew::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaLeaseRelinquish::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
+}
+
+void
+MetaCoalesceBlocks::response(ostream &os)
+{
+	if (! OkHeader(this, os)) {
+		return;
+	}
+	os << "Dst-start-offset: " << dstStartOffset << "\r\n\r\n";
 }
 
 void
 MetaHello::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaChunkCorrupt::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaTruncate::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaChangeFileReplication::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Num-replicas: " << numReplicas << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) <<
+		"Num-replicas: " << numReplicas << "\r\n\r\n";
 }
 
 void
 MetaRetireChunkserver::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaToggleRebalancing::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaToggleWORM::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaExecuteRebalancePlan::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n\r\n";
+	PutHeader(this, os) << "\r\n";
+}
+
+void
+MetaReadConfig::response(ostream &os)
+{
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaPing::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
+	PutHeader(this, os);
 	os << "Build-version: " << KFS::KFS_BUILD_VERSION_STRING << "\r\n";
 	os << "Source-version: " << KFS::KFS_SOURCE_REVISION_STRING << "\r\n";
 	if (gWormMode)
@@ -2699,67 +2926,74 @@ MetaPing::response(ostream &os)
 void
 MetaUpServers::response(ostream &os)
 {
-    os << "OK\r\n";
-    os << "Cseq: " << opSeqno << "\r\n";
-    os << "Status: " << status << "\r\n";
-    os << "Content-length: " << stringStream.str().length() << "\r\n\r\n";
-    if (stringStream.str().length() > 0)
-        os << stringStream.str();
+	PutHeader(this, os);
+	os << "Content-length: " << stringStream.str().length() << "\r\n\r\n";
+	if (stringStream.str().length() > 0)
+        	os << stringStream.str();
 }
 
 void
 MetaStats::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	os << stats << "\r\n";
+	PutHeader(this, os) << stats << "\r\n";
 }
 
 void
 MetaCheckLeases::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaRecomputeDirsize::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
+	PutHeader(this, os) << "\r\n";
 }
 
 void
 MetaDumpChunkToServerMap::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	os << "Filename: " << chunkmapFile << "\r\n\r\n";
+	PutHeader(this, os) << "Filename: " << chunkmapFile << "\r\n\r\n";
 }
 
 void
 MetaDumpChunkReplicationCandidates::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
-	os << "Content-length: " << blocks.length() << "\r\n\r\n";
+	PutHeader(this, os) <<
+		"Content-length: " << blocks.length() << "\r\n\r\n";
 	if (blocks.length() > 0)
 		os << blocks;
 }
 
 void
+MetaFsck::response(ostream &os)
+{
+	PutHeader(this, os) <<
+		"Content-length: " << fsckStatus.length() << "\r\n\r\n";
+	if (fsckStatus.length() > 0)
+		os << fsckStatus;
+}
+
+void
 MetaOpenFiles::response(ostream &os)
 {
-	os << "OK\r\n";
-	os << "Cseq: " << opSeqno << "\r\n";
-	os << "Status: " << status << "\r\n";
+	PutHeader(this, os);
 	os << "Read: " << openForRead << "\r\n";
 	os << "Write: " << openForWrite << "\r\n\r\n";
+}
+
+void
+MetaSetChunkServersProperties::response(ostream &os)
+{
+	PutHeader(this, os) << "\r\n";
+}
+
+void
+MetaGetChunkServersCounters::response(ostream &os)
+{
+	PutHeader(this, os) <<
+		"Content-length: " << resp.length() << "\r\n\r\n" <<
+		resp;
 }
 
 /*!
@@ -2771,24 +3005,24 @@ MetaOpenFiles::response(ostream &os)
 void
 MetaChunkAllocate::request(ostream &os)
 {
-	MetaAllocate *allocOp = static_cast<MetaAllocate *>(req);
-	assert(allocOp != NULL);
+	assert(req != NULL);
 
 	os << "ALLOCATE \r\n";
 	os << "Cseq: " << opSeqno << "\r\n";
 	os << "Version: KFS/1.0\r\n";
-	os << "File-handle: " << allocOp->fid << "\r\n";
-	os << "Chunk-handle: " << allocOp->chunkId << "\r\n";
-	os << "Chunk-version: " << allocOp->chunkVersion << "\r\n";
+	os << "File-handle: " << req->fid << "\r\n";
+	os << "Chunk-handle: " << req->chunkId << "\r\n";
+	os << "Chunk-version: " << req->chunkVersion << "\r\n";
 	if (leaseId >= 0) {
 		os << "Lease-id: " << leaseId << "\r\n";
 	}
+        os << "Chunk-append: " << (req->appendChunk ? 1 : 0) << "\r\n";
 
-	os << "Num-servers: " << allocOp->servers.size() << "\r\n";
-	assert(allocOp->servers.size() > 0);
+	os << "Num-servers: " << req->servers.size() << "\r\n";
+	assert(req->servers.size() > 0);
 
 	os << "Servers:";
-	for_each(allocOp->servers.begin(), allocOp->servers.end(),
+	for_each(req->servers.begin(), req->servers.end(),
 			PrintChunkServerLocations(os));
 	os << "\r\n\r\n";
 }
@@ -2858,6 +3092,34 @@ MetaChunkVersChange::request(ostream &os)
 }
 
 void
+MetaBeginMakeChunkStable::request(ostream &os)
+{
+	os << "BEGIN_MAKE_CHUNK_STABLE\r\n"
+		"Cseq: "          << opSeqno      << "\r\n"
+		"Version: KFS/1.0\r\n"
+		"File-handle: "   << fid          << "\r\n"
+		"Chunk-handle: "  << chunkId      << "\r\n"
+		"Chunk-version: " << chunkVersion << "\r\n"
+        "\r\n";
+}
+
+void
+MetaChunkMakeStable::request(ostream &os)
+{
+	os << "MAKE_CHUNK_STABLE \r\n";
+	os << "Cseq: " << opSeqno << "\r\n";
+	os << "Version: KFS/1.0\r\n";
+	os << "File-handle: " << fid << "\r\n";
+	os << "Chunk-handle: " << chunkId << "\r\n";
+	os << "Chunk-version: " << chunkVersion << "\r\n";
+        os << "Chunk-size: " << chunkSize << "\r\n";
+        if (hasChunkChecksum) {
+            os << "Chunk-checksum: " << chunkChecksum << "\r\n";
+        }
+        os << "\r\n";
+}
+
+void
 MetaChunkReplicate::request(ostream &os)
 {
 	os << "REPLICATE \r\n";
@@ -2878,3 +3140,28 @@ MetaChunkSize::request(ostream &os)
 	os << "File-handle: " << fid << "\r\n";
 	os << "Chunk-handle: " << chunkId << "\r\n\r\n";
 }
+
+void
+MetaChunkSetProperties::request(ostream &os)
+{
+	os <<
+	"CMD_SET_PROPERTIES\r\n"
+	"Cseq: " << opSeqno << "\r\n"
+	"Version: KFS/1.0\r\n"
+	"Content-length: " << serverProps.length() << "\r\n\r\n" <<
+	serverProps
+	;
+}
+
+void
+MetaChunkServerRestart::request(ostream &os)
+{
+	os <<
+	"RESTART_CHUNK_SERVER\r\n"
+	"Cseq: " << opSeqno << "\r\n"
+	"Version: KFS/1.0\r\n"
+	"\r\n"
+        ;
+}
+
+} /* namespace KFS */

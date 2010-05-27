@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/04/18
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -30,7 +29,7 @@
 #include <string>
 #include <vector>
 #include <tr1/unordered_map>
-#include <sys/select.h>
+#include <poll.h>
 #include "common/log.h"
 #include "common/hsieh_hash.h"
 #include "common/kfstypes.h"
@@ -46,29 +45,28 @@
  
 #include "concurrency.h"
 #include "KfsPendingOp.h"
-
-#include "KfsClient.h"
+#include "KfsAsyncRW.h"
 
 namespace KFS {
 
 /// Set this to 1MB: 64K * 16
 const size_t MIN_BYTES_PIPELINE_IO = CHECKSUM_BLOCKSIZE * 16 * 4;
 
-/// Per write, push out at most one checksum block size worth of data
-const size_t MAX_BYTES_PER_WRITE_IO = CHECKSUM_BLOCKSIZE;
-/// on zfs, blocks are 128KB on disk; so, align reads appropriately
-const size_t MAX_BYTES_PER_READ_IO = CHECKSUM_BLOCKSIZE * 2;
+/// Do io in 1MB blocks if possible.
+const size_t MAX_BYTES_PER_WRITE_IO = ((1u << 20) + CHECKSUM_BLOCKSIZE - 1) /
+    CHECKSUM_BLOCKSIZE * CHECKSUM_BLOCKSIZE;
+const size_t MAX_BYTES_PER_READ_IO = MAX_BYTES_PER_WRITE_IO;
 
 /// If an op fails because the server crashed, retry the op.  This
 /// constant defines the # of retries before declaring failure.
-const uint8_t NUM_RETRIES_PER_OP = 3;
+const int DEFAULT_NUM_RETRIES_PER_OP = 6;
 
 /// Whenever an op fails, we need to give time for the server to
 /// recover.  So, introduce a delay of 5 secs between retries.
 const int RETRY_DELAY_SECS = 5;
 
-/// Whenever we have issues with lease failures, we retry the op after a minute
-const int LEASE_RETRY_DELAY_SECS = 60;
+/// Whenever we have issues with lease failures, we retry the op after 5 secs
+const int LEASE_RETRY_DELAY_SECS = 5;
 
 /// Directory entries that we may have cached are valid for 30 secs;
 /// after that force a revalidataion.
@@ -137,18 +135,16 @@ struct ChunkServerConn {
 
         res = sock->Connect(location, nonblockingConnect);
         if (res == -EINPROGRESS) {
-            struct timeval selectTimeout;
-            fd_set writeSet;
-            int sfd = sock->GetFd();
+            // 30 seconds: poll expects values in milli-seconds
+            int pollTimeout = 30 * 1000;
+            struct pollfd pfd;
 
-            FD_ZERO(&writeSet);
-            FD_SET(sfd, &writeSet);
+            pfd.fd = sock->GetFd();
+            pfd.events = POLLOUT;
+            pfd.revents = 0;
 
-            selectTimeout.tv_sec = 30;
-            selectTimeout.tv_usec = 0;
-
-            res = select(sfd + 1, NULL, &writeSet, NULL, &selectTimeout);
-            if ((res > 0) &&  (FD_ISSET(sfd, &writeSet))) {
+            res = poll(&pfd, 1, pollTimeout);
+            if ((res > 0) && (pfd.revents & POLLOUT)) {
                     // connection completed
                     return;
             }
@@ -208,9 +204,11 @@ struct FilePosition {
 	chunkNum = 0;
         preferredServer = NULL;
         pendingChunkRead = 0;
+        prefetchReq = NULL;
     }
     ~FilePosition() {
         delete pendingChunkRead;
+        delete prefetchReq;
     }
     void Reset() {
 	fileOffset = chunkOffset = 0;
@@ -225,8 +223,10 @@ struct FilePosition {
     int32_t	chunkNum;
     /// offset within the chunk
     off_t	chunkOffset;
+
+    /// transaction id info for record append
+    std::vector<WriteInfo> writeId;
     
-    /// For the purpose of write, we may have to connect to multiple servers
     std::vector<ChunkServerConn> chunkServers;
 
     /// For reads as well as meta requests about a chunk, this is the
@@ -238,11 +238,25 @@ struct FilePosition {
     ServerLocation preferredServerLocation;
 
     PendingChunkRead* pendingChunkRead;
+    /// for read prefetching
+    AsyncReadReq *prefetchReq;
 
     void ResetServers() {
+        writeId.clear();
         chunkServers.clear();
         preferredServer = NULL;
         CancelPendingRead();
+    }
+
+    TcpSocketPtr GetPreferredChunkServerSockPtr() {
+        std::vector<ChunkServerConn>::iterator iter;
+        TcpSocketPtr sock;
+        
+        iter = std::find(chunkServers.begin(), chunkServers.end(), 
+                         preferredServerLocation);
+        if (iter != chunkServers.end())
+            return iter->sock;
+        return sock;
     }
 
     TcpSocket *GetChunkServerSocket(const ServerLocation &loc, bool nonblockingConnect = false) {
@@ -339,6 +353,8 @@ struct FileTableEntry {
     std::map <int, ChunkAttr> cattr;
     // the position in the file at which the next read/write will occur
     FilePosition currPos;
+    /// the user has set a marker beyond which reads should return EOF
+    off_t eofMark;
     /// For the current chunk, do some amount of buffering on the
     /// client.  This helps absorb network latencies for small
     /// reads/writes.
@@ -350,22 +366,20 @@ struct FileTableEntry {
     // for a max of 30 secs; after that revalidate
     time_t	validatedTime;
 
-    FileTableEntry(kfsFileId_t p, const std::string & n):
-	parentFid(p), name(n), lastAccessTime(0), validatedTime(0) { }
+    bool skipHoles;
+    unsigned int instance;
+    int appendPending;
+    bool didAppend;
+
+    FileTableEntry(kfsFileId_t p, const char *n, unsigned int instance):
+	parentFid(p), name(n), eofMark(-1), 
+        lastAccessTime(0), validatedTime(0), 
+        skipHoles(false), instance(instance), appendPending(0),
+        didAppend(false) { }
 };
 
-class MatchingServer {
-    ServerLocation loc;
-public:
-    MatchingServer(const ServerLocation &l) : loc(l) { }
-    bool operator()(KfsClientPtr &clnt) const {
-        return clnt->GetMetaserverLocation() == loc;
-    }
-    bool operator()(const ServerLocation &other) const {
-        return other == loc;
-    }
-};
-
+class KfsProtocolWorker;
+class MutexLock;
 ///
 /// The implementation object.
 ///
@@ -380,7 +394,7 @@ public:
     /// @param[in] metaServerPort  Port at which we should connect to
     /// @retval 0 on success; -1 on failure
     ///
-    int Init(const std::string & metaServerHost, int metaServerPort);
+    int Init(const std::string metaServerHost, int metaServerPort);
 
     ServerLocation GetMetaserverLocation() const {
         return mMetaServerLoc;
@@ -393,7 +407,7 @@ public:
     /// @param[in] pathname  The pathname to change the "cwd" to
     /// @retval 0 on sucess; -errno otherwise
     ///
-    int Cd(const std::string & pathname);
+    int Cd(const char *pathname);
 
     /// Get cwd
     /// @retval a string that describes the current working dir.
@@ -405,32 +419,34 @@ public:
     /// present, they are also made.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if mkdir is successful; -errno otherwise
-    int Mkdirs(const std::string & pathname);
+    int Mkdirs(const char *pathname);
 
     ///
     /// Make a directory in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if mkdir is successful; -errno otherwise
-    int Mkdir(const std::string & pathname);
+    int Mkdir(const char *pathname);
 
     ///
     /// Remove a directory in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if rmdir is successful; -errno otherwise
-    int Rmdir(const std::string & pathname);
+    int Rmdir(const char *pathname);
 
     ///
     /// Remove a directory hierarchy in KFS.
     /// @param[in] pathname		The full pathname such as /.../dir
     /// @retval 0 if rmdir is successful; -errno otherwise
-    int Rmdirs(const std::string & pathname);
+    int Rmdirs(const char *pathname);
+
+    int RmdirsFast(const char *pathname);
 
     ///
     /// Read a directory's contents
     /// @param[in] pathname	The full pathname such as /.../dir
     /// @param[out] result	The contents of the directory
     /// @retval 0 if readdir is successful; -errno otherwise
-    int Readdir(const std::string & pathname, std::vector<std::string> &result);
+    int Readdir(const char *pathname, std::vector<std::string> &result);
 
     ///
     /// Read a directory's contents and retrieve the attributes
@@ -439,7 +455,7 @@ public:
     /// @param[in] computeFilesize  By default, compute file size
     /// @retval 0 if readdirplus is successful; -errno otherwise
     ///
-    int ReaddirPlus(const std::string & pathname, std::vector<KfsFileAttr> &result,
+    int ReaddirPlus(const char *pathname, std::vector<KfsFileAttr> &result,
                     bool computeFilesize = true);
 
     ///
@@ -447,7 +463,7 @@ public:
     /// of files/bytes in the directory tree starting at pathname.
     /// @retval 0 if readdirplus is successful; -errno otherwise
     ///
-    int GetDirSummary(const std::string & pathname, uint64_t &numFiles, uint64_t &numBytes);
+    int GetDirSummary(const char *pathname, uint64_t &numFiles, uint64_t &numBytes);
 
     ///
     /// Stat a file and get its attributes.
@@ -457,7 +473,15 @@ public:
     /// file is computed and the value is returned in result.st_size
     /// @retval 0 if stat was successful; -errno otherwise
     ///
-    int Stat(const std::string & pathname, KfsFileStat &result, bool computeFilesize = true);
+    int Stat(const char *pathname, struct stat &result, bool computeFilesize = true);
+
+    ///
+    /// Return the # of chunks in the file specified by the fully qualified pathname.
+    /// -1 if there is an error.
+    ///
+    int GetNumChunks(const char *pathname);
+
+    int UpdateFilesize(int fd);
 
     ///
     /// Helper APIs to check for the existence of (1) a path, (2) a
@@ -465,22 +489,22 @@ public:
     /// @param[in] pathname	The full pathname such as /.../foo
     /// @retval status: True if it exists; false otherwise
     ///
-    bool Exists(const std::string & pathname);
-    bool IsFile(const std::string & pathname);
-    bool IsDirectory(const std::string & pathname);
+    bool Exists(const char *pathname);
+    bool IsFile(const char *pathname);
+    bool IsDirectory(const char *pathname);
 
     /// Debug API to print out the size/location of each block of a file.
-    int EnumerateBlocks(const std::string & pathname);
+    int EnumerateBlocks(const char *pathname);
 
     /// Given a file in KFS, verify that all N copies of each chunk are identical.
     /// @retval status code
-    bool CompareChunkReplicas(const std::string & pathname, std::string &md5sum);
+    bool CompareChunkReplicas(const char *pathname, string &md5sum);
 
     /// API to verify that checksums computed on source data matches
     /// what was pushed into KFS.  This verification is done by
     /// pulling KFS checksums from all the replicas for each chunk.
     /// @retval status code
-    bool VerifyDataChecksums(const std::string & pathname, const std::vector<uint32_t> &checksums);
+    bool VerifyDataChecksums(const char *pathname, const std::vector<uint32_t> &checksums);
     bool VerifyDataChecksums(int fd, off_t offset, const char *buf, off_t numBytes);
 
     ///
@@ -492,14 +516,14 @@ public:
     /// @retval on success, fd corresponding to the created file;
     /// -errno on failure.
     ///
-    int Create(const std::string & pathname, int numReplicas = 3, bool exclusive = false);
+    int Create(const char *pathname, int numReplicas = 3, bool exclusive = false);
 
     ///
     /// Remove a file which is specified by a complete path.
     /// @param[in] pathname that has to be removed
     /// @retval status code
     ///
-    int Remove(const std::string & pathname);
+    int Remove(const char *pathname);
 
     ///
     /// Rename file/dir corresponding to oldpath to newpath
@@ -509,7 +533,9 @@ public:
     /// exists; otherwise, the rename will fail if newpath exists
     /// @retval 0 on success; -1 on failure
     ///
-    int Rename(const std::string & oldpath, const std::string & newpath, bool overwrite = true);
+    int Rename(const char *oldpath, const char *newpath, bool overwrite = true);
+
+    int CoalesceBlocks(const char *srcPath, const char *dstPath, off_t *dstStartOffset);
 
     ///
     /// Set the mtime for a path
@@ -517,13 +543,7 @@ public:
     /// @param[in] mtime     the desired mtime
     /// @retval status code
     ///
-    int SetMtime(const std::string &pathname, const struct timeval &mtime);
-
-    ///
-    /// Return the # of chunks in the file specified by the fully qualified pathname.
-    /// -1 if there is an error.
-    ///
-    int GetNumChunks(const std::string &pathname);
+    int SetMtime(const char *pathname, const struct timeval &mtime);
 
     ///
     /// Open a file
@@ -535,13 +555,13 @@ public:
     /// desired degree of replication for the file
     /// @retval fd corresponding to the opened file; -errno on failure
     ///
-    int Open(const std::string & pathname, int openFlags, int numReplicas = 3);
+    int Open(const char *pathname, int openFlags, int numReplicas = 3);
 
     ///
     /// Return file descriptor for an open file
     /// @param[in] pathname of file
     /// @retval file descriptor if open, error code < 0 otherwise
-    int Fileno(const std::string & pathname);
+    int Fileno(const char *pathname);
 
     ///
     /// Close a file
@@ -549,6 +569,31 @@ public:
     /// table entry.
     ///
     int Close(int fd);
+
+    ///
+    /// Append a record to the chunk that we are writing to in the
+    /// file with one caveat: the record should not straddle chunk
+    /// boundaries.
+    /// @param[in] fd that correpsonds to the file open for writing
+    /// @param[in] buf the record that should be appended
+    /// @param[in] reclen the length of the record
+    /// @retval Status code
+    ///
+    int RecordAppend(int fd, const char *buf, int reclen);
+    int AtomicRecordAppend(int fd, const char *buf, int reclen);
+
+    /// See the comments in KfsClient.h
+    int ReadPrefetch(int fd, char *buf, size_t numBytes);
+
+    int WriteAsync(int fd, const char *buf, size_t numBytes);
+    int WriteAsyncCompletionHandler(int fd);
+
+    void EnableAsyncRW() {
+        mAsyncer.Start();
+    }
+    void DisableAsyncRW() {
+        mAsyncer.Stop();
+    }
 
     ///
     /// Read/write the desired # of bytes to the file, starting at the
@@ -563,6 +608,10 @@ public:
     ///
     ssize_t Read(int fd, char *buf, size_t numBytes);
     ssize_t Write(int fd, const char *buf, size_t numBytes);
+
+    /// If there are any holes in a file, such as those at the end of
+    /// a chunk, skip over them.  
+    void SkipHolesInFile(int fd);
 
     ///
     /// \brief Sync out data that has been written (to the "current" chunk).
@@ -580,7 +629,7 @@ public:
     /// @retval On success, the offset to which the filer
     /// pointer was moved to; (off_t) -1 on failure.
     ///
-    off_t Seek(int fd, off_t offset, int whence);
+    off_t Seek(int fd, off_t offset, int whence, bool flushIfBufDirty = true);
     /// In this version of seek, whence == SEEK_SET
     off_t Seek(int fd, off_t offset);
 
@@ -597,6 +646,15 @@ public:
     int Truncate(int fd, off_t offset);
 
     ///
+    /// Truncation, but going in the reverse direction: delete chunks
+    /// from the beginning of the file to the specified offset
+    /// @param[in] fd that corresponds to a previously opened file
+    /// @param[in] offset  the offset before which the chunks should
+    /// be deleted
+    /// @retval status code
+    int PruneFromHead(int fd, off_t offset);
+
+    ///
     /// Given a starting offset/length, return the location of all the
     /// chunks that cover this region.  By location, we mean the name
     /// of the chunkserver that is hosting the chunk. This API can be
@@ -608,7 +666,7 @@ public:
     /// @param[out] locations	The location(s) of various chunks
     /// @retval status: 0 on success; -errno otherwise
     ///
-    int GetDataLocation(const std::string & pathname, off_t start, off_t len,
+    int GetDataLocation(const char *pathname, off_t start, off_t len,
                         std::vector< std::vector <std::string> > &locations);
 
     int GetDataLocation(int fd, off_t start, off_t len,
@@ -619,7 +677,7 @@ public:
     /// @param[in] pathname	The full pathname of the file such as /../foo
     /// @retval count
     ///
-    int16_t GetReplicationFactor(const std::string & pathname);
+    int16_t GetReplicationFactor(const char *pathname);
 
     ///
     /// Set the degree of replication for the pathname.
@@ -627,7 +685,7 @@ public:
     /// @param[in] numReplicas  The desired degree of replication.
     /// @retval -1 on failure; on success, the # of replicas that will be made.
     ///
-    int16_t SetReplicationFactor(const std::string & pathname, int16_t numReplicas);
+    int16_t SetReplicationFactor(const char *pathname, int16_t numReplicas);
 
     // Next sequence number for operations.
     // This is called in a thread safe manner.
@@ -643,6 +701,16 @@ public:
     size_t SetReadAheadSize(int fd, size_t size);
     size_t GetReadAheadSize(int fd) const;
     pthread_mutex_t& GetMutex() { return mMutex; }
+
+    /// A read for an offset that is after the specified value will result in EOF
+    void SetEOFMark(int fd, off_t offset);
+
+    TelemetryClient &GetTelemetryReporter() {
+        return mTelemetryReporter;
+    }
+    void SetMaxNumRetriesPerOp(int maxNumRetries) {
+        mMaxNumRetriesPerOp = maxNumRetries;
+    }
     
 private:
      /// Maximum # of files a client can have open.
@@ -683,6 +751,12 @@ private:
     size_t mDefaultReadAheadSize;
     KfsPendingOp mPendingOp;
 
+    Asyncer mAsyncer;
+    std::vector<AsyncWriteReq *> mAsyncWrites;
+    unsigned int mFileInstance;
+    KfsProtocolWorker* mProtocolWorker;
+    int mMaxNumRetriesPerOp;
+
     /// Check that fd is in range
     bool valid_fd(int fd) { return (fd >= 0 && fd < MAX_FILES && (size_t)fd < mFileTable.size() && mFileTable[fd]); }
 
@@ -699,7 +773,7 @@ private:
     /// the file is computed and returned in result.fileSize
     /// @retval 0 on success; -errno otherwise
     ///
-    int LookupAttr(kfsFileId_t parentFid, const std::string & filename,
+    int LookupAttr(kfsFileId_t parentFid, const char *filename,
 		   KfsFileAttr &result, bool computeFilesize);
 
     /// Helper functions that operate on individual chunks.
@@ -707,7 +781,13 @@ private:
     /// Allocate the "current" chunk of fd.
     /// @param[in] fd  The index from mFileTable[] that corresponds to
     /// the file being accessed
-    int AllocChunk(int fd);
+    /// @param[in] append  Set if we append a chunk to the file.  When
+    /// records are appended to a file by multiple writers, each
+    /// writer writes to a unique chunk.  In this setting, the client
+    /// does not know the file offset at which the chunk should be
+    /// allocated (only the metaserver knows).  
+    ///
+    int AllocChunk(int fd, bool append = false);
 
     /// Open the "current" chunk of fd.  This involves setting up the
     /// socket to the chunkserver and determining the size of the chunk.
@@ -718,8 +798,14 @@ private:
     /// @param[in] fd  The index from mFileTable[] that corresponds to
     /// the file being accessed
     int OpenChunk(int fd, bool nonblockingConnect = false);
+    
+    /// Close the "current" chunk of the fd.  This might involve
+    /// either relinquishing read lease or notifying a chunkserver
+    /// that writes from this client are done (and that the
+    /// chunkserver can give up the write lease appropriately).
+    int CloseChunk(int fd);
 
-    bool IsChunkReadable(int fd);
+    bool IsChunkReadable(int fd, int &leaseStatus);
 
     /// Given a chunkid, is our lease on that chunk "good"?  That is,
     /// if it is close to expiring, renew it; if it is expired, get a
@@ -728,7 +814,7 @@ private:
     /// "good" lease.
     /// @param[in] pathname  The full path to the file that contains the chunk.
     /// @retval true if our lease is good; false otherwise.
-    bool IsChunkLeaseGood(kfsChunkId_t chunkId, const std::string &pathname);
+    bool IsChunkLeaseGood(int fd, kfsChunkId_t chunkId, const std::string &pathname, int &leaseStatus);
 
 
     /// Helper function that reads from the "current" chunk.
@@ -765,7 +851,7 @@ private:
     ssize_t DoLargeReadFromServer(int fd, char *buf, size_t numBytes);
 
     /// Helper function that copies out data from the chunk buffer
-    /// corresponding to the "current" chunk./home/mike/qq/src/sort/platform/kosmosfs/src/cc/libkfsClient/KfsPendingOp.cc:43:
+    /// corresponding to the "current" chunk.
     /// @param[in] fd  The file from which data is to be read
     /// @param[out] buf  The buffer which will be filled with data
     /// @param[in] numBytes  The desired # of bytes to be read
@@ -864,6 +950,9 @@ private:
     ChunkAttr *GetCurrChunk(int fd) {
 	return &FdInfo(fd)->cattr[FdPos(fd)->chunkNum];
     }
+    void ClearCurrChunkAttr(int fd) {
+        FdInfo(fd)->cattr.erase(FdPos(fd)->chunkNum);
+    }
 
     /// Do the work for an op with the metaserver; if the metaserver
     /// dies in the middle, retry the op a few times before giving up.
@@ -877,19 +966,21 @@ private:
     int DoPipelinedWrite(int fd, std::vector<WritePrepareOp *> &ops, TcpSocket *masterSock);
 
     /// Helpers for pipelined write
-    int AllocateWriteId(int fd, off_t offset, size_t numBytes, std::vector<WriteInfo> &writeId, 
+    int AllocateWriteId(int fd, off_t offset, size_t numBytes, 
+                        bool isForRecordAppend, std::vector<WriteInfo> &writeId, 
                         TcpSocket *masterSock);
 
     int PushData(int fd, vector<WritePrepareOp *> &ops, 
-                 uint32_t start, uint32_t count, TcpSocket *masterSock);
+                 uint32_t start, uint32_t count, size_t &numBytes, TcpSocket *masterSock);
 
-    int SendCommit(int fd, vector<WriteInfo> &writeId, TcpSocket *masterSock,
+    int SendCommit(int fd, off_t offset, size_t numBytes, vector<uint32_t> &checksums,
+                   vector<WriteInfo> &writeId, TcpSocket *masterSock,
                    WriteSyncOp &sop);
 
     int GetCommitReply(WriteSyncOp &sop, TcpSocket *masterSock);
 
     // this is going away...
-    int IssueCommit(int fd, std::vector<WriteInfo> &writeId, TcpSocket *masterSock);
+    // int IssueCommit(int fd, std::vector<WriteInfo> &writeId, TcpSocket *masterSock);
 
     /// Get a response from the server, where, the response is
     /// terminated by "\r\n\r\n".
@@ -897,7 +988,7 @@ private:
 
     /// Given a path, get the parent fileid and the name following the
     /// trailing "/"
-    int GetPathComponents(const std::string & pathname, kfsFileId_t *parentFid,
+    int GetPathComponents(const char *pathname, kfsFileId_t *parentFid,
 			  std::string &name);
 
     /// File table management utilities: find a free entry in the
@@ -909,26 +1000,26 @@ private:
     bool IsFileTableEntryValid(int fte);
 
     /// Wrapper function that calls LookupFileTableEntry with the parentFid
-    int LookupFileTableEntry(const std::string & pathname);
+    int LookupFileTableEntry(const char *pathname);
 
     /// Return the file table entry corresponding to parentFid/name,
     /// where "name" is either a file or directory that resides in
     /// directory corresponding to parentFid.
-    int LookupFileTableEntry(kfsFileId_t parentFid, const std::string & name);
+    int LookupFileTableEntry(kfsFileId_t parentFid, const char *name);
 
     /// Given a parent fid and name, get the corresponding entry in
     /// the file table.  Note: if needed, attributes will be
     /// downloaded from the server.
-    int Lookup(kfsFileId_t parentFid, const std::string & name);
+    int Lookup(kfsFileId_t parentFid, const char *name);
 
     // name -- is the last component of the pathname
-    int ClaimFileTableEntry(kfsFileId_t parentFid, const std::string & name, const std::string & pathname);
-    int AllocFileTableEntry(kfsFileId_t parentFid, const std::string & name, const std::string & pathname);
+    int ClaimFileTableEntry(kfsFileId_t parentFid, const char *name, std::string pathname);
+    int AllocFileTableEntry(kfsFileId_t parentFid, const char *name, std::string pathname);
     void ReleaseFileTableEntry(int fte);
 
     /// Helper functions that interact with the leaseClerk to
     /// get/renew leases
-    int GetLease(kfsChunkId_t chunkId, const std::string &pathname);
+    int GetLease(int fd, kfsChunkId_t chunkId, const std::string &pathname);
     void RenewLease(kfsChunkId_t chunkId, const std::string &pathname);
     void RelinquishLease(kfsChunkId_t chunkId);
 
@@ -938,8 +1029,19 @@ private:
 
     bool VerifyDataChecksums(int fte, const vector<uint32_t> &checksums);
     bool VerifyChecksum(ReadOp* op, TcpSocket* sock);
+
     int GetChunkFromReplica(const ServerLocation &loc, kfsChunkId_t chunkId,
                             int64_t chunkVersion, char *buffer);
+
+    int ReaddirPlus(const char *pathname, kfsFileId_t dirFid, 
+                    std::vector<KfsFileAttr> &result, bool computeFilesize = true,
+                    bool updateClientCache = true);
+
+    int Rmdirs(const std::string &parentDir, kfsFileId_t parentFid, const std::string &dirname, kfsFileId_t dirFid);
+    int Remove(const std::string &parentDir, kfsFileId_t parentFid, const std::string &entryName);
+
+    int AtomicRecordAppend(int fd, const char *buf, int reclen, MutexLock& lock);
+
     friend class PendingChunkRead;
 };
 

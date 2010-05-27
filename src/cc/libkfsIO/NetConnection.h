@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/14
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -31,8 +30,6 @@
 #include "Event.h"
 #include "IOBuffer.h"
 #include "TcpSocket.h"
-
-#include "common/log.h"
 
 #include <boost/shared_ptr.hpp>
 #include <boost/pool/pool_alloc.hpp> 
@@ -68,10 +65,19 @@ public:
     /// @param[in] c KfsCallbackObj associated with this connection
     /// @param[in] listenOnly boolean that specifies whether this
     /// connection is setup only for accepting new connections.
-    NetConnection(TcpSocket *sock, KfsCallbackObj *c, bool listenOnly = false)
-        : mNetManagerEntry(), mListenOnly(listenOnly), mTryWrite(false),
-          mCallbackObj(c), mSock(sock), mInBuffer(), mOutBuffer(), 
-          mInactivityTimeoutSecs(-1), maxReadAhead(-1), mPeerName() {
+    NetConnection(TcpSocket *sock, KfsCallbackObj *c,
+        bool listenOnly = false, bool ownsSocket = true)
+        : mNetManagerEntry(),
+          mListenOnly(listenOnly),
+          mOwnsSocket(ownsSocket),
+          mTryWrite(false),
+          mCallbackObj(c),
+          mSock(sock),
+          mInBuffer(),
+          mOutBuffer(), 
+          mInactivityTimeoutSecs(-1),
+          maxReadAhead(-1),
+          mPeerName() {
         assert(mSock);
     } 
 
@@ -163,12 +169,17 @@ public:
                 ("was connected to " + mPeerName));
         }
     }
+        
+    std::string GetSockName() const {
+        return (IsGood() ? mSock->GetSockName() : std::string("not connected"));
+    }
 
     /// Enqueue data to be sent out.
     void Write(const IOBufferData &ioBufData) {
         if (! ioBufData.IsEmpty()) {
+            const bool resetTimer = mOutBuffer.IsEmpty();
             mOutBuffer.Append(ioBufData);
-            Update();
+            Update(resetTimer);
         }
     }
 
@@ -176,33 +187,45 @@ public:
     void Write(IOBuffer *ioBuf) {
         const int numBytes = ioBuf ? ioBuf->BytesConsumable() : 0;
         if (numBytes > 0) {
+            const bool resetTimer = mOutBuffer.IsEmpty();
             mOutBuffer.Move(ioBuf);
-            Update();
+            Update(resetTimer);
         }
     }
 
     /// Enqueue data to be sent out.
     void Write(IOBuffer *ioBuf, int numBytes) {
+        const bool resetTimer = mOutBuffer.IsEmpty();
         if (ioBuf && numBytes > 0 && mOutBuffer.Move(ioBuf, numBytes) > 0) {
-            Update();
+            Update(resetTimer);
+        }
+    }
+
+    /// Enqueue data to be sent out.
+    void WriteCopy(const IOBuffer *ioBuf, int numBytes) {
+        const bool resetTimer = mOutBuffer.IsEmpty();
+        if (ioBuf && numBytes > 0 && mOutBuffer.Copy(ioBuf, numBytes) > 0) {
+            Update(resetTimer);
         }
     }
 
     /// Enqueue data to be sent out.
     void Write(const char *data, int numBytes) {
+        const bool resetTimer = mOutBuffer.IsEmpty();
         if (mOutBuffer.CopyIn(data, numBytes) > 0) {
-            Update();
+            Update(resetTimer);
         }
     }
 
     /// If there is any data to be sent out, start the send.
     void StartFlush() {
         if (mTryWrite && IsWriteReady() && IsGood()) {
-            if (mOutBuffer.Write(mSock->GetFd()) > 0) {
-                Update();
-            }
-            mTryWrite = mOutBuffer.IsEmpty();
+            HandleWriteEvent();
         }
+    }
+
+    int GetSocketError() const {
+        return (mSock ? mSock->GetSocketError() : 0);
     }
 
     /// Close the connection.
@@ -212,11 +235,15 @@ public:
         }
         // To avoid race with file descriptor number re-use by the OS,
         // remove the socket from poll set first, then close the socket.
-        TcpSocket* const sock = mSock;
+        TcpSocket* const sock = mOwnsSocket ? mSock : 0;
         mSock = 0;
+        // Clear data that can not be sent, but keep input data if any.
+        mOutBuffer.Clear();
         Update();
-        sock->Close();
-        delete sock;
+        if (sock) {
+            sock->Close();
+            delete sock;
+        }
     }
 
     int GetNumBytesToRead() const {
@@ -231,6 +258,17 @@ public:
         if (update) {
             Update(false);
         }
+    }
+
+    void DiscardRead() {
+        const bool resetTimer = ! mInBuffer.IsEmpty();
+        mInBuffer.Clear();
+        Update(resetTimer);
+    }
+
+    void DiscardWrite() {
+        mOutBuffer.Clear();
+        Update();
     }
 
     class NetManagerEntry
@@ -249,10 +287,12 @@ public:
               mWriteByteCount(0),
               mTimerWheelSlot(-1),
               mExpirationTime(-1),
+              mNetManager(0),
               mListIt()
             {}
         void EnableReadIfOverloaded()     { mEnableReadIfOverloaded  = true; }
         void SetConnectPending(bool flag) { mConnectPending = flag; }
+        bool IsConnectPending() const     { return mConnectPending; }
 
     private:
         bool           mIn:1;
@@ -266,6 +306,7 @@ public:
         int            mWriteByteCount;
         int            mTimerWheelSlot;
         time_t         mExpirationTime;
+        NetManager*    mNetManager;
         List::iterator mListIt;
 
         friend class NetManager;
@@ -274,12 +315,18 @@ public:
         NetManagerEntry(const NetManagerEntry&);
         NetManagerEntry operator=(const NetManagerEntry&);
     };
-    NetManagerEntry* GetNetMangerEntry(NetManager& manager);
+    NetManagerEntry* GetNetManagerEntry() {
+        return &mNetManagerEntry;
+    }
+    const NetManagerEntry* GetNetManagerEntry() const {
+        return &mNetManagerEntry;
+    }
     void Update(bool resetTimer = true);
 
 private:
     NetManagerEntry     mNetManagerEntry;
     const bool          mListenOnly:1;
+    const bool          mOwnsSocket:1;
     bool                mTryWrite:1;
     /// KfsCallbackObj that will be notified whenever "events" occur.
     KfsCallbackObj	*mCallbackObj;

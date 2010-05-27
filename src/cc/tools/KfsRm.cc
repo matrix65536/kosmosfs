@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/09/21
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -70,7 +69,7 @@ int
 doRecrRemove(const char *pathname)
 {
     int res;
-    KfsFileStat statInfo;
+    struct stat statInfo;
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
     res = kfsClient->Stat(pathname, statInfo);
@@ -79,8 +78,8 @@ doRecrRemove(const char *pathname)
              << ErrorCodeToStr(res) << endl;
         return res;
     }
-    if (S_ISDIR(statInfo.mode)) {
-        return kfsClient->Rmdirs(pathname);
+    if (S_ISDIR(statInfo.st_mode)) {
+        return kfsClient->RmdirsFast(pathname);
     } else {
         return doRemoveFile(pathname);
     }

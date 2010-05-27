@@ -3,7 +3,6 @@
 //
 // Created 2008/08/27
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -65,7 +64,7 @@ int LayoutEmulator::LoadChunkmap(const string &chunkLocationFn, bool addChunksTo
         return -EEXIST;
     }
 
-    mChunkToServerMap = gLayoutManager.GetChunkToServerMap();
+    gLayoutManager.GetChunkToServerMap(mChunkToServerMap);
 
     file.getline(line, MAXLINE);
 
@@ -82,12 +81,12 @@ int LayoutEmulator::LoadChunkmap(const string &chunkLocationFn, bool addChunksTo
 }
 
 class MatchingServer {
-    ServerLocation loc;
+	ServerLocation loc;
 public:
-    MatchingServer(const ServerLocation &l) : loc(l) { }
-    bool operator() (ChunkServerPtr &s) {
-        return s->MatchingServer(loc);
-    }
+	MatchingServer(const ServerLocation &l) : loc(l) { }
+	bool operator() (ChunkServerPtr &s) {
+		return s->MatchingServer(loc);
+	}
 };
 
 void LayoutEmulator::Parse(const char *line, bool addChunksToReplicationChecker)

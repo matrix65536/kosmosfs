@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.
@@ -85,7 +85,8 @@ setup_initial_tree(uint32_t minNumReplicasPerFile)
  */
 void
 KFS::kfs_startup(const string &logdir, const string &cpdir, 
-		uint32_t minChunkServers, uint32_t numReplicasPerFile)
+		uint32_t minChunkServers, uint32_t numReplicasPerFile,
+		bool enablePathToFidCache)
 {
 	struct rlimit rlim;
 	int status = getrlimit(RLIMIT_NOFILE, &rlim);
@@ -107,6 +108,9 @@ KFS::kfs_startup(const string &logdir, const string &cpdir,
 	// get the paths setup before we get going
 	logger_setup_paths(logdir);
 	checkpointer_setup_paths(cpdir);
+
+	if (enablePathToFidCache)
+		metatree.enablePathToFidCache();
 
 	status = setup_initial_tree(numReplicasPerFile);
 	if (status != 0)

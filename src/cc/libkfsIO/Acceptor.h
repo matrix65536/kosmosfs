@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/22
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -66,6 +65,8 @@ public:
     virtual KfsCallbackObj *CreateKfsCallbackObj(NetConnectionPtr &conn) = 0;
 };
 
+class NetManager;
+
 ///
 /// \class Acceptor
 /// A continuation for receiving connections on a TCP port.  Calls
@@ -80,6 +81,7 @@ public:
     /// @param owner The IAcceptorOwner object that "owns" this Acceptor.
     ///
     Acceptor(int port, IAcceptorOwner *owner);
+    Acceptor(NetManager& netManager, int port, IAcceptorOwner *owner);
     ~Acceptor();
 
     /// Return true if we were able to bind to the acceptor port
@@ -100,8 +102,12 @@ private:
     /// The encapsulated connection object that corresponds to the TCP
     /// port on which the Acceptor is listening for connections.
     /// 
-    NetConnectionPtr	mConn;
-    IAcceptorOwner	*mAcceptorOwner;
+    const int             mPort;
+    IAcceptorOwner* const mAcceptorOwner;
+    NetConnectionPtr      mConn;
+    NetManager&           mNetManager;
+
+    void Listen();
 };
 
 }

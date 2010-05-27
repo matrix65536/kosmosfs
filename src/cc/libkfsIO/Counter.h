@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/07/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -28,10 +27,6 @@
 
 #ifndef LIBKFSIO_COUNTER_H
 #define LIBKFSIO_COUNTER_H
-
-extern "C" {
-#include <stdint.h>
-}
 
 #include <algorithm>
 #include <string>

@@ -3,7 +3,6 @@
 //
 // Created 2008/08/27
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -40,7 +39,7 @@ namespace KFS
     class ChunkServerEmulator : public ChunkServer {
     public:
         ChunkServerEmulator(const ServerLocation &loc,int rack);
-        void Enqueue(MetaRequest *r);
+        void Enqueue(MetaChunkRequest *r);
         void Dispatch();
 
         // when this emulated server goes down, fail the pending ops

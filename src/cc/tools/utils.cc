@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2007/09/20
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2007-2008 Kosmix Corp.
@@ -38,12 +37,12 @@ using namespace KFS;
 // Make the directory hierarchy in KFS defined by path.
 
 int
-KFS::tools::doMkdirs(const string & path)
+KFS::tools::doMkdirs(const char *path)
 {
     int res;
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();
 
-    res = kfsClient->Mkdirs(path);
+    res = kfsClient->Mkdirs((char *) path);
     if ((res < 0) && (res != -EEXIST)) {
         cout << "Mkdir failed: " << ErrorCodeToStr(res) << endl;
         return res;
@@ -54,7 +53,7 @@ KFS::tools::doMkdirs(const string & path)
 // remove a single directory in kfs
 
 int
-KFS::tools::doRmdir(const string & dirname)
+KFS::tools::doRmdir(const char *dirname)
 {
     int res;
     KfsClientPtr kfsClient = getKfsClientFactory()->GetClient();

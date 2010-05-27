@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/25
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -54,22 +53,32 @@ namespace KFS
 ///
 class ITimeout {
 public:
-    ITimeout() : mIntervalMs(0), mLastCall(0) { }
+    ITimeout() : mIntervalMs(0), mDisabled(false), mLastCall(0) { }
     virtual ~ITimeout() { }
-    
+    void Disable() {
+        mDisabled = true;
+    }
     /// Specify the interval in milli-seconds at which the timeout
     /// should occur. 
-    void SetTimeoutInterval(int intervalMs) {
+    void SetTimeoutInterval(int intervalMs, bool resetTimer = false) {
+        mDisabled = false;
         mIntervalMs = intervalMs;
+        if (resetTimer) {
+            ResetTimer();
+        }
     }
 
     int GetTimeElapsed() {
         return (NowMs() - mLastCall);
     }
 
+    void ResetTimer() {
+        mLastCall = NowMs();
+    }
+
     static int64_t NowMs() {
         struct timeval timeNow;
-        gettimeofday(&timeNow, NULL);
+        gettimeofday(&timeNow, 0);
         return (int64_t(timeNow.tv_sec) * 1000 + timeNow.tv_usec / 1000);
     }
 
@@ -77,6 +86,8 @@ public:
     /// this method gets invoked.  Depending on the time-interval
     /// specified, the timeout is appropriately invoked.
     void TimerExpired(int64_t nowMs) {
+        if (mDisabled)
+            return;
         if (mIntervalMs <= 0 || nowMs >= mLastCall + mIntervalMs) {
             Timeout();
             mLastCall = nowMs;
@@ -87,6 +98,7 @@ public:
     virtual void Timeout() = 0;
 protected:
     int		mIntervalMs;
+    bool        mDisabled;
 private:
     int64_t 	mLastCall;
 };

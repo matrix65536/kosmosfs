@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2009/01/17
-// Author: Mike Ovsiannikov
 //
 // Copyright 2009 Quantcast Corp.
 //
@@ -43,6 +42,7 @@ class KfsCallbackObj;
 class IOBuffer;
 class DiskQueue;
 class Properties;
+class BufferManager;
 
 ///
 /// Disk DiskIo encapsulates an fd and some disk IO requests.  On
@@ -52,6 +52,30 @@ class Properties;
 class DiskIo : private QCDiskQueue::IoCompletion
 {
 public:
+    struct Counters
+    {
+        typedef int64_t Counter;
+
+        Counter mReadCount;
+        Counter mReadByteCount;
+        Counter mReadErrorCount;
+        Counter mWriteCount;
+        Counter mWriteByteCount;
+        Counter mWriteErrorCount;
+        Counter mSyncCount;
+        Counter mSyncErrorCount;
+        void Clear()
+        {
+            mReadCount       = 0;
+            mReadByteCount   = 0;
+            mReadErrorCount  = 0;
+            mWriteCount      = 0;
+            mWriteByteCount  = 0;
+            mWriteErrorCount = 0;
+            mSyncCount       = 0;
+            mSyncErrorCount  = 0;
+        }
+    };
     static bool Init(
         const Properties& inProperties,
         std::string*      inErrMessagePtr = 0);
@@ -62,9 +86,12 @@ public:
         std::string*  inErrMessagePtr = 0);
     static bool Shutdown(
         std::string* inErrMessagePtr = 0);
-    static void RunIoCompletion();
+    static bool RunIoCompletion();
     static size_t GetMaxRequestSize();
     static int GetFdCountPerFile();
+    static BufferManager& GetBufferManager();
+    static void GetCounters(
+        Counters& outCounters);
 
     class File
     {

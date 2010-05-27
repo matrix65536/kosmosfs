@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/10/12
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -32,6 +31,7 @@
 #include "common/kfstypes.h"
 #include "common/cxxutil.h"
 #include <tr1/unordered_map>
+#include <time.h>
 
 namespace KFS {
 

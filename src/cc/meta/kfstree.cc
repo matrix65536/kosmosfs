@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * \file kfstree.cc
  * \brief Tree-manipulating routines for the KFS metadata server.

@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/14
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -292,6 +291,8 @@ public:
     ///
     int CopyIn(const char *buf, int numBytes);
 
+    int Copy(const IOBuffer* buf, int numBytes);
+
     ///
     /// Copy data out of the buffer.  For doing a copy, data is copied
     /// from the first buffer in mBuf.  If the amount of data to be
@@ -346,8 +347,22 @@ public:
         { return mByteCount <= 0; }
 
     /// Zero fill, if needed the last buffer to make it full.
-    // @retval Returns number of bytes added.
+    /// @retval Returns number of bytes added.
     int ZeroFillLast();
+
+    /// Returns bytes available for consumption in the last buffer
+    /// @retval # of bytes consumable in the last buffer.
+    int BytesConsumableLast() const
+        { return (mBuf.empty() ? 0 : mBuf.back().BytesConsumable()); }
+
+    /// Returns available space in the last buffer.
+    /// @retval available space in the last buffer.
+    int SpaceAvailableLast() const
+        { return (mBuf.empty() ? 0 : mBuf.back().SpaceAvailable()); }
+    
+    /// Retruns true if the last the buffer is full
+    bool IsLastFull() const 
+    { return mBuf.empty() ? true : mBuf.back().IsFull(); }
 
     /// Remove all data.
     void Clear()

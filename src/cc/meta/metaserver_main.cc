@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/03/22
-// Author: Blake Lewis
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -31,12 +30,15 @@
 #include "common/properties.h"
 #include "libkfsIO/NetManager.h"
 #include "libkfsIO/Globals.h"
+#include "libkfsIO/IOBuffer.h"
 
 #include "NetDispatch.h"
 #include "startup.h"
 #include "ChunkServer.h"
-#include "ChildProcessTracker.h"
 #include "LayoutManager.h"
+#include "common/log.h"
+#include "qcdio/qcutils.h"
+#include "qcdio/qciobufferpool.h"
 
 using namespace KFS;
 
@@ -55,8 +57,7 @@ string gLogDir, gCPDir;
 uint32_t gMinChunkservers;
 
 int16_t gMinReplicasPerFile;
-
-int gRecoveryIntervalSecs = KFS::LEASE_INTERVAL_SECS;
+bool gIsPathToFidCacheEnabled = false;
 
 Properties gProp;
 
@@ -88,20 +89,60 @@ main(int argc, char **argv)
 
 	libkfsio::InitGlobals();
 
-        kfs_startup(gLogDir, gCPDir, gMinChunkservers, gMinReplicasPerFile);
+        kfs_startup(gLogDir, gCPDir, gMinChunkservers, gMinReplicasPerFile,
+			gIsPathToFidCacheEnabled);
 
         // Ignore SIGPIPE's that generated when clients break TCP
         // connection.
         //
         signal(SIGPIPE, SIG_IGN);
-
-	ChunkServerHeartbeaterInit();
-	ChildProcessTrackerInit();
 	
 	// this never returns...
         gNetDispatch.Start(gClientPort, gChunkServerPort);
 
         return 0;
+}
+
+class BufferAllocator : public libkfsio::IOBufferAllocator
+{
+public:
+    BufferAllocator()
+        : mBufferPool()
+        {}
+    virtual size_t GetBufferSize() const
+        { return mBufferPool.GetBufferSize(); }
+    virtual char* Allocate()
+    {
+        char* const buf = mBufferPool.Get();
+        if (! buf) {
+            QCUtils::FatalError("out of io buffers", 0);
+        }
+        return buf;
+    }
+    virtual void Deallocate(
+        char* inBufferPtr)
+        { mBufferPool.Put(inBufferPtr); }
+    QCIoBufferPool& GetBufferPool()
+        { return mBufferPool; }
+private:
+    QCIoBufferPool mBufferPool;
+
+private:
+    BufferAllocator(
+        const BufferAllocator& inAllocator);
+    BufferAllocator& operator=(
+        const BufferAllocator& inAllocator);
+};
+
+static const BufferAllocator* sAllocatorForGdbToFind = 0;
+
+static BufferAllocator& GetIoBufAllocator()
+{
+    static BufferAllocator sAllocator;
+    if (! sAllocatorForGdbToFind) {
+        sAllocatorForGdbToFind = &sAllocator;
+    }
+    return sAllocator;
 }
 
 ///
@@ -117,22 +158,32 @@ int
 ReadMetaServerProperties(char *fileName)
 {
 	int16_t maxReplicasPerFile;
-	string logLevel;
-#ifdef NDEBUG
-	const char *defLogLevel = "INFO";
-#else
-	const char *defLogLevel = "DEBUG";
-#endif
 
-        if (gProp.loadProperties(fileName, '=', true) != 0)
+        if (gProp.loadProperties(fileName, '=', true) != 0) {
                 return -1;
-
-	logLevel = gProp.getValue("metaServer.loglevel", defLogLevel);
-        if (logLevel == "INFO")
-	        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
-	else
-		KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
-
+        }
+        MsgLogger::Init(0);
+	MsgLogger::GetLogger()->SetLogLevel(
+		gProp.getValue("metaServer.loglevel",
+		MsgLogger::GetLogLevelNamePtr(
+			MsgLogger::GetLogger()->GetLogLevel())));
+	MsgLogger::GetLogger()->SetMaxLogWaitTime(0);
+	MsgLogger::GetLogger()->SetParameters(gProp, "metaServer.msgLogWriter.");
+        const int err = GetIoBufAllocator().GetBufferPool().Create(
+		gProp.getValue("metaServer.bufferPool.partitions", 1),
+		gProp.getValue("metaServer.bufferPool.partionBuffers",
+			(sizeof(long) < 8 ? 32 : 64) << 10),
+		gProp.getValue("metaServer.bufferPool.bufferSize", 4 << 10),
+		gProp.getValue("metaServer.bufferPool.lockMemory",0) != 0
+        );
+	if (err != 0) {
+		cout << QCUtils::SysError(err, "io buffer pool create: ") << endl;
+		return -1;
+	}
+	if (! libkfsio::SetIOBufferAllocator(&GetIoBufAllocator())) {
+		cout << "failed to set io buffer allocatior" << endl;
+		return -1;
+	}
         gClientPort = gProp.getValue("metaServer.clientPort", -1);
         if (gClientPort < 0) {
                 cout << "Aborting...bad client port: " << gClientPort << endl;
@@ -175,14 +226,17 @@ ReadMetaServerProperties(char *fileName)
 		setWORMMode(wormMode);
 	}
 
+	// By default, path->fid cache is disabled.
+	gIsPathToFidCacheEnabled = (gProp.getValue("metaServer.enablePathToFidCache", 0)) != 0;
+	if (gIsPathToFidCacheEnabled) {
+		cout << "Enabling path->fid cache" << endl;
+	}
+
 	string chunkmapDumpDir = gProp.getValue("metaServer.chunkmapDumpDir", ".");
 	setChunkmapDumpDir(chunkmapDumpDir);
 
-	gRecoveryIntervalSecs = gProp.getValue("metaServer.recoveryInterval", LEASE_INTERVAL_SECS);
-        SetRecoveryInterval(gRecoveryIntervalSecs);
-
-	double percent = gProp.getValue("metaServer.percentLoadedNodesToAvoidForWrites", (double) 0.3);
-	SetPercentLoadedNodesToAvoidForWrites(percent);
+	ChunkServer::SetParameters(gProp);
+        gLayoutManager.SetParameters(gProp);
 
         return 0;
 }

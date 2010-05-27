@@ -17,12 +17,13 @@ kfs_lib_dir = sys.argv[1]
 del sys.argv[1]
 
 kfsext = Extension('kfs',
-		include_dirs = ['/home/sriram/code/kosmosfs/src/cc/'],
+		include_dirs = ['/home/srao/p4trees/kfssort/kosmosfs/src/cc/', '/usr/local/include/boost-1_37/'],
 		libraries = ['kfsClient'],
 		library_dirs = [kfs_lib_dir],
+        runtime_library_dirs = ['/home/qmr_ksort/sortmaster/lib'],
 		sources = ['KfsModulePy.cc'])
 
-setup(name = "kfs", version = "0.1",
+setup(name = "kfs", version = "0.3",
 	description="KFS client module",
-	author="Blake Lewis",
+	author="Blake Lewis and Sriram Rao",
 	ext_modules = [kfsext])

@@ -3,7 +3,6 @@
 //
 // Created 2008/06/11
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -62,7 +61,7 @@ int main(int argc, char **argv)
     double randval;
 
     KFS::MsgLogger::Init(NULL);
-    KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    KFS::MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
 
     while ((optchar = getopt(argc, argv, "hvsd:")) != -1) {
         switch (optchar) {
@@ -179,7 +178,7 @@ static void scrubFile(string &fn, bool verbose)
 
         if (cksum != chunkInfo.chunkBlockChecksum[blkno]) {
             cout << "fn = " << fn << " : Checksum mismatch for block (" << blkno << "):"
-                 << " Computed: " << cksum << " from chunk: " << chunkInfo.chunkBlockChecksum[blkno] 
+                 << ", offset = " << i << " Computed: " << cksum << " from chunk: " << chunkInfo.chunkBlockChecksum[blkno] 
                  << endl;
         }
     }

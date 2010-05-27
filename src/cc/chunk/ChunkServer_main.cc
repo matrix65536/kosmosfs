@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/03/22
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -24,7 +23,6 @@
 // 
 //----------------------------------------------------------------------------
 
-extern "C" {
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -33,7 +31,10 @@ extern "C" {
 #include <openssl/md5.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-}
+#include <unistd.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <limits.h>
 
 #include <string>
 #include <vector>
@@ -41,15 +42,17 @@ extern "C" {
 #include "common/properties.h"
 #include "libkfsIO/NetManager.h"
 #include "libkfsIO/Globals.h"
+#include "libkfsIO/NetErrorSimulator.h"
+#include "qcdio/qcutils.h"
 
 #include "ChunkServer.h"
 #include "ClientManager.h"
 #include "ChunkManager.h"
 #include "Logger.h"
+#include "AtomicRecordAppender.h"
 #include "RemoteSyncSM.h"
 
 using namespace KFS;
-using namespace KFS::libkfsio;
 using std::string;
 using std::vector;
 using std::cout;
@@ -75,22 +78,219 @@ static void computeMD5(const char *pathname);
 static void SigQuitHandler(int /* sig */)
 {
     write(1, "SIGQUIT\n", 8);
-    globals().netManager.Shutdown();
+    libkfsio::globalNetManager().Shutdown();
 }
+
+// Fork is more reliable, but might confuse existing scripts. Using debugger
+// with fork is a little bit more involved.
+// The intention here is to do graceful restart, this is not intended as an
+// external "nanny" / monitoring / watchdog.
+extern char **environ;
+
+class Restarter
+{
+public:
+    Restarter()
+        : mCwd(0),
+          mArgs(0),
+          mEnv(0),
+          mMaxGracefulRestartSeconds(60 * 6),
+          mExitOnRestartFlag(false)
+        {}
+    ~Restarter()
+        { Cleanup(); }
+    bool Init(int argc, char **argv)
+    {
+        ::alarm(0);
+        if (::signal(SIGALRM, &Restarter::SigAlrmHandler) == SIG_ERR) {
+            QCUtils::FatalError("signal(SIGALRM)", errno);
+        }
+        Cleanup();
+        if (argc < 1 || ! argv) {
+            return false;
+        }
+        for (int len = PATH_MAX; len < PATH_MAX * 1000; len += PATH_MAX) {
+            mCwd = (char*)::malloc(len);
+            if (! mCwd || ::getcwd(mCwd, len)) {
+                break;
+            }
+            const int err = errno;
+            ::free(mCwd);
+            mCwd = 0;
+            if (err != ERANGE) {
+                break;
+            }
+        }
+        if (! mCwd) {
+            return false;
+        }
+        mArgs = new char*[argc + 1];
+        int i;
+        for (i = 0; i < argc; i++) {
+            if (! (mArgs[i] = ::strdup(argv[i]))) {
+                Cleanup();
+                return false;
+            }
+        }
+        mArgs[i] = 0;
+        char** ptr = environ;
+        for (i = 0; *ptr; i++, ptr++)
+            {}
+        mEnv = new char*[i + 1];
+        for (i = 0, ptr = environ; *ptr; ) {
+            if (! (mEnv[i++] = ::strdup(*ptr++))) {
+                Cleanup();
+                return false;
+            }
+        }
+        mEnv[i] = 0;
+        return true;
+    }
+    void SetParameters(const Properties& props, string prefix)
+    {
+        mMaxGracefulRestartSeconds = props.getValue(
+            prefix + "maxGracefulRestartSeconds",
+            mMaxGracefulRestartSeconds
+        );
+        mExitOnRestartFlag = props.getValue(
+            prefix + "exitOnRestartFlag",
+            mExitOnRestartFlag
+        );
+    }
+    string Restart()
+    {
+        if (! mCwd || ! mArgs || ! mEnv || ! mArgs[0] || ! mArgs[0][0]) {
+            return string("not initialized");
+        }
+        if (! mExitOnRestartFlag) {
+            struct stat res = {0};
+            if (::stat(mCwd, &res) != 0) {
+                return QCUtils::SysError(errno, mCwd);
+            }
+            if (! S_ISDIR(res.st_mode)) {
+                return (mCwd + string(": not a directory"));
+            }
+            string execpath(mArgs[0][0] == '/' ? mArgs[0] : mCwd);
+            if (mArgs[0][0] != '/') {
+                if (! execpath.empty() &&
+                        execpath.at(execpath.length() - 1) != '/') {
+                    execpath += "/";
+                }
+                execpath += mArgs[0];
+            } 
+            if (::stat(execpath.c_str(), &res) != 0) {
+                return QCUtils::SysError(errno, execpath.c_str());
+            }
+            if (! S_ISREG(res.st_mode)) {
+                return (execpath + string(": not a file"));
+            }
+        }
+        if (::signal(SIGALRM, &Restarter::SigAlrmHandler) == SIG_ERR) {
+            QCUtils::FatalError("signal(SIGALRM)", errno);
+        }
+        if (mMaxGracefulRestartSeconds > 0) {
+            if (sInstance) {
+                return string("restart in progress");
+            }
+            sInstance = this;
+            if (::atexit(&Restarter::RestartSelf)) {
+                sInstance = 0;
+                return QCUtils::SysError(errno, "atexit");
+            }
+            ::alarm((unsigned int)mMaxGracefulRestartSeconds);
+            libkfsio::globalNetManager().Shutdown();
+        } else {
+            ::alarm((unsigned int)-mMaxGracefulRestartSeconds);
+            Exec();
+        }
+        return string();
+    }
+private:
+    char*  mCwd;
+    char** mArgs;
+    char** mEnv;
+    int    mMaxGracefulRestartSeconds;
+    bool   mExitOnRestartFlag;
+
+    static Restarter* sInstance;
+
+    static void FreeArgs(char** args)
+    {
+        if (! args) {
+            return;
+        }
+        char** ptr = args;
+        while (*ptr) {
+            ::free(*ptr++);
+        }
+        delete [] args;
+    }
+    void Cleanup()
+    {
+        free(mCwd);
+        mCwd = 0;
+        FreeArgs(mArgs);
+        mArgs = 0;
+        FreeArgs(mEnv);
+        mEnv = 0;
+    }
+    void Exec()
+    {
+        if (mExitOnRestartFlag) {
+            _exit(0);
+        }
+#ifdef QC_OS_NAME_LINUX
+        ::clearenv();
+#else
+        environ = 0;
+#endif
+        if (mEnv) {
+            for (char** ptr = mEnv; *ptr; ptr++) {
+                if (::putenv(*ptr)) {
+                    QCUtils::FatalError("putenv", errno);
+                }
+            }
+        }
+        if (::chdir(mCwd) != 0) {
+            QCUtils::FatalError(mCwd, errno);
+        }
+        execvp(mArgs[0], mArgs);
+        QCUtils::FatalError(mArgs[0], errno);
+    }
+    static void RestartSelf()
+    {
+        if (! sInstance) {
+            ::abort();
+        }
+        sInstance->Exec();
+    }
+    static void SigAlrmHandler(int /* sig */)
+    {
+        write(2, "SIGALRM\n", 8);
+        ::abort();
+    }
+};
+Restarter* Restarter::sInstance = 0;
+static Restarter sRestarter;
+
+string RestartChunkServer()
+{
+    return sRestarter.Restart();
+} 
 
 int
 main(int argc, char **argv)
 {
     if (argc < 2) {
-        cout << "Usage: " << argv[0] << " <properties file> {<msg log file>}" << endl;
+        cout << "Usage: " << argv[0] <<
+            " <properties file> {<msg log file>}"
+            " {max log files} {max log file size}" <<
+        endl;
         exit(0);
     }
 
-    if (argc > 2) {
-        KFS::MsgLogger::Init(argv[2]);
-    } else {
-        KFS::MsgLogger::Init(NULL);
-    }
+    sRestarter.Init(argc, argv);
+    MsgLogger::Init(argc > 2 ? argv[2] : 0);
 
     // set the coredump size to unlimited
     struct rlimit rlim;
@@ -113,7 +313,7 @@ main(int argc, char **argv)
     KFS_LOG_INFO("Starting chunkserver...");
     
     // would like to limit to 200MB outstanding
-    // globals().netManager.SetBacklogLimit(200 * 1024 * 1024);
+    // globalNetManager().SetBacklogLimit(200 * 1024 * 1024);
 
     // compute the MD5 of the binary
     computeMD5(argv[0]);
@@ -123,7 +323,7 @@ main(int argc, char **argv)
     gChunkServer.Init();
     gChunkManager.Init(gChunkDirs, gTotalSpace, gProp);
     gLogger.Init(gLogDir);
-    gMetaServerSM.SetMetaInfo(gMetaServerLoc, gClusterKey, gChunkServerRackId, gMD5Sum);
+    gMetaServerSM.SetMetaInfo(gMetaServerLoc, gClusterKey, gChunkServerRackId, gMD5Sum, gProp);
 
     signal(SIGPIPE, SIG_IGN);
     signal(SIGQUIT, SigQuitHandler);
@@ -135,6 +335,7 @@ main(int argc, char **argv)
     }
 
     gChunkServer.MainLoop(gChunkServerClientPort, gChunkServerHostname);
+    NetErrorSimulatorConfigure(libkfsio::globalNetManager());
 
     return 0;
 }
@@ -208,12 +409,6 @@ ReadChunkServerProperties(char *fileName)
 {
     string::size_type curr = 0, next;
     string chunkDirPaths;
-    string logLevel;
-#ifdef NDEBUG
-    const char *defLogLevel = "INFO";
-#else
-    const char *defLogLevel = "DEBUG";
-#endif
 
     if (gProp.loadProperties(fileName, '=', true) != 0)
         return -1;
@@ -262,10 +457,14 @@ ReadChunkServerProperties(char *fileName)
             return -1;
         }
 
-        // also, make the directory for holding stale chunks in each "partition"
+        // also, make the directory for holding stale and dirty chunks in each "partition"
         string staleChunkDir = GetStaleChunkPath(component);
         // if the parent dir exists, make the stale chunks directory
         make_if_needed(staleChunkDir.c_str(), false);
+
+        string dirtyChunkDir = GetDirtyChunkPath(component);
+        // if the parent dir exists, make the dirty chunks directory
+        make_if_needed(dirtyChunkDir.c_str(), false);
 
         cout << "Using chunk dir = " << component << '\n';
 
@@ -296,23 +495,28 @@ ReadChunkServerProperties(char *fileName)
     }
     gClientManager.SetTimeouts(
         gProp.getValue("chunkServer.client.ioTimeoutSec",    5 * 60),
-        gProp.getValue("chunkServer.client.idleTimeoutSec", 30 * 60)
+        gProp.getValue("chunkServer.client.idleTimeoutSec", 10 * 60)
     );
+    gAtomicRecordAppendManager.SetParameters(gProp);
     RemoteSyncSM::SetResponseTimeoutSec(
         gProp.getValue("chunkServer.remoteSync.responseTimeoutSec",
             RemoteSyncSM::GetResponseTimeoutSec())
     );
+    RemoteSyncSM::SetTraceRequestResponse(
+        gProp.getValue("chunkServer.remoteSync.traceRequestResponse", false)
+    );
+    NetErrorSimulatorConfigure(
+        libkfsio::globalNetManager(),
+        gProp.getValue("chunkServer.netErrorSimulator", "")
+    );
 
-    logLevel = gProp.getValue("chunkServer.loglevel", defLogLevel);
-    if (logLevel == "INFO") {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
-    } else if (logLevel == "ERROR") {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::ERROR);
-    } else if (logLevel == "FATAL") {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::FATAL);
-    } else {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
-    }
+    MsgLogger::GetLogger()->SetLogLevel(
+        gProp.getValue("chunkServer.loglevel",
+        MsgLogger::GetLogLevelNamePtr(MsgLogger::GetLogger()->GetLogLevel())));
+    MsgLogger::GetLogger()->SetMaxLogWaitTime(0);
+    MsgLogger::GetLogger()->SetParameters(gProp, "chunkServer.msgLogWriter.");
+    sRestarter.SetParameters(gProp, "chunkServer.");
+    
 
     return 0;
 }

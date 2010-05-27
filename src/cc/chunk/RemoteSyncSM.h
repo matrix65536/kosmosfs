@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/09/27
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -53,19 +52,14 @@ class RemoteSyncSM : public KfsCallbackObj,
 {
 public:
 
-    RemoteSyncSM(const ServerLocation &location) :
-        mLocation(location), mSeqnum(1),
-        mReplyNumBytes(0)
-    { 
-    }
+    RemoteSyncSM(const ServerLocation &location);
 
     ~RemoteSyncSM();
 
     bool Connect();
 
-    kfsSeq_t NextSeqnum() {
-        return mSeqnum++;
-    }
+    kfsSeq_t NextSeqnum();
+
     void Enqueue(KfsOp *op);
 
     void Finish();
@@ -76,6 +70,9 @@ public:
 
     ServerLocation GetLocation() const {
         return mLocation;
+    }
+    static void SetTraceRequestResponse(bool flag) {
+        sTraceRequestResponse = flag;
     }
     static void SetResponseTimeoutSec(int timeoutSec) {
         sOpResponseTimeoutSec = timeoutSec;
@@ -97,6 +94,7 @@ private:
 
     kfsSeq_t mReplySeqNum;
     int      mReplyNumBytes;
+    time_t   mLastRecvTime;
 
     /// We (may) have got a response from the peer.  If we are doing
     /// re-replication, then we need to wait until we got all the data
@@ -105,6 +103,8 @@ private:
     /// @retval 0 if we got the response; -1 if we need to wait
     int HandleResponse(IOBuffer *iobuf, int cmdLen);
     void FailAllOps();
+    inline void UpdateRecvTimeout();
+    static bool sTraceRequestResponse;
     static int  sOpResponseTimeoutSec;
 };
 
@@ -116,7 +116,6 @@ typedef boost::shared_ptr<RemoteSyncSM> RemoteSyncSMPtr;
     void RemoveServer(std::list<RemoteSyncSMPtr> &remoteSyncers, RemoteSyncSM *target);
 
     void ReleaseAllServers(std::list<RemoteSyncSMPtr> &remoteSyncers);
-
 }
 
 #endif // CHUNKSERVER_REMOTESYNCSM_H

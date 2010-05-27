@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/07/18
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -60,6 +59,7 @@ MetaPingOp::Request(ostringstream &os)
 {
     os << "PING\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Cseq: " << seq << "\r\n\r\n";
 }
 
@@ -69,6 +69,7 @@ MetaToggleWORMOp::Request(ostringstream &os)
     os << "TOGGLE_WORM\r\n";
     os << "Toggle-WORM: " << value << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Cseq: " << seq << "\r\n\r\n";
 }
 
@@ -132,6 +133,7 @@ ChunkPingOp::Request(ostringstream &os)
 {
     os << "PING\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Cseq: " << seq << "\r\n\r\n";
 }
 
@@ -153,6 +155,7 @@ MetaStatsOp::Request(ostringstream &os)
 {
     os << "STATS\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Cseq: " << seq << "\r\n\r\n";
 }
 
@@ -161,6 +164,7 @@ ChunkStatsOp::Request(ostringstream &os)
 {
     os << "STATS\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Cseq: " << seq << "\r\n\r\n";
 }
 
@@ -186,6 +190,7 @@ RetireChunkserverOp::Request(ostringstream &os)
     os << "RETIRE_CHUNKSERVER\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Cseq: " << seq << "\r\n";
+    os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
     os << "Downtime: " << downtime << "\r\n";
     os << "Chunk-server-name: " << chunkLoc.hostname << "\r\n";
     os << "Chunk-server-port: " << chunkLoc.port << "\r\n\r\n";

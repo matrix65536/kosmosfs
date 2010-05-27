@@ -30,6 +30,7 @@
 #include <istream>
 #include <string>
 #include <map>
+#include <boost/pool/pool_alloc.hpp> 
 
 namespace KFS
 {
@@ -38,10 +39,16 @@ class Properties {
 
   private :
     //Map that holds the (key,value) pairs
-    std::map<std::string, std::string> * propmap; 
-    std::string removeLTSpaces(std::string);
+    typedef std::map<std::string, std::string,
+        std::less<std::string>,
+        boost::fast_pool_allocator<std::pair<const std::string, std::string> >
+    > PropMap;
+    PropMap propmap; 
 
-  public  :
+  public:
+    typedef PropMap::const_iterator iterator;
+    iterator begin() const { return propmap.begin(); }
+    iterator end() const { return propmap.end(); }
     // load the properties from a file
     int loadProperties(const char* fileName, char delimiter, bool verbose, bool multiline = false);
     // load the properties from an in-core buffer
@@ -49,12 +56,20 @@ class Properties {
     std::string getValue(std::string key, std::string def) const;
     const char* getValue(std::string key, const char* def) const;
     int getValue(std::string key, int def) const;
+    unsigned int getValue(std::string key, unsigned int def) const;
     long getValue(std::string key, long def) const;
+    unsigned long getValue(std::string key, unsigned long def) const;
     long long getValue(std::string key, long long def) const;
-    uint64_t getValue(std::string key, uint64_t def) const;
-    double getValue(std::string key, double def) const;   
+    unsigned long long getValue(std::string key, unsigned long long def) const;
+    double getValue(std::string key, double def) const;
     void setValue(const std::string key, const std::string value);
-    void getList(std::string &outBuf, std::string linePrefix) const;
+    void getList(std::string &outBuf, std::string linePrefix, std::string lineSuffix = std::string("\n")) const;
+    void clear() { propmap.clear(); }
+    bool empty() const { return propmap.empty(); }
+    size_t size() const { return propmap.size(); }
+    void copyWithPrefix(std::string prefix, Properties& props) const;
+    void swap(Properties& props)
+        { propmap.swap(props.propmap); }
     Properties();
     Properties(const Properties &p);
     ~Properties();

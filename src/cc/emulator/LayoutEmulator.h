@@ -3,7 +3,6 @@
 //
 // Created 2008/08/08
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -30,7 +29,6 @@
 #define EMULATOR_LAYOUTEMULATOR_H
 
 #include <string>
-#include "common/cxxutil.h"
 #include <map>
 #include <tr1/unordered_map>
 #include "meta/LayoutManager.h"

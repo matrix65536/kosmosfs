@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/06/07
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -26,65 +25,90 @@
 //
 //----------------------------------------------------------------------------
 
-#include <unistd.h>
 #include "common/log.h"
 #include "MetaServerSM.h"
 #include "ChunkManager.h"
 #include "ChunkServer.h"
 #include "Utils.h"
+#include "LeaseClerk.h"
+#include "Replicator.h"
 
 #include "libkfsIO/NetManager.h"
 #include "libkfsIO/Globals.h"
+#include "qcdio/qcutils.h"
 
+#include <unistd.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <openssl/rand.h>
 
 #include <algorithm>
 #include <sstream>
+
 using std::ostringstream;
 using std::istringstream;
 using std::find_if;
 using std::list;
+using std::string;
 
 using namespace KFS;
 using namespace KFS::libkfsio;
 
-#include <boost/scoped_array.hpp>
-using boost::scoped_array;
-
 MetaServerSM KFS::gMetaServerSM;
 
-MetaServerSM::MetaServerSM() :
-    mCmdSeq(1), mRackId(-1), mSentHello(false), mHelloOp(NULL), mTimer(NULL)
+inline static kfsSeq_t
+InitialSeqNo()
 {
+    kfsSeq_t ret = 1;
+    RAND_pseudo_bytes(reinterpret_cast<unsigned char*>(&ret), int(sizeof(ret)));
+    return ((ret < 0 ? -ret : ret) >> 1);
+}
+
+MetaServerSM::MetaServerSM()
+    : KfsCallbackObj(),
+      ITimeout(),
+      mCmdSeq(InitialSeqNo()),
+      mRackId(-1),
+      mSentHello(false),
+      mHelloOp(NULL),
+      mInactivityTimeout(3 * 60),
+      mMaxReadAhead(4 << 10),
+      mLastRecvCmdTime(0),
+      mLastConnectTime(0),
+      mConnectedTime(0),
+      mCounters()
+{
+    // Force net manager construction here, to insure that net manager
+    // destructor is called after gMetaServerSM destructor.
+    globalNetManager();
     SET_HANDLER(this, &MetaServerSM::HandleRequest);
+    mCounters.Clear();
 }
 
 MetaServerSM::~MetaServerSM()
 {
-    if (mTimer)
-        globals().netManager.UnRegisterTimeoutHandler(mTimer);
-    delete mTimer;
+    globalNetManager().UnRegisterTimeoutHandler(this);
     delete mHelloOp;
 }
 
 void 
 MetaServerSM::SetMetaInfo(const ServerLocation &metaLoc, const char *clusterKey, 
-                          int rackId, const std::string &md5sum)
+                          int rackId, const string &md5sum, const Properties& prop)
 {
     mLocation = metaLoc;
     mClusterKey = clusterKey;
     mRackId = rackId;
     mMD5Sum = md5sum;
+    mInactivityTimeout = prop.getValue(
+        "chunkServer.meta.inactivityTimeout", mInactivityTimeout);
+    mMaxReadAhead      = prop.getValue(
+        "chunkServer.meta.maxReadAhead",      mMaxReadAhead);
 }
 
 void
-MetaServerSM::Init(int chunkServerPort, const std::string & chunkServerHostname)
+MetaServerSM::Init(int chunkServerPort, string chunkServerHostname)
 {
-    if (mTimer == NULL) {
-        mTimer = new MetaServerSMTimeoutImpl(this);
-        globals().netManager.RegisterTimeoutHandler(mTimer);
-    }
+    globalNetManager().RegisterTimeoutHandler(this);
     mChunkServerPort = chunkServerPort;
     mChunkServerHostname = chunkServerHostname;
 }
@@ -92,90 +116,108 @@ MetaServerSM::Init(int chunkServerPort, const std::string & chunkServerHostname)
 void
 MetaServerSM::Timeout()
 {
-    if (!mNetConnection) {
-        KFS_LOG_WARN("Connection to meta broke. Reconnecting...");
-        if (Connect() < 0) {
-            return;
+    if (! IsConnected()) {
+        if (mHelloOp) {
+            if (! mSentHello) {
+                return; // Wait for hello to come back.
+            }
+            delete mHelloOp;
+            mHelloOp   = 0;
+            mSentHello = false;
         }
-        SendHello();
-        ResubmitOps();
+        const time_t now = libkfsio::globalNetManager().Now();
+        if (mLastConnectTime + 1 < now) {
+            mLastConnectTime = now;
+            Connect();
+        }
+        return;
+    }
+    if (! IsHandshakeDone()) {
+        return;
     }
     DispatchOps();
     DispatchResponse();
+    mNetConnection->StartFlush();
+}
+
+time_t
+MetaServerSM::ConnectionUptime() const
+{
+    return (IsUp() ?
+        (libkfsio::globalNetManager().Now() - mLastConnectTime) : 0);
 }
 
 int
 MetaServerSM::Connect()
 {
-    TcpSocket *sock;
-
-    if (mTimer == NULL) {
-        mTimer = new MetaServerSMTimeoutImpl(this);
-        globals().netManager.RegisterTimeoutHandler(mTimer);
+    if (mHelloOp) {
+        return 0;
     }
-
-    KFS_LOG_VA_DEBUG("Trying to connect to: %s:%d",
-                     mLocation.hostname.c_str(), mLocation.port);
-
-    sock = new TcpSocket();
-    if (sock->Connect(mLocation) < 0) {
-        // KFS_LOG_DEBUG("Reconnect failed...");
+    mCounters.mConnectCount++;
+    mSentHello = false;
+    TcpSocket * const sock = new TcpSocket();
+    const bool nonBlocking = true;
+    const int  ret         = sock->Connect(mLocation, nonBlocking);
+    if (ret < 0 && ret != -EINPROGRESS) {
+        KFS_LOG_STREAM_ERROR <<
+            "connection to meter server failed:"
+            " error: " << QCUtils::SysError(-ret) <<
+        KFS_LOG_EOM;
         delete sock;
         return -1;
     }
-    KFS_LOG_VA_INFO("Connect to metaserver (%s) succeeded...",
-                    mLocation.ToString().c_str());
-
+    KFS_LOG_STREAM_INFO <<
+        (ret < 0 ? "connecting" : "connected") <<
+            " to metaserver " << mLocation.ToString() <<
+    KFS_LOG_EOM;
     mNetConnection.reset(new NetConnection(sock, this));
+    if (ret != 0) {
+        mNetConnection->SetDoingNonblockingConnect();
+    }
     // when the system is overloaded, we still want to add this
     // connection to the poll vector for reads; this ensures that we
     // get the heartbeats and other RPCs from the metaserver
     mNetConnection->EnableReadIfOverloaded();
-
+    mNetConnection->SetInactivityTimeout(mInactivityTimeout);
+    mNetConnection->SetMaxReadAhead(mMaxReadAhead);
     // Add this to the poll vector
-    globals().netManager.AddConnection(mNetConnection);
-
-    // time to resend all the ops queued?
-
+    globalNetManager().AddConnection(mNetConnection);
+    if (ret == 0) {
+        SendHello();
+    }
     return 0;
 }
 
 int
 MetaServerSM::SendHello()
 {
-    if (mHelloOp != NULL)
+    if (mHelloOp) {
         return 0;
-
+    }
 #ifdef DEBUG
     verifyExecutingOnNetProcessor();
 #endif
 
-    if (!mNetConnection) {
-        if (Connect() < 0) {
-            KFS_LOG_DEBUG("Unable to connect to meta server");
-            return -1;
-        }
+    if (! IsConnected()) {
+        KFS_LOG_STREAM_DEBUG <<
+            "unable to connect to meta server" <<
+        KFS_LOG_EOM;
+        return -1;
     }
-    
     struct hostent *hent = 0;
-    
-    if (mChunkServerHostname.size() < 1) {
+    if (mChunkServerHostname.empty()) {
         char hostname[256];
-        gethostname(hostname, 256);
-
+        gethostname(hostname, sizeof(hostname));
         // switch to IP address so we can avoid repeated DNS lookups
         hent = gethostbyname(hostname);
-    }
-    else {
+    } else {
         // switch to IP address so we can avoid repeated DNS lookups
         hent = gethostbyname(mChunkServerHostname.c_str());
     }
-    
-    in_addr ipaddr;
-
-    if (hent == NULL) {
+    if (! hent) {
         die("Unable to resolve hostname");
     }
+    in_addr ipaddr;
     memcpy(&ipaddr, hent->h_addr, hent->h_length);
 
     ServerLocation loc(inet_ntoa(ipaddr), mChunkServerPort);
@@ -193,66 +235,22 @@ MetaServerSM::DispatchHello()
     verifyExecutingOnNetProcessor();
 #endif
 
-    if (!mNetConnection) {
-        if (Connect() < 0) {
-            // don't have a connection...so, need to start the process again...
-            delete mHelloOp;
-            mHelloOp = NULL;
-            return;
-        }
+    if (! IsConnected()) {
+        // don't have a connection...so, need to start the process again...
+        delete mHelloOp;
+        mHelloOp = 0;
+        mSentHello = false;
+        return;
     }
+    mSentHello = true;
     IOBuffer::OStream os;
     mHelloOp->Request(os);
     mNetConnection->Write(&os);
-
-    mSentHello = true;
-
-    KFS_LOG_VA_INFO("Sent hello to meta server: %s", mHelloOp->Show().c_str());
-
-    delete mHelloOp;
-    mHelloOp = NULL;
+    mNetConnection->StartFlush();
+    KFS_LOG_STREAM_INFO <<
+        "Sent hello to meta server: " << mHelloOp->Show() <<
+    KFS_LOG_EOM;
 }
-
-#if 0
-int
-MetaServerSM::SendHello()
-{
-    char hostname[256];
-
-#ifdef DEBUG
-    verifyExecutingOnNetProcessor();
-#endif
-
-    mChunkServerPort = chunkServerPort;
-
-    if (!mNetConnection) {
-        if (Connect() < 0) {
-            KFS_LOG_DEBUG("Unable to connect to meta server");
-            return -1;
-        }
-    }
-    gethostname(hostname, 256);
-
-    ServerLocation loc(hostname, chunkServerPort);
-    HelloMetaOp op(nextSeq(), loc, mClusterKey);
-
-    op.totalSpace = gChunkManager.GetTotalSpace();
-    op.usedSpace = gChunkManager.GetUsedSpace();
-    // XXX: For thread safety, force the request thru the event
-    // processor to get this info.
-    gChunkManager.GetHostedChunks(op.chunks);    
-
-    IOBuffer::OStream os;
-    op.Request(os);
-    mNetConnection->Write(&os);
-
-    mSentHello = true;
-
-    KFS_LOG_VA_INFO("Sent hello to meta server: %s", op.Show().c_str());
-
-    return 0;
-}
-#endif
 
 ///
 /// Generic event handler.  Decode the event that occurred and
@@ -265,64 +263,75 @@ MetaServerSM::SendHello()
 int
 MetaServerSM::HandleRequest(int code, void *data)
 {
-    IOBuffer *iobuf;
-    KfsOp *op;
-    int cmdLen;
 
 #ifdef DEBUG
     verifyExecutingOnNetProcessor();
 #endif
 
     switch (code) {
-    case EVENT_NET_READ:
-	// We read something from the network.  Run the RPC that
-	// came in.
-	iobuf = (IOBuffer *) data;
-        bool hasMsg;
-	while ((hasMsg = IsMsgAvail(iobuf, &cmdLen))) {
-            // if we don't have all the data for the command, bail
-	    if (!HandleMsg(iobuf, cmdLen))
-                break;
-	}
-        int hdrsz;
-        if (! hasMsg &&
-                (hdrsz = iobuf->BytesConsumable()) > MAX_RPC_HEADER_LEN) {
-            KFS_LOG_VA_ERROR("exceeded max request header size: %d > %d,"
-                " closing connection %s\n",
-                (int)hdrsz, (int)MAX_RPC_HEADER_LEN,
-                mNetConnection ? mNetConnection->GetPeerName().c_str() : "unknown");
-            iobuf->Clear();
-            HandleRequest(EVENT_NET_ERROR, NULL);
+    case EVENT_NET_READ: {
+	    // We read something from the network.  Run the RPC that
+	    // came in.
+	    IOBuffer * const iobuf = (IOBuffer *) data;
+            bool hasMsg;
+            int  cmdLen = 0;
+	    while ((hasMsg = IsMsgAvail(iobuf, &cmdLen))) {
+                // if we don't have all the data for the command, bail
+	        if (! HandleMsg(iobuf, cmdLen)) {
+                    break;
+                }
+	    }
+            int hdrsz;
+            if (! hasMsg &&
+                    (hdrsz = iobuf->BytesConsumable()) > MAX_RPC_HEADER_LEN) {
+                KFS_LOG_STREAM_ERROR <<
+                    "exceeded max request header size: " << hdrsz <<
+                    ">" << MAX_RPC_HEADER_LEN <<
+                    " closing connection: " << (IsConnected() ?
+                        mNetConnection->GetPeerName() :
+                        string("not connected")) <<
+                KFS_LOG_EOM;
+                iobuf->Clear();
+                return HandleRequest(EVENT_NET_ERROR, 0);
+            }
         }
 	break;
 
     case EVENT_NET_WROTE:
+        if (! mSentHello && ! mHelloOp) {
+            SendHello();
+        }
 	// Something went out on the network.  For now, we don't
 	// track it. Later, we may use it for tracking throttling
 	// and such.
 	break;
 
-    case EVENT_CMD_DONE:
-	// An op finished execution.  Send a response back
-	op = (KfsOp *) data;
-        if (op->op == CMD_META_HELLO) {
-            DispatchHello();
-            break;
+    case EVENT_CMD_DONE: {
+	    // An op finished execution.  Send a response back
+	    KfsOp* const op = (KfsOp *) data;
+            if (op->op == CMD_META_HELLO) {
+                DispatchHello();
+                break;
+            }
+            // the op will be deleted after we send the response.
+	    EnqueueResponse(op);
         }
-            
-        // the op will be deleted after we send the response.
-	EnqueueResponse(op);
 	break;
 
+    case EVENT_INACTIVITY_TIMEOUT:
     case EVENT_NET_ERROR:
-	// KFS_LOG_VA_DEBUG("Closing connection");
-
-	if (mNetConnection)
-	    mNetConnection->Close();
-
-	mSentHello = false;
-	// Give up the underlying pointer
-	mNetConnection.reset();
+	if (mNetConnection) {
+            KFS_LOG_STREAM_DEBUG <<
+                mLocation.ToString() <<
+                " closing meta server connection " <<
+            KFS_LOG_EOM;
+            mNetConnection->Close();
+            // Drop all leases.
+            gLeaseClerk.UnregisterAllLeases();
+            // Meta server will fail all replication requests on
+            // disconnect anyway.
+            Replicator::CancelAll();
+        }
 	break;
 
     default:
@@ -335,54 +344,79 @@ MetaServerSM::HandleRequest(int code, void *data)
 bool
 MetaServerSM::HandleMsg(IOBuffer *iobuf, int msgLen)
 {
-    char buf[5];
-
-    iobuf->CopyOut(buf, 3);
-    buf[4] = '\0';
-    
-    if (strncmp(buf, "OK", 2) == 0) {
+    char buf[3];
+    if (iobuf->CopyOut(buf, 3) == 3 &&
+            buf[0] == 'O' && buf[1] == 'K' && (buf[2] & 0xFF) <= ' ') {
         // This is a response to some op we sent earlier
-        HandleReply(iobuf, msgLen);
-        return true;
+        return HandleReply(iobuf, msgLen);
     } else {
         // is an RPC from the server
         return HandleCmd(iobuf, msgLen);
     }
 }
 
-void
+bool
 MetaServerSM::HandleReply(IOBuffer *iobuf, int msgLen)
 {
-    const char separator = ':';
-    kfsSeq_t seq;
-    int status;
-    list<KfsOp *>::iterator iter;
     Properties prop;
     {
         IOBuffer::IStream is(*iobuf, msgLen);
+        const char separator = ':';
         prop.loadProperties(is, separator, false);
     }
     iobuf->Consume(msgLen);
 
-    seq = prop.getValue("Cseq", (kfsSeq_t) -1);
-    status = prop.getValue("Status", -1);
+    const kfsSeq_t seq    = prop.getValue("Cseq",  (kfsSeq_t)-1);
+    const int      status = prop.getValue("Status",          -1);
     if (status == -EBADCLUSTERKEY) {
-        KFS_LOG_VA_FATAL("Aborting...due to cluster key mismatch; our key: %s",
-                         mClusterKey.c_str());
-        die("bad cluster key");
+        KFS_LOG_STREAM_FATAL <<
+            "Aborting due to cluster key mismatch; our key: " << mClusterKey <<
+        KFS_LOG_EOM;
+	exit(-1);
     }
-    iter = find_if(mDispatchedOps.begin(), mDispatchedOps.end(), 
-                   OpMatcher(seq));
-    if (iter == mDispatchedOps.end()) 
-        return;
-
-    KfsOp *op = *iter;
-    op->status = status;
+    if (mHelloOp) {
+        mCounters.mHelloCount++;
+        const bool err = seq != mHelloOp->seq || status != 0;
+        if (err) {
+            KFS_LOG_STREAM_ERROR <<
+                " bad hello response:"
+                " seq: "    << seq << "/" << mHelloOp->seq <<
+                " status: " << status <<
+            KFS_LOG_EOM;
+            mCounters.mHelloErrorCount++;
+        }
+        delete mHelloOp;
+        mHelloOp = 0;
+        if (err) {
+            HandleRequest(EVENT_NET_ERROR, 0);
+            return false;
+        }
+        mConnectedTime = libkfsio::globalNetManager().Now();
+        ResubmitOps();
+        return true;
+    }
+    list<KfsOp *>::iterator const iter = find_if(
+        mDispatchedOps.begin(), mDispatchedOps.end(), OpMatcher(seq));
+    if (iter == mDispatchedOps.end()) {
+        string reply;
+        prop.getList(reply, string(), string(" "));
+        KFS_LOG_STREAM_DEBUG << "meta reply:"
+            " no op found for: " << reply <<
+        KFS_LOG_EOM;        
+        return true;
+    }
+    KfsOp * const op = *iter;
     mDispatchedOps.erase(iter);
-
+    op->status = status;
+    KFS_LOG_STREAM_DEBUG <<
+        "recv meta reply:"
+        " seq: "    << seq <<
+        " status: " << status <<
+        " "         << op->Show() <<
+    KFS_LOG_EOM;        
     // The op will be gotten rid of by this call.
-    // op->HandleEvent(EVENT_CMD_DONE, op);
     KFS::SubmitOpResponse(op);
+    return true;
 }
 
 ///
@@ -395,44 +429,58 @@ MetaServerSM::HandleReply(IOBuffer *iobuf, int msgLen)
 bool
 MetaServerSM::HandleCmd(IOBuffer *iobuf, int cmdLen)
 {
-    StaleChunksOp *sc;
-    kfsChunkId_t c;
-    int i, nAvail;
-    KfsOp *op;
-
     IOBuffer::IStream is(*iobuf, cmdLen);
+    KfsOp*            op = 0;
     if (ParseCommand(is, &op) != 0) {
         is.Rewind(cmdLen);
-        char buf[128];
-        while (is.getline(buf, sizeof(buf))) {
-            KFS_LOG_VA_DEBUG("Aye?: %s", buf);
+        const string peer = IsConnected() ?
+            mNetConnection->GetPeerName() : string("not connected");
+        string line;
+        int numLines = 32;
+        while (--numLines >= 0 && getline(is, line)) {
+            KFS_LOG_STREAM_ERROR << peer <<
+                " invalid meta request: " << line <<
+            KFS_LOG_EOM;
         }
-        iobuf->Consume(cmdLen);
+        iobuf->Clear();
+        HandleRequest(EVENT_NET_ERROR, 0);
         // got a bogus command
         return false;
     }
 
-    if (op->op == CMD_STALE_CHUNKS) {
-        sc = static_cast<StaleChunksOp *> (op);
+    const int contentLength = op->GetContentLength();
+    const int remLen = cmdLen + contentLength - iobuf->BytesConsumable();
+    if (remLen > 0) {
         // if we don't have all the data wait...
-        nAvail = iobuf->BytesConsumable() - cmdLen;        
-        if (nAvail < sc->contentLength) {
-            delete op;
-            return false;
+        if (remLen > mMaxReadAhead && mNetConnection) {
+            mNetConnection->SetMaxReadAhead(remLen);
         }
-        iobuf->Consume(cmdLen);
-        is.Rewind(sc->contentLength);
-        for(i = 0; i < sc->numStaleChunks; ++i) {
-            is >> c;
-            sc->staleChunkIds.push_back(c);
-        }
-        iobuf->Consume(sc->contentLength);
-    } else {
-        iobuf->Consume(cmdLen);
+        delete op;
+        return false;
     }
-
+    if (mNetConnection) {
+        mNetConnection->SetMaxReadAhead(mMaxReadAhead);
+    }
+    iobuf->Consume(cmdLen);
+    is.Rewind(contentLength);
+    if (! op->ParseContent(is)) {
+        KFS_LOG_STREAM_ERROR <<
+            (IsConnected() ?  mNetConnection->GetPeerName() : "") <<
+            " invalid content: " << op->statusMsg <<
+            " cmd: " << op->Show() <<
+        KFS_LOG_EOM;
+        delete op;
+        HandleRequest(EVENT_NET_ERROR, 0);
+        return false;
+    }
+    iobuf->Consume(contentLength);
+    mLastRecvCmdTime = libkfsio::globalNetManager().Now();
     op->clnt = this;
-    // op->Execute();
+    KFS_LOG_STREAM_DEBUG <<
+        "recv meta cmd:"
+        " seq: " << op->seq <<
+        " "      << op->Show() <<
+    KFS_LOG_EOM;
     KFS::SubmitOp(op);
     return true;
 }
@@ -443,10 +491,8 @@ void
 MetaServerSM::EnqueueOp(KfsOp *op)
 {
     op->seq = nextSeq();
-
     mPendingOps.enqueue(op);
-
-    globals().netKicker.Kick();
+    globalNetManager().Wakeup();
 }
 
 ///
@@ -459,29 +505,34 @@ void
 MetaServerSM::EnqueueResponse(KfsOp *op)
 {
     mPendingResponses.enqueue(op);
-    globals().netKicker.Kick();
+    globalNetManager().Wakeup();
 }
 
 void
 MetaServerSM::DispatchOps()
 {
-    KfsOp *op;
-
 #ifdef DEBUG
     verifyExecutingOnNetProcessor();
 #endif
 
-    while ((op = mPendingOps.dequeue_nowait()) != NULL) {
-
-        assert(op->op != CMD_META_HELLO);
-
-        mDispatchedOps.push_back(op);
-
-        // XXX: If the server connection is dead, hold on
-        if ((!mNetConnection) || (!mSentHello)) {
-            KFS_LOG_INFO("Metaserver connection is down...will dispatch later");
+    while (IsHandshakeDone()) {
+        if (! IsConnected()) {
+            KFS_LOG_STREAM_INFO <<
+                "meta handshake is not done, will dispatch later" <<
+            KFS_LOG_EOM;
             return;
         }
+        KfsOp* const op = mPendingOps.dequeue_nowait();
+        if (! op) {
+            return;
+        }
+        assert(op->op != CMD_META_HELLO);
+        mDispatchedOps.push_back(op);
+        KFS_LOG_STREAM_DEBUG <<
+            "send meta cmd:"
+            " seq: " << op->seq <<
+            " "      << op->Show() <<
+        KFS_LOG_EOM;
         IOBuffer::OStream os;
         op->Request(os);
         mNetConnection->Write(&os);
@@ -497,8 +548,22 @@ MetaServerSM::DispatchResponse()
     verifyExecutingOnNetProcessor();
 #endif
 
-    while ((op = mPendingResponses.dequeue_nowait()) != NULL) {
-        // fire'n'forget..
+    while (IsHandshakeDone() &&
+            (op = mPendingResponses.dequeue_nowait())) {
+        // fire'n'forget.
+        KFS_LOG_STREAM_DEBUG <<
+            "send meta reply:"
+            " seq: "     << op->seq <<
+            (op->statusMsg.empty() ? "" : " msg: ") << op->statusMsg <<
+            " status: "  << op->status <<
+            " "          << op->Show() <<
+        KFS_LOG_EOM;
+        if (op->op == CMD_ALLOC_CHUNK) {
+            mCounters.mAllocCount++;
+            if (op->status < 0) {
+                mCounters.mAllocErrorCount++;
+            }
+        }
         IOBuffer::OStream os;
         op->Response(os);
         mNetConnection->Write(&os);

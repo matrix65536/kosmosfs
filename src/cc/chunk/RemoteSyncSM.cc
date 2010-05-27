@@ -2,7 +2,6 @@
 // $Id$
 //
 // Created 2006/09/27
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -33,6 +32,8 @@
 #include "common/log.h"
 #include "common/properties.h"
 
+#include <openssl/rand.h>
+
 #include <cerrno>
 #include <sstream>
 #include <string>
@@ -47,11 +48,51 @@ using std::string;
 using namespace KFS;
 using namespace KFS::libkfsio;
 
-#include <boost/scoped_array.hpp>
-using boost::scoped_array;
-
 const int kMaxCmdHeaderLength = 2 << 10;
+bool RemoteSyncSM::sTraceRequestResponse = false;
 int  RemoteSyncSM::sOpResponseTimeoutSec = 5 * 60; // 5 min op response timeout
+
+inline static kfsSeq_t
+InitialSeqNo()
+{
+    kfsSeq_t ret = 1;
+    RAND_pseudo_bytes(reinterpret_cast<unsigned char*>(&ret), int(sizeof(ret)));
+    return ((ret < 0 ? -ret : ret) >> 1);
+}
+
+static kfsSeq_t
+NextSeq()
+{
+    static kfsSeq_t sSeqno = InitialSeqNo();
+    return sSeqno++;
+}
+
+inline void
+RemoteSyncSM::UpdateRecvTimeout()
+{
+    if (sOpResponseTimeoutSec < 0 || ! mNetConnection) {
+        return;
+    }
+    const time_t now = globalNetManager().Now();
+    const time_t end = mLastRecvTime + sOpResponseTimeoutSec;
+    mNetConnection->SetInactivityTimeout(end > now ? end - now : 0);
+}
+
+RemoteSyncSM::RemoteSyncSM(const ServerLocation &location)         
+    : mLocation(location),
+      mReplySeqNum(-1),
+      mReplyNumBytes(0),
+      mLastRecvTime(0)
+{
+    mSeqnum = NextSeq();
+}
+
+kfsSeq_t
+RemoteSyncSM::NextSeqnum()
+{
+    mSeqnum = NextSeq();
+    return mSeqnum;
+}
 
 RemoteSyncSM::~RemoteSyncSM()
 {
@@ -88,12 +129,13 @@ RemoteSyncSM::Connect()
     mNetConnection.reset(new NetConnection(sock, this));
     mNetConnection->SetDoingNonblockingConnect();
     mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
+    mLastRecvTime = globalNetManager().Now();
     
     // If there is no activity on this socket, we want
     // to be notified, so that we can close connection.
     mNetConnection->SetInactivityTimeout(sOpResponseTimeoutSec);
     // Add this to the poll vector
-    globals().netManager.AddConnection(mNetConnection);
+    globalNetManager().AddConnection(mNetConnection);
 
     return true;
 }
@@ -109,7 +151,6 @@ RemoteSyncSM::Enqueue(KfsOp *op)
             return;
         }
     }
-
     if (!mNetConnection->IsGood()) {
         KFS_LOG_VA_INFO("Lost the connection to peer %s; failing ops", mLocation.ToString().c_str());
         mDispatchedOps.push_back(op);
@@ -118,11 +159,30 @@ RemoteSyncSM::Enqueue(KfsOp *op)
         mNetConnection.reset();
         return;
     }
-
+    if (mDispatchedOps.empty()) {
+        mLastRecvTime = globalNetManager().Now();
+    }
     IOBuffer::OStream os;
     op->Request(os);
+    if (sTraceRequestResponse) {
+        IOBuffer::IStream is(os, os.BytesConsumable());
+        char buf[128];
+        KFS_LOG_STREAM_DEBUG << reinterpret_cast<void*>(this) <<
+            " send to: " << mLocation.ToString() <<
+        KFS_LOG_EOM;
+        while (is.getline(buf, sizeof(buf))) {
+            KFS_LOG_STREAM_DEBUG << reinterpret_cast<void*>(this) <<
+                " request: " << buf <<
+            KFS_LOG_EOM;
+        }
+    }
     mNetConnection->Write(&os);
-    if (op->op == CMD_WRITE_PREPARE_FWD) {
+    if (op->op == CMD_CLOSE) {
+        // fire'n'forget
+        op->status = 0;
+        KFS::SubmitOpResponse(op); 
+    }
+    else if (op->op == CMD_WRITE_PREPARE_FWD) {
         // send the data as well
         WritePrepareFwdOp *wpfo = static_cast<WritePrepareFwdOp *>(op);        
         mNetConnection->Write(wpfo->dataBuf, wpfo->dataBuf->BytesConsumable());
@@ -131,16 +191,26 @@ RemoteSyncSM::Enqueue(KfsOp *op)
         KFS::SubmitOpResponse(op);            
     }
     else {
+        if (op->op == CMD_RECORD_APPEND) {
+            KFS_LOG_STREAM_DEBUG << "Fwd'ing record append: " << op->Show() << KFS_LOG_EOM;
+            // send the append over; we'll get an ack back
+            RecordAppendOp *ra = static_cast<RecordAppendOp *>(op);
+            mNetConnection->Write(&ra->dataBuf, ra->numBytes);
+        }
         mDispatchedOps.push_back(op);
     }
-    mNetConnection->StartFlush();
+    UpdateRecvTimeout();
+    if (mNetConnection) {
+        mNetConnection->StartFlush();
+    }
 }
+
 
 int
 RemoteSyncSM::HandleEvent(int code, void *data)
 {
     IOBuffer *iobuf;
-    int msgLen = 0, res;
+    int msgLen = 0;
     // take a ref to prevent the object from being deleted
     // while we are still in this function.
     RemoteSyncSMPtr self = shared_from_this();
@@ -152,21 +222,21 @@ RemoteSyncSM::HandleEvent(int code, void *data)
 
     switch (code) {
     case EVENT_NET_READ:
+        mLastRecvTime = globalNetManager().Now();
 	// We read something from the network.  Run the RPC that
 	// came in if we got all the data for the RPC
 	iobuf = (IOBuffer *) data;
-	while (mReplyNumBytes > 0 || IsMsgAvail(iobuf, &msgLen)) {
-	    res = HandleResponse(iobuf, msgLen);
-            if (res < 0)
-                // maybe the response isn't fully available
-                break;
-	}
+	while ((mReplyNumBytes > 0 || IsMsgAvail(iobuf, &msgLen)) &&
+	        HandleResponse(iobuf, msgLen) >= 0)
+	    {}
+        UpdateRecvTimeout();
 	break;
 
     case EVENT_NET_WROTE:
 	// Something went out on the network.  For now, we don't
 	// track it. Later, we may use it for tracking throttling
 	// and such.
+        UpdateRecvTimeout();
 	break;
 
         
@@ -201,18 +271,32 @@ RemoteSyncSM::HandleResponse(IOBuffer *iobuf, int msgLen)
 
     if (mReplyNumBytes <= 0) {
         assert(msgLen >= 0 && msgLen <= nAvail);
-        scoped_array<char> buf(new char[msgLen + 1]);
-        iobuf->CopyOut(buf.get(), msgLen);
-        buf[msgLen] = '\0';
-
-        istringstream ist(buf.get());
-
-        const char separator = ':';
+        if (sTraceRequestResponse) {
+            IOBuffer::IStream is(*iobuf, msgLen);
+            const string      loc(mLocation.ToString());
+            string line;
+            while (getline(is, line)) {
+                KFS_LOG_STREAM_DEBUG << reinterpret_cast<void*>(this) <<
+                    loc << " response: " << line <<
+                KFS_LOG_EOM;
+            }
+        }
         Properties prop;
-        prop.loadProperties(ist, separator, false);
-        mReplySeqNum = prop.getValue("Cseq", (kfsSeq_t) -1);
-        mReplyNumBytes = prop.getValue("Content-length", (long long) 0);
+        {
+            const char separator(':');
+            IOBuffer::IStream is(*iobuf, msgLen);
+            prop.loadProperties(is, separator, false);
+        }
         iobuf->Consume(msgLen);
+        mReplySeqNum = prop.getValue("Cseq", (kfsSeq_t) -1);
+        if (mReplySeqNum < 0) {
+            KFS_LOG_STREAM_ERROR <<
+                "invalid or missing Cseq header: " << mReplySeqNum <<
+                ", resetting connection" <<
+            KFS_LOG_EOM;
+            HandleEvent(EVENT_NET_ERROR, 0);
+        }
+        mReplyNumBytes = prop.getValue("Content-length", (long long) 0);
         nAvail -= msgLen;
         i = find_if(mDispatchedOps.begin(), mDispatchedOps.end(), 
                     OpMatcher(mReplySeqNum));
@@ -226,8 +310,7 @@ RemoteSyncSM::HandleResponse(IOBuffer *iobuf, int msgLen)
                 ReadOp *rop = static_cast<ReadOp *> (op);
                 const int checksumEntries = prop.getValue("Checksum-entries", 0);
                 if (checksumEntries > 0) {
-                    string checksums = prop.getValue("Checksums", "");
-                    istringstream is(checksums.c_str());
+                    istringstream is(prop.getValue("Checksums", ""));
                     uint32_t cks;
                     for (int i = 0; i < checksumEntries; i++) {
                         is >> cks;
@@ -257,12 +340,16 @@ RemoteSyncSM::HandleResponse(IOBuffer *iobuf, int msgLen)
     // if we don't have all the data for the write, hold on...
     if (nAvail < mReplyNumBytes) {
         // the data isn't here yet...wait...
-        mNetConnection->SetMaxReadAhead(mReplyNumBytes - nAvail);
+        if (mNetConnection) {
+            mNetConnection->SetMaxReadAhead(mReplyNumBytes - nAvail);
+        }
         return -1;
     }
 
     // now, we got everything...
-    mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
+    if (mNetConnection) {
+        mNetConnection->SetMaxReadAhead(kMaxCmdHeaderLength);
+    }
 
     // find the matching op
     if (i == mDispatchedOps.end()) {
@@ -310,9 +397,21 @@ public:
 void
 RemoteSyncSM::FailAllOps()
 {
-    for_each(mDispatchedOps.begin(), mDispatchedOps.end(),
+    if (mDispatchedOps.empty())
+        return;
+
+    // There is a potential recursive call: if a client owns this
+    // object and the client got a network error, the client will call
+    // here to fail the outstandnig ops; when an op the client is
+    // notified and the client calls to close out this object.  We'll
+    // be right back here trying  to fail an op and will core.  To
+    // avoid, swap out the ops and try.
+    list<KfsOp *> opsToFail;
+
+    mDispatchedOps.swap(opsToFail);
+    for_each(opsToFail.begin(), opsToFail.end(),
              OpFailer(-EHOSTUNREACH));
-    mDispatchedOps.clear();
+    opsToFail.clear();
 }
 
 void
@@ -396,7 +495,7 @@ KFS::ReleaseAllServers(list<RemoteSyncSMPtr> &remoteSyncers)
             break;
         RemoteSyncSMPtr r = *i;
 
-        r->Finish();
         remoteSyncers.erase(i);
+        r->Finish();
     }
 }

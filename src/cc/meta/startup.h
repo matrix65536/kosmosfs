@@ -1,5 +1,5 @@
 /*!
- * $Id$ 
+ * $Id$
  *
  * Copyright 2008 Quantcast Corp.
  * Copyright 2006-2008 Kosmix Corp.
@@ -35,7 +35,8 @@ extern "C" {
 namespace KFS {
 
 extern void kfs_startup(const std::string &logdir, const std::string &cpdir, 
-			uint32_t minChunkservers, uint32_t minReplicasPerFile);
+			uint32_t minChunkservers, uint32_t minReplicasPerFile,
+			bool enablePathToFidCache);
 
 }
 #endif // !defined(KFS_STARTUP_H)

@@ -3,7 +3,6 @@
 //
 // Created 2008/08/27
 //
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 //
@@ -49,11 +48,9 @@ main(int argc, char **argv)
     char optchar;
     bool help = false;
     int status;
-    // we tolerate a 10% variation in average disk utilization in the
-    // cluster.  Nodes outside the 10% window are candidates for rebalancing
     int variationFromAvg = 10;
 
-    while ((optchar = getopt(argc, argv, "c:l:n:b:r:t:h")) != -1) {
+    while ((optchar = getopt(argc, argv, "c:l:n:b:r:h")) != -1) {
         switch (optchar) {
             case 'l': 
                 logdir = optarg;
@@ -97,7 +94,7 @@ main(int argc, char **argv)
     if (status < 0)
         exit(-1);
     
-    MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
 
     gLayoutEmulator.PrintChunkserverBlockCount();
     // now the testing can start...

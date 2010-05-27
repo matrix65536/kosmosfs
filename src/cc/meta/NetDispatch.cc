@@ -1,8 +1,7 @@
 //---------------------------------------------------------- -*- Mode: C++ -*-
-// $Id$ 
+// $Id$
 //
 // Created 2006/06/01
-// Author: Sriram Rao
 //
 // Copyright 2008 Quantcast Corp.
 // Copyright 2006-2008 Kosmix Corp.
@@ -31,6 +30,7 @@
 #include "logger.h"
 #include "LayoutManager.h"
 #include "libkfsIO/Globals.h"
+#include "common/log.h"
 
 using namespace KFS;
 using namespace KFS::libkfsio;
@@ -60,7 +60,7 @@ NetDispatch::Start(int clientAcceptPort, int chunkServerAcceptPort)
         mClientManager->StartAcceptor(clientAcceptPort);
         mChunkServerFactory->StartAcceptor(chunkServerAcceptPort);
         // Start polling....
-	globals().netManager.MainLoop();
+	globalNetManager().MainLoop();
 }
 
 ///
@@ -101,8 +101,12 @@ NetDispatch::Dispatch(MetaRequest *r)
 		}
 		delete ccvi;
 	}
-	else if ((r->op == META_CHUNK_REPLICATE) || (r->op == META_CHUNK_SIZE)) {
-		// For replicating a chunk/computing a chunk's size, we sent a request to
+	else if ((r->op == META_CHUNK_REPLICATE) ||
+		 (r->op == META_CHUNK_SIZE) ||
+		 (r->op == META_CHUNK_MAKE_STABLE) ||
+		 (r->op == META_BEGIN_MAKE_CHUNK_STABLE)) {
+		// For replicating a chunk/computing a chunk's size/make
+		// chunk stable, we sent a request to
 		// a chunkserver; it did the work and sent back a reply.
 		// We have processed the reply and that message is now here.
 		// Nothing more to do.  So, get rid of it

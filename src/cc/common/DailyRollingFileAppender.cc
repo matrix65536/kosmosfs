@@ -20,6 +20,7 @@
 //----------------------------------------------------------------------------
 
 #include "DailyRollingFileAppender.h"
+#include <log4cpp/FileAppender.hh>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -34,9 +35,12 @@ namespace log4cpp {
 
 DailyRollingFileAppender::DailyRollingFileAppender(const string &name, const string &fileName,
                                                    unsigned int maxDaysToKeep,
-                                                   bool append, mode_t mode) :
-    log4cpp::FileAppender(name, fileName, append, mode),
-    _maxDaysToKeep(maxDaysToKeep > 0 ? maxDaysToKeep : 7)
+                                                   bool append, mode_t mode,
+                                                   LayoutAppender* appender) :
+    LayoutAppender(name),
+    _maxDaysToKeep(maxDaysToKeep > 0 ? maxDaysToKeep : 7),
+    _fileName(fileName),
+    _appender(appender ? *appender : *(new log4cpp::FileAppender(name, fileName, append, mode)))
 {
     struct stat statBuf;
     int res;
@@ -50,6 +54,16 @@ DailyRollingFileAppender::DailyRollingFileAppender(const string &name, const str
         t = statBuf.st_mtime;
     }
     localtime_r(&t, &_logsTime);
+}
+
+DailyRollingFileAppender::~DailyRollingFileAppender()
+{
+    delete &_appender;
+}
+
+void DailyRollingFileAppender::close()
+{
+    _appender.close();
 }
 
 void DailyRollingFileAppender::setMaxDaysToKeep(unsigned int maxDaysToKeep)
@@ -71,13 +85,12 @@ void DailyRollingFileAppender::rollOver()
     int nentries, res;
     string::size_type slash = _fileName.rfind('/');
 
-    ::close(_fd);
     filename_stream << _fileName << "." << _logsTime.tm_year + 1900 << "-" 
                     << std::setfill('0') << std::setw(2) << _logsTime.tm_mon + 1 << "-" 
                     << std::setw(2) << _logsTime.tm_mday << std::ends;
     lastFn = filename_stream.str();
     ::rename(_fileName.c_str(), lastFn.c_str());
-    _fd = ::open(_fileName.c_str(), _flags, _mode);
+    _appender.reopen();
 
     // prune away old files
     if (slash == string::npos)
@@ -109,7 +122,7 @@ void DailyRollingFileAppender::rollOver()
 void DailyRollingFileAppender::_append(const log4cpp::LoggingEvent &event)
 {
     struct tm now;
-    time_t t = time(NULL);
+    time_t t = event.timeStamp.getSeconds();
 
     if (localtime_r(&t, &now) != NULL) {
         if ((now.tm_year != _logsTime.tm_year) ||
@@ -119,7 +132,7 @@ void DailyRollingFileAppender::_append(const log4cpp::LoggingEvent &event)
             _logsTime = now;
         }
     }
-    log4cpp::FileAppender::_append(event);
+    _appender.doAppend(event);
 
 }
 
