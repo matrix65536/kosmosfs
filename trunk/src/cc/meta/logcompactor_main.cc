@@ -3,7 +3,6 @@
 //
 // Created 2008/06/18
 //
-//
 // Copyright 2008 Quantcast Corp.
 //
 // This file is part of Kosmos File System (KFS).
