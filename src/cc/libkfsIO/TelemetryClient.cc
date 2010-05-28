@@ -25,6 +25,7 @@
 // 
 //----------------------------------------------------------------------------
 
+#include <stdio.h>
 #include "TelemetryClient.h"
 #include "telemetry/packet.h"
 #include "common/log.h"

@@ -55,7 +55,7 @@ int main(int argc, char **argv)
     int status;
 
     KFS::MsgLogger::Init(NULL);
-    KFS::MsgLogger::SetLevel(log4cpp::Priority::INFO);
+    KFS::MsgLogger::SetLevel(MsgLogger::kLogLevelINFO);
 
     while ((optchar = getopt(argc, argv, "hl:c:f:")) != -1) {
         switch (optchar) {
