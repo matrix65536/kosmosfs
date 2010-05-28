@@ -24,6 +24,7 @@
 
 #include "BufferedLogWriter.h"
 
+#include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>

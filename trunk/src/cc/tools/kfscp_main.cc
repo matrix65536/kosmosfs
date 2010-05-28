@@ -73,11 +73,11 @@ main(int argc, char **argv)
     
     if (verboseLogging) 
     {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::DEBUG);
+        KFS::MsgLogger::SetLevel(MsgLogger::kLogLevelDEBUG);
     }
     else
     {
-        KFS::MsgLogger::SetLevel(log4cpp::Priority::WARN);
+        KFS::MsgLogger::SetLevel(MsgLogger::kLogLevelWARN);
     } 
     
     dest = sources.back();

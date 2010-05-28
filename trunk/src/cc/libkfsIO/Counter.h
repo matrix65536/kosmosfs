@@ -28,6 +28,7 @@
 #ifndef LIBKFSIO_COUNTER_H
 #define LIBKFSIO_COUNTER_H
 
+#include <stdint.h>
 #include <algorithm>
 #include <string>
 #include <sstream>
