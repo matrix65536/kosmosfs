@@ -54,7 +54,7 @@ int main(int argc, char **argv)
 {
     // use options: -l for logdir -c for checkpoint dir
     char optchar;
-    bool help = false, computeDirSize = false;
+    bool help = false;
     int16_t numReplicasPerFile = -1;
     string logdir, cpdir;
     string lockFn;
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
                 help = true;
                 break;
             case 'p':
-                computeDirSize = true;
+	    	// deprecated
                 break;
             case 'r':
                 numReplicasPerFile = (int16_t) atoi(optarg);
@@ -91,20 +91,13 @@ int main(int argc, char **argv)
     }
 
     if (help) {
-        cout << "Usage: " << argv[0] << " [-L <lockfile>] [-l <logdir>] [-c <cpdir>] {-p} {-r <# of replicas>}"
+        cout << "Usage: " << argv[0] << " [-L <lockfile>] [-l <logdir>] [-c <cpdir>] {-r <# of replicas>}"
              << endl;
-        cout << "where -p means recompute size of each directory in the tree" << endl;
 	cout << "where -r means change the replication for all files in the system to the specified value" << endl;
         exit(-1);
     }
 
-    if (computeDirSize) {
-        // since we are going to recompute the size of each dir.,
-        // there is no need to update the size of a dir. when logs are replayed.
-        //
-        metatree.disableFidToPathname();
-    }
-
+    metatree.disableFidToPathname();
     logger_setup_paths(logdir);
     checkpointer_setup_paths(cpdir);
     status = restoreCheckpoint(lockFn);
@@ -112,9 +105,7 @@ int main(int argc, char **argv)
         panic("restore checkpoint failed!", false);
     status = replayLogs();
     if (status == 0) {
-        if (computeDirSize) {
-            metatree.recomputeDirSize();
-        }
+        metatree.recomputeDirSize();
 	if (numReplicasPerFile > 0) {
 		metatree.changePathReplication(ROOTFID, numReplicasPerFile);
 	}
