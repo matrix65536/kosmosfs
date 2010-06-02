@@ -1020,9 +1020,16 @@ MetaReadConfig::handle()
 		status = -1;
 		return;
 	}
+	KFS_LOG_STREAM_WARN << "loading config from: " << configFn.c_str() << KFS_LOG_EOM;
+
 	setMaxReplicasPerFile(prop.getValue("metaServer.maxReplicasPerFile",
 				MAX_REPLICAS_PER_FILE));
 	gLayoutManager.SetParameters(prop);
+	MsgLogger::GetLogger()->SetLogLevel(
+		prop.getValue("metaServer.loglevel",
+				MsgLogger::GetLogLevelNamePtr(
+				 MsgLogger::GetLogger()->GetLogLevel())));
+
 	status = 0;
 }
 
