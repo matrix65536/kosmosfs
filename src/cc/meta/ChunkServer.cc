@@ -544,7 +544,7 @@ ChunkServer::HandleReply(IOBuffer *iobuf, int msgLen)
                         mLastHeartBeatLoggedTime = mLastHeard;
                         string hbp;
                         mHeartbeatProperties.getList(hbp, " ", "");
-                        KFS_LOG_STREAM_INFO <<
+                        KFS_LOG_STREAM_DEBUG <<
                             "===chunk=server: " << mLocation.hostname <<
                             ":" << mLocation.port <<
                             " responsive=" << IsResponsiveServer() <<
