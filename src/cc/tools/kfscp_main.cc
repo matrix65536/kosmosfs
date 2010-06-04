@@ -101,7 +101,7 @@ main(int argc, char **argv)
     
     if (destIsRemote)
     {
-	destClient = getKfsClientFactory()->SetDefaultClient(destHost, destPort);
+	destClient = getKfsClientFactory()->GetClient(destHost, destPort);
 	
 	if (!destClient)
 	{
@@ -110,6 +110,7 @@ main(int argc, char **argv)
 	}
 	
 	assert (destClient != 0);
+	getKfsClientFactory()->SetDefaultClient(destClient);
     }
     
     // We have multiple sources, which means that 'dest' has to exist and be a directory!
@@ -119,14 +120,14 @@ main(int argc, char **argv)
 	{
 	    assert (destClient != 0);
 	    
-	    if (!destClient->Exists(destPath))
+	    if (!destClient->Exists(destPath.c_str()))
 	    {
 		cout << argv[0] << ": Remote path " << getRemotePath(destHost, destPort, destPath)
 		    << " could not be found (when multiple source locations are used, destination must be existing directory).\n";
 		exit(-1);
 	    }
 
-	    if (!destClient->IsDirectory(destPath))
+	    if (!destClient->IsDirectory(destPath.c_str()))
 	    {
 		cout << argv[0] << ": Remote path " << getRemotePath(destHost, destPort, destPath) 
 		    << " is not a directory (when multiple source locations are used, destination must be existing directory).\n";
@@ -197,14 +198,14 @@ main(int argc, char **argv)
 	    
 	    assert (destClient != 0);
 	    
-	    if (!destClient->Exists(srcPath))
+	    if (!destClient->Exists(srcPath.c_str()))
 	    {
 		cout << argv[0] << ": Remote path " << getRemotePath(srcHost, srcPort, srcPath)
 		    << " does not exist.\n";
 		exit(-1);
 	    }
 	    
-	    if (destClient->IsFile(srcPath))
+	    if (destClient->IsFile(srcPath.c_str()))
 	    {
 		cout << argv[0] << ": Copying file " << getRemotePath(destHost, destPort, srcPath)
 		    << " to " << getRemotePath(destHost, destPort, destPath) << ": ";
@@ -283,9 +284,9 @@ main(int argc, char **argv)
 		    << getRemotePath(destHost, destPort, destPath) << ": ";
 		cout.flush();
 		
-		if (destClient->Exists(destPath))
+		if (destClient->Exists(destPath.c_str()))
 		{
-		    if (!destClient->IsDirectory(destPath))
+		    if (!destClient->IsDirectory(destPath.c_str()))
 		    {
 			cout << argv[0] << ": Destination path " << getRemotePath(destHost, destPort, destPath) << " exists and is not a directory.\n";
 			exit(-1);
@@ -313,21 +314,22 @@ main(int argc, char **argv)
 	    assert (destPath.length() > 0);
 	    assert (srcPath[0] == '/');
 	    
-	    KfsClientPtr srcClient = getKfsClientFactory()->SetDefaultClient(srcHost, srcPort);
+	    KfsClientPtr srcClient = getKfsClientFactory()->GetClient(srcHost, srcPort);
 	
 	    if (!srcClient)
 	    {
 		cout << argv[0] << ": Error initializing KFS client for " << getRemotePath(srcHost, srcPort, srcPath) << "\n";
 		exit(-1);
 	    }
+	    getKfsClientFactory()->SetDefaultClient(srcClient);
 	    
-	    if (!srcClient->Exists(srcPath))
+	    if (!srcClient->Exists(srcPath.c_str()))
 	    {
 		cout << argv[0] << ": " << getRemotePath(srcHost, srcPort, srcPath) << " does not exist.\n";
 		exit(-1);
 	    }
 	    
-	    if (!srcClient->IsDirectory(srcPath))
+	    if (!srcClient->IsDirectory(srcPath.c_str()))
 	    {
 		cout << argv[0] << ": Copying file " << getRemotePath(srcHost, srcPort, srcPath) << " to local '"
 		    << destPath << "': ";

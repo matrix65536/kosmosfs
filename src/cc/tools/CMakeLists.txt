@@ -13,6 +13,7 @@ set (lib_srcs
     KfsRmdir.cc
     KfsPwd.cc
     KfsAppend.cc
+    KfsToolsCommon.cc
     utils.cc
 )
 
@@ -36,6 +37,8 @@ kfsstats
 kfsfileenum
 kfsdataverify
 kfsretire
+kfscp
+kfsls
 )
 
 if (APPLE)

@@ -84,13 +84,15 @@ doLs(const string & progName, const string & arg, bool longMode, bool humanReada
 	exit(-1);
     }
     
-    KfsClientPtr kfsClient = getKfsClientFactory()->SetDefaultClient(serverHost, serverPort);
+    KfsClientPtr kfsClient = getKfsClientFactory()->GetClient(serverHost, serverPort);
     
     if (!kfsClient)
     {
 	cout << progName << ": Error initializing KFS client for " << getRemotePath(serverHost, serverPort, filePath) << "\n";
 	exit(-1);
     }
+
+    getKfsClientFactory()->SetDefaultClient(kfsClient);
     
     cout << "Listing " << getRemotePath(serverHost, serverPort, filePath) << ":\n";
     
