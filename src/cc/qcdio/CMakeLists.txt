@@ -38,6 +38,11 @@ add_library (qcdio STATIC ${sources})
 add_library (qcdio-shared SHARED ${sources})
 set_target_properties (qcdio-shared PROPERTIES OUTPUT_NAME "qcdio")
 
+if (NOT APPLE)
+   target_link_libraries (qcdio rt)
+   target_link_libraries (qcdio-shared rt)
+endif(NOT APPLE)
+
 #
 # Since the objects have to be built twice, set this up so they don't
 # clobber each other.
