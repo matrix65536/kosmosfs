@@ -59,6 +59,10 @@ foreach (exe_file ${exe_files})
         endif (USE_STATIC_LIB_LINKAGE)
 endforeach (exe_file)
 
+if (LIBEDIT_FOUND)
+    target_link_libraries(kfsshell ${LIBEDIT_LIBRARY})
+endif (LIBEDIT_FOUND)
+
 #
 install (TARGETS ${exe_files} tools tools-shared
         RUNTIME DESTINATION bin/tools

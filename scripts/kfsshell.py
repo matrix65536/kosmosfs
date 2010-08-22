@@ -62,6 +62,6 @@ if __name__ == '__main__':
 
     node = config.get('metaserver', 'node')
     port = config.getint('metaserver', 'baseport')
-    cmd = "%s/tools/KfsShell -s %s -p %d" % (bindir, node, port)
+    cmd = "%s/tools/kfsshell -s %s -p %d" % (bindir, node, port)
     os.system(cmd)
     
