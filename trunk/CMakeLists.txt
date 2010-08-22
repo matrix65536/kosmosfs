@@ -134,6 +134,10 @@ add_definitions (-D${KFS_OS_NAME})
 SET(Fuse_LIBRARY_DIR "")
 SET(Fuse_INCLUDE_DIR "")
 
+# Find libedit
+# Install from: http://www.thrysoee.dk/editline/
+FIND_PACKAGE(libedit)
+
 if(COMMAND cmake_policy)
     cmake_policy(SET CMP0003 NEW)
 endif(COMMAND cmake_policy)

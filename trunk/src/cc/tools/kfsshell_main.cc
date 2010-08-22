@@ -32,6 +32,9 @@
 #include "libkfsClient/KfsClient.h"
 #include "common/log.h"
 #include "tools/KfsShell.h"
+#if HAVE_LIBEDIT
+#include <editline/readline.h>
+#endif
 
 #include <iostream>
 #include <tr1/unordered_map>
@@ -162,6 +165,9 @@ int processCmds(bool quietMode, int nargs, const char **cmdLine)
     string s, cmd;
     int retval = 0;
 
+#if HAVE_LIBEDIT
+    using_history();
+#endif
     while (1) {
         if (quietMode) {
             if (nargs == 0)
@@ -175,11 +181,20 @@ int processCmds(bool quietMode, int nargs, const char **cmdLine)
         } else {
             // Turn off prompt printing when quiet mode is enabled;
             // this allows scripting with KfsShell
+#if HAVE_LIBEDIT
+           char *in = readline("KfsShell> ");
+           if (!in)
+             break;
+           add_history(in);
+           strncpy(buf, in, 4096);
+           buf[4095] = 0;
+#else
             cout << "KfsShell> ";
             cin.getline(buf, 4096);
             
             if (cin.eof())
                 break;
+#endif
             s = buf;
         }
 
