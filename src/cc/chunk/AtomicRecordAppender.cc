@@ -3,10 +3,6 @@
 //
 // Created 2009/03/19
 //
-// 2009/10/19
-// Mike Ovsiannikov
-// Fault tolerant write append protocol
-//
 // Copyright 2009 Quantcast Corporation.  All rights reserved.
 //
 // This file is part of Kosmos File System (KFS).
