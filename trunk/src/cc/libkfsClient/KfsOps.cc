@@ -30,6 +30,9 @@ extern "C" {
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <string.h>
 }
 #include "libkfsIO/Checksum.h"
 #include "Utils.h"
@@ -257,15 +260,27 @@ void
 AllocateOp::Request(ostream &os)
 {
     static const int MAXHOSTNAMELEN = 256;
-    char hostname[MAXHOSTNAMELEN];
+    static char *myIp = NULL;
 
-    gethostname(hostname, MAXHOSTNAMELEN);
+    if (! myIp) {
+        char hostname[MAXHOSTNAMELEN];
+        gethostname(hostname, MAXHOSTNAMELEN);
+        // Convert to IP: chunkserver location is tracked using IP not hostname;
+        // Providing IP helps metaserver to do locality
+        struct hostent *hent = gethostbyname(hostname);
+        if (hent) {
+            in_addr ipaddr;
+            memcpy(&ipaddr, hent->h_addr, hent->h_length);
+            myIp = inet_ntoa(ipaddr);
+        }
+    }
 
     os << "ALLOCATE\r\n";
     os << "Cseq: " << seq << "\r\n";
     os << "Version: " << KFS_VERSION_STR << "\r\n";
     os << "Client-Protocol-Version: " << KFS_CLIENT_PROTO_VERS << "\r\n";
-    os << "Client-host: " << hostname << "\r\n";
+    if (myIp)
+        os << "Client-host: " << myIp << "\r\n";
     os << "Pathname: " << pathname << "\r\n";
     os << "File-handle: " << fid << "\r\n";
     os << "Chunk-offset: " << fileOffset << "\r\n";
