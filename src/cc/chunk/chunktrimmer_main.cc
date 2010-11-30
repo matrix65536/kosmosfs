@@ -40,7 +40,7 @@
 #include <boost/scoped_array.hpp>
 #include <iostream>
 
-#ifdef KFS_OS_NAME_LINUX
+#if defined(KFS_OS_NAME_LINUX) && defined(KFS_USE_XFS)
 #include <xfs/xfs.h>
 #endif
 
@@ -130,7 +130,7 @@ int main(int argc, char **argv)
     exit(0);
 }
 
-#ifdef KFS_OS_NAME_LINUX
+#if defined(KFS_OS_NAME_LINUX) && defined(KFS_USE_XFS)
 
 static const int oneMB = 1 << 20;
 static const int fourK = 4096;
