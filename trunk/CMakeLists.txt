@@ -137,6 +137,10 @@ SET(Fuse_INCLUDE_DIR "")
 # Find libedit
 # Install from: http://www.thrysoee.dk/editline/
 FIND_PACKAGE(libedit)
+#
+# Not all Linux machines have xfs.  Use xfs when possible
+#
+FIND_PACKAGE(xfs)
 
 if(COMMAND cmake_policy)
     cmake_policy(SET CMP0003 NEW)
