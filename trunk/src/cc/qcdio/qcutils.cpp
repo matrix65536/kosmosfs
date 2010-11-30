@@ -35,7 +35,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 
-#if defined(QC_OS_NAME_LINUX) && ! defined(QC_USE_XFS_RESVSP)
+#if defined(QC_OS_NAME_LINUX) && defined(KFS_USE_XFS) && ! defined(QC_USE_XFS_RESVSP)
 #define QC_USE_XFS_RESVSP
 #endif
 
