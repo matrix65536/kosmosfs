@@ -1,6 +1,6 @@
 #summary How to deploy KFS servers on a cluster
 
-=== Requirements ===
+=== Introduction ===
 
 The KFS package comes with scripts for installing/starting/stopping KFS servers on a set of machines. The scripts use ssh to login and execute commands (either on a single node or in a cluster).  The scripts require that the user have "no password" ssh access to every affected server. For every host affected, be sure you can "ssh ''host'' true" without being prompted for a password.
 
