@@ -106,8 +106,8 @@ ENDIF (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 #
 
 IF (NOT CMAKE_BUILD_TYPE)
-   message (STATUS "Setting build type to Debug")
-   set (CMAKE_BUILD_TYPE "Debug")
+   message (STATUS "Setting build type to RelWithDebInfo")
+   set (CMAKE_BUILD_TYPE "RelWithDebInfo")
 ENDIF (NOT CMAKE_BUILD_TYPE)
 
 IF (CMAKE_BUILD_TYPE STREQUAL "Release")
