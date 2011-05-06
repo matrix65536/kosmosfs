@@ -1,0 +1,18 @@
+#summary Features supported in KFS
+
+  * *Incremental scalability*: New chunkserver nodes can be added as storage needs increase; the system automatically adapts to the new nodes.
+  * *Availability*: Replication is used to provide availability due to chunk server failures. Typically, files are replicated 3-way.
+  * *Per file degree of replication*: The degree of replication is configurable on a per file basis, with a max. limit of 64.
+  * *Re-replication*: Whenever the degree of replication for a file drops below the configured amount (such as, due to an extended chunkserver outage), the metaserver forces the block to be re-replicated on the remaining chunk servers. Re-replication is done in the background without overwhelming the system.
+  * *Rack-aware data placement*: The chunk placement algorithm is rack-aware. Whereever possible, it places chunks on different racks.
+  * *Re-balancing*: Periodically, the meta-server may rebalance the chunks amongst chunkservers. This is done to help with balancing disk space utilization amongst nodes.
+  * *Data integrity*: To handle disk corruptions to data blocks, data blocks are checksummed. Checksum verification is done on each read; whenever there is a checksum mismatch, re-replication is used to recover the corrupted chunk.
+  * *File writes*: The system follows the standard model. When an application creates a file, the filename becomes part of the filesystem namespace. For performance, writes are cached at the KFS client library. Periodically, the cache is flushed and data is pushed out to the chunkservers. Also, applications can force data to be flushed to the chunkservers. In either case, once data is flushed to the server, it is available for reading.
+  * *Leases*: KFS client library uses caching to improve performance. Leases are used to support cache consistency.
+  * *Chunk versioning*: Versioning is used to detect stale chunks.
+  * *Client side fail-over*: The client library is resilient to chunksever failures. During reads, if the client library determines that the chunkserver it is communicating with is unreachable, the client library will fail-over to another chunkserver and continue the read. This fail-over is transparent to the application.
+  * *Language support*: KFS client library can be accessed from C++, Java, and Python.
+  * *FUSE support on Linux*: By mounting KFS via FUSE, this allows existing linux utilities (such as, ls) to interface with KFS.
+  * *Tools*: A shell binary is included in the set of tools. This allows users to navigate the filesystem tree using utilities such as, cp, ls, mkdir, rmdir, rm, mv. Tools to also monitor the chunk/meta-servers are provided.
+  * *Job placement support*: The KFS client library exports an API to determine the location of a byte range of a file. Job placement systems built on top of KFS can leverage this API to schedule jobs appropriately.
+  * *Local read optimization*: When applications are run on the same nodes as chunkservers, the KFS client library contains an optimization for reading data locally. That is, if the chunk is stored on the same node as the one on which the application is executing, data is read from the local node.
