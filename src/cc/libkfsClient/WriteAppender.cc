@@ -1062,7 +1062,7 @@ private:
         }
         Reset(mSpaceReleaseOp);
         mSpaceReleaseOp.chunkId      = mAllocOp.chunkId;
-        mSpaceReleaseOp.chunkVersion = mAllocOp.chunkVersion,
+        mSpaceReleaseOp.chunkVersion = mAllocOp.chunkVersion;
         mSpaceReleaseOp.writeInfo    = mWriteIds;
         mSpaceReleaseOp.numBytes     = size_t(mSpaceAvailable);
         Enqueue(mSpaceReleaseOp);
